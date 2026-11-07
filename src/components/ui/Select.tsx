@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { Check, ChevronDown } from 'lucide-react';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 export interface SelectOption<T extends string = string> {
@@ -34,11 +35,7 @@ interface Props<T extends string = string> {
   menuClassName?: string;
 }
 
-const chevron = (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m6 9 6 6 6-6" />
-  </svg>
-);
+const chevron = <ChevronDown size={16} strokeWidth={1.5} />;
 
 /** 把扁平/分组选项统一展平，用于「当前值对应的选项」查找与键盘导航。 */
 function flattenOptions<T extends string>(options: SelectSource<T>): SelectOption<T>[] {
@@ -176,17 +173,15 @@ export default function Select<T extends string = string>({
           setFocusIdx(flatIdx);
         }}
         className={`
-          flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
-          ${active ? 'bg-zinc-700' : ''}
-          ${selected ? 'text-indigo-400' : 'text-zinc-200'}
-          ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-state-mid'}
+          flex items-center gap-2 px-3 py-1.5 min-h-7 text-body rounded-md cursor-pointer transition-colors duration-120
+          ${active ? 'bg-state-soft' : ''}
+          ${selected ? 'text-indigo-400' : 'text-fg'}
+          ${opt.disabled ? 'text-fg-disabled cursor-not-allowed' : 'hover:bg-state-soft'}
         `}
       >
         {selected ? (
           <span className="flex-shrink-0 w-4">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+            <Check size={14} strokeWidth={1.5} />
           </span>
         ) : (
           <span className="flex-shrink-0 w-4" />
@@ -194,7 +189,7 @@ export default function Select<T extends string = string>({
         {opt.hint ? (
           <span className="min-w-0 flex-1">
             <span className="block truncate">{opt.label}</span>
-            <span className="block truncate text-xs text-zinc-500">{opt.hint}</span>
+            <span className="block truncate text-meta text-fg-tertiary">{opt.hint}</span>
           </span>
         ) : (
           <span className="flex-1 truncate">{opt.label}</span>
@@ -213,16 +208,15 @@ export default function Select<T extends string = string>({
         aria-label={ariaLabel}
         onClick={() => setOpen((v) => !v)}
         className={`
-          w-full flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm text-left
-          transition-colors active:scale-[0.98]
+          pressable focus-ring w-full h-7 flex items-center gap-2 rounded-lg border px-3 text-body text-left
           ${disabled
-            ? 'border-edge bg-zinc-800/50 text-zinc-500 cursor-not-allowed'
-            : 'border-edge bg-zinc-800 text-zinc-100 hover:border-edge-strong focus:outline-none focus:border-indigo-500'
+            ? 'border-edge-subtle bg-surface-raised text-fg-disabled cursor-not-allowed'
+            : 'border-edge-subtle bg-surface-raised text-fg hover:border-edge focus:border-indigo-500'
           }
         `}
       >
         <span className="flex-1 truncate">{selectedLabel}</span>
-        <span className={`flex-shrink-0 text-zinc-500 transition-transform ${open ? 'rotate-180' : ''}`}>
+        <span className={`flex-shrink-0 text-fg-tertiary transition-transform duration-120 ease-standard ${open ? 'rotate-180' : ''}`}>
           {chevron}
         </span>
       </button>
@@ -234,7 +228,7 @@ export default function Select<T extends string = string>({
           onAnimationEnd={presence.onAnimationEnd}
           className={`
             absolute z-50 ${menuClassName} mt-1 max-h-60 overflow-auto
-            rounded-lg border border-edge bg-zinc-800 shadow-2xl
+            rounded-xl surface-glass p-1
             ${presence.phase === 'exit' ? 'dropdown-exit pointer-events-none' : 'dropdown-enter'}
           `}
           style={{ top: '100%' }}
@@ -245,7 +239,7 @@ export default function Select<T extends string = string>({
               const group = entry as SelectGroup<T>;
               return (
                 <div key={`g-${groupIdx}`}>
-                  <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                  <div className="px-3 pt-2 pb-1 text-caption font-medium uppercase tracking-wide text-fg-tertiary">
                     {group.label}
                   </div>
                   {group.options.map((opt) => {

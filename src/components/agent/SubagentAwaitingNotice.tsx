@@ -27,15 +27,15 @@ export default function SubagentAwaitingNotice({
     <div
       role="status"
       data-testid="subagent-awaiting-notice"
-      className="my-1 flex min-w-0 items-center gap-2 rounded-lg border border-edge bg-zinc-800/50 px-3 py-1.5 text-[12px] text-zinc-400"
+      className="my-1 flex min-w-0 items-center gap-2 rounded-lg border border-edge bg-surface-raised/50 px-3 py-1.5 text-meta text-fg-secondary"
     >
       <span className="h-1.5 w-1.5 flex-shrink-0 animate-pulse rounded-full bg-zinc-500 motion-reduce:animate-none" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">正在等待主 Agent 回答</span>
       <button
         type="button"
         onClick={() => void backToParentThread(parentId, conversationId)}
-        className={`flex-shrink-0 rounded-md font-medium text-zinc-300 transition-colors ${
-          mobile ? 'px-2 py-1.5 active:bg-state-mid' : 'px-2 py-0.5 hover:bg-state-mid hover:text-zinc-100'
+        className={`flex-shrink-0 rounded-md font-medium text-fg-secondary transition-colors ${
+          mobile ? 'px-2 py-1.5 active:bg-state-mid' : 'px-2 py-0.5 hover:bg-state-mid hover:text-fg'
         }`}
       >
         回到主对话

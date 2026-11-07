@@ -54,7 +54,7 @@ const VERDICT_SHORT: Record<OverviewVerdict, string> = {
  */
 const VERDICT_TONE: Record<OverviewVerdict, string> = {
   ask: 'text-amber-300',
-  run: 'text-zinc-500',
+  run: 'text-fg-tertiary',
   deny: 'text-red-300',
 };
 
@@ -86,14 +86,14 @@ const CONFIRM_MODE_OPTIONS = [
 
 /** 桌面列头开关：开关和说明同一行，不占两行高度。样式写在外层而不是改 Toggle，免得动到别处的开关。 */
 const HEADER_TOGGLE =
-  '[&>label]:gap-1.5 [&>label>span:last-child]:whitespace-nowrap [&>label>span:last-child]:text-xs [&>label>span:last-child]:text-zinc-400';
+  '[&>label]:gap-2 [&>label>span:last-child]:whitespace-nowrap [&>label>span:last-child]:text-meta [&>label>span:last-child]:text-fg-secondary';
 
 /** 「常用」模式那一整列铺一层中性淡底，像表格的选中列。 */
-const USUAL_BAND = 'bg-zinc-800/40';
+const USUAL_BAND = 'bg-surface-raised/40';
 
 /** 手机上的命令确认方式：三个选项撑满一行、按钮够手指点（共用的分段控件是为桌面做的小号）。 */
 export const FULL_WIDTH_SEGMENTS =
-  '[&>div]:flex [&>div]:w-full [&_button]:min-h-10 [&_button]:flex-1 [&_button]:text-sm';
+  '[&>div]:flex [&>div]:w-full [&_button]:min-h-10 [&_button]:flex-1 [&_button]:text-body';
 
 const PLAN_TOGGLE_HINT = 'Plan 这一列同时管 Agent 派出去的只读调研子任务';
 
@@ -108,7 +108,7 @@ function listedVerdict(cell: OverviewCell): OverviewVerdict | null {
 
 function Pill({ verdict }: { verdict: OverviewVerdict }) {
   return (
-    <span className={`whitespace-nowrap text-sm font-medium ${VERDICT_TONE[verdict]}`}>
+    <span className={`whitespace-nowrap text-body font-medium ${VERDICT_TONE[verdict]}`}>
       {VERDICT_LABEL[verdict]}
     </span>
   );
@@ -120,11 +120,11 @@ function Cell({ cell }: { cell: OverviewCell }) {
     return (
       <div className="flex flex-col items-start gap-1">
         <span className="flex items-center gap-1">
-          <span className="text-[11px] text-zinc-500">名单外</span>
+          <span className="text-caption text-fg-tertiary">名单外</span>
           <Pill verdict={cell.verdict} />
         </span>
         <span className="flex items-center gap-1">
-          <span className="text-[11px] text-zinc-500">名单内</span>
+          <span className="text-caption text-fg-tertiary">名单内</span>
           <Pill verdict={listed} />
         </span>
       </div>
@@ -159,15 +159,15 @@ function DesktopTable({
           return (
             <div
               key={mode}
-              className={`min-w-0 space-y-1.5 rounded-t-xl px-3 pt-3 pb-2.5 ${
+              className={`min-w-0 space-y-2 rounded-t-xl px-3 pt-3 pb-3 ${
                 usual ? USUAL_BAND : ''
               }`}
             >
-              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                <span className="text-sm font-semibold text-zinc-100">{label}</span>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-body font-semibold text-fg">{label}</span>
                 {usual && (
                   <span
-                    className="whitespace-nowrap rounded border border-edge px-1 text-[10px] text-zinc-400"
+                    className="whitespace-nowrap rounded border border-edge px-1 text-caption text-fg-secondary"
                     title="你默认使用的模式"
                   >
                     常用
@@ -205,14 +205,14 @@ function DesktopTable({
           const info = ROW_INFO[row.level];
           return (
             <div key={row.level} className={`${grid} border-t border-edge-subtle`}>
-              <div className="min-w-0 py-3.5 pr-3">
-                <span className="text-sm font-medium text-zinc-100">{info.label}</span>
-                <p className="mt-0.5 text-xs leading-snug text-zinc-500">{info.hint}</p>
+              <div className="min-w-0 py-4 pr-3">
+                <span className="text-body font-medium text-fg">{info.label}</span>
+                <p className="mt-1 text-meta leading-snug text-fg-tertiary">{info.hint}</p>
               </div>
               {CHECK_MODES.map(({ mode }) => (
                 <div
                   key={mode}
-                  className={`flex min-w-0 items-center px-3 py-3.5 ${
+                  className={`flex min-w-0 items-center px-3 py-4 ${
                     usualMode === mode ? USUAL_BAND : ''
                   } ${i === lastRowIndex && usualMode === mode ? 'rounded-b-xl' : ''}`}
                 >
@@ -223,7 +223,7 @@ function DesktopTable({
           );
         })
       ) : (
-        <p className="border-t border-edge-subtle py-4 text-xs text-zinc-500">正在读取…</p>
+        <p className="border-t border-edge-subtle py-4 text-meta text-fg-tertiary">正在读取…</p>
       )}
     </div>
   );
@@ -256,13 +256,13 @@ function MobileMatrix({
           {CHECK_MODES.map(({ mode, label }) => (
             <div
               key={mode}
-              className={`rounded-t-lg px-1 pt-2 pb-1.5 text-center ${
+              className={`rounded-t-lg px-1 pt-2 pb-2 text-center ${
                 usualMode === mode ? USUAL_BAND : ''
               }`}
             >
-              <span className="text-xs font-semibold text-zinc-100">{label}</span>
+              <span className="text-meta font-semibold text-fg">{label}</span>
               {usualMode === mode && (
-                <span className="block text-[10px] leading-tight text-zinc-500">常用</span>
+                <span className="block text-caption leading-tight text-fg-tertiary">常用</span>
               )}
             </div>
           ))}
@@ -273,9 +273,9 @@ function MobileMatrix({
             const info = ROW_INFO[row.level];
             return (
               <div key={row.level} className={`${grid} border-t border-edge-subtle`}>
-                <div className="min-w-0 py-2.5 pr-2">
-                  <p className="text-sm font-medium text-zinc-100">{info.label}</p>
-                  <p className="text-[11px] leading-tight text-zinc-500">{info.hint}</p>
+                <div className="min-w-0 py-3 pr-2">
+                  <p className="text-body font-medium text-fg">{info.label}</p>
+                  <p className="text-caption leading-tight text-fg-tertiary">{info.hint}</p>
                 </div>
                 {CHECK_MODES.map(({ mode }) => {
                   const cell = cellOf(row, mode);
@@ -288,7 +288,7 @@ function MobileMatrix({
                       } ${i === lastRowIndex && usualMode === mode ? 'rounded-b-lg' : ''}`}
                     >
                       {listed ? (
-                        <span className="text-center text-[11px] leading-snug">
+                        <span className="text-center text-caption leading-snug">
                           <span className={`block ${VERDICT_TONE[cell.verdict]}`}>
                             名单外{VERDICT_SHORT[cell.verdict]}
                           </span>
@@ -297,7 +297,7 @@ function MobileMatrix({
                           </span>
                         </span>
                       ) : (
-                        <span className={`text-sm font-medium ${VERDICT_TONE[cell.verdict]}`}>
+                        <span className={`text-body font-medium ${VERDICT_TONE[cell.verdict]}`}>
                           {VERDICT_SHORT[cell.verdict]}
                         </span>
                       )}
@@ -308,11 +308,11 @@ function MobileMatrix({
             );
           })
         ) : (
-          <p className="border-t border-edge-subtle py-3 text-xs text-zinc-500">正在读取…</p>
+          <p className="border-t border-edge-subtle py-3 text-meta text-fg-tertiary">正在读取…</p>
         )}
       </div>
 
-      <div className="rounded-xl bg-zinc-800/50">
+      <div className="rounded-xl bg-surface-raised/50">
         <MobileSwitchRow
           title="Plan：也要审批"
           checked={agent.planModeRequiresApproval ?? false}
@@ -342,11 +342,11 @@ function MobileSwitchRow({
 }) {
   return (
     <div
-      className={`flex min-h-11 items-center justify-between gap-3 px-3 py-1.5 ${
+      className={`flex min-h-11 items-center justify-between gap-3 px-3 py-2 ${
         divided ? 'border-t border-edge-subtle' : ''
       }`}
     >
-      <span className="text-sm text-zinc-100">{title}</span>
+      <span className="text-body text-fg">{title}</span>
       <Toggle checked={checked} onChange={onChange} />
     </div>
   );
@@ -366,8 +366,8 @@ export function ApprovalOverview({
   const [newCommand, setNewCommand] = useState('');
 
   const confirmMode = agent.confirmEachCommand ? 'each' : agent.listMode;
-  const inputClass = `flex-1 rounded-lg bg-zinc-800 border border-edge px-3 font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 ${
-    compact ? 'py-2.5 text-sm' : 'py-1.5 text-sm'
+  const inputClass = `flex-1 rounded-lg bg-surface-raised border border-edge px-3 font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 ${
+    compact ? 'py-3 text-body' : 'py-2 text-body'
   }`;
 
   const addCommand = () => {
@@ -388,8 +388,8 @@ export function ApprovalOverview({
   return (
     <div className={compact ? 'space-y-3' : 'space-y-4'}>
       <div>
-        <p className="text-sm font-medium text-zinc-200">什么时候问你</p>
-        <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+        <p className="text-body font-medium text-fg">什么时候问你</p>
+        <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">
           {compact
             ? '三种模式遇到各类操作时，问你还是直接执行。'
             : '先按规则给每个操作定一档，再看当前模式决定问不问你。拨动开关，表会立刻跟着变。'}
@@ -413,7 +413,7 @@ export function ApprovalOverview({
       )}
 
       {overview && !compact && (
-        <p className="rounded-lg bg-zinc-800/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
+        <p className="rounded-lg bg-surface-raised/50 px-3 py-2 text-meta leading-relaxed text-fg-secondary">
           {autoDiffers
             ? '现在 Auto 下只有「强制审批」会问你，「请求审批」不问。'
             : '「请求审批」和「强制审批」目前表现完全一样，区别只在 Auto 的开关：打开后，Auto 下「强制审批」仍会问你，「请求审批」依然不问。'}
@@ -422,13 +422,13 @@ export function ApprovalOverview({
 
       {/* 表里「没命中任何规则」那一行怎么处理 = 命令确认方式 */}
       <div
-        className={`flex gap-x-6 gap-y-2.5 border-t border-edge-subtle pt-4 ${
+        className={`flex gap-x-6 gap-y-3 border-t border-edge-subtle pt-4 ${
           compact ? 'flex-col' : 'flex-row items-center justify-between'
         }`}
       >
         <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-200">没命中任何规则的命令</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+          <p className="text-body font-medium text-fg">没命中任何规则的命令</p>
+          <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">
             {compact
               ? agent.confirmEachCommand
                 ? '也包括编辑文件、上传下载、MCP 等工具。Auto 下不问。'
@@ -456,7 +456,7 @@ export function ApprovalOverview({
 
       {!agent.confirmEachCommand && agent.listMode === 'allowlist' && (
         <div className="space-y-2">
-          <p className="text-xs leading-relaxed text-zinc-500">
+          <p className="text-meta leading-relaxed text-fg-tertiary">
             {compact
               ? '名单里的命令不再问你，其余都问；命中规则的照旧按规则处理。'
               : '允许的命令：名单里的不再问你，其余都问，按基础命令名匹配（不含路径或参数）。命中上面规则的命令照样按规则处理，不会因为进了名单就放行。'}
@@ -489,13 +489,13 @@ export function ApprovalOverview({
             </Button>
           </div>
           {agent.allowCommands.length === 0 ? (
-            <p className="px-1 text-xs italic text-zinc-500">列表为空</p>
+            <p className="px-1 text-meta italic text-fg-tertiary">列表为空</p>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {agent.allowCommands.map((cmd) => (
                 <span
                   key={cmd}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-zinc-800 px-2 py-1 font-mono text-xs text-zinc-200"
+                  className="inline-flex items-center gap-2 rounded-lg border border-edge bg-surface-raised px-2 py-1 font-mono text-meta text-fg"
                 >
                   {cmd}
                   <button
@@ -505,8 +505,8 @@ export function ApprovalOverview({
                         allowCommands: agent.allowCommands.filter((c) => c !== cmd),
                       })
                     }
-                    className={`text-zinc-500 transition-colors hover:text-red-400 active:text-red-400 ${
-                      compact ? '-my-1 -mr-1.5 px-2.5 py-2 text-base leading-none' : ''
+                    className={`text-fg-tertiary transition-colors hover:text-red-400 active:text-red-400 ${
+                      compact ? '-my-1 -mr-2 px-3 py-2 text-body leading-none' : ''
                     }`}
                     aria-label={`移除 ${cmd}`}
                   >

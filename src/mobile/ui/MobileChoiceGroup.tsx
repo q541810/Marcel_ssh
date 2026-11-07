@@ -43,17 +43,17 @@ export function MobileChoiceGroup<T extends string>({
             role="radio"
             aria-checked={active}
             onClick={() => onChange(o.value)}
-            className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
-              active ? 'border-indigo-500 bg-indigo-500/10' : 'border-edge bg-zinc-800/60'
+            className={`rounded-xl border px-3 py-2.5 text-left pressable ${
+              active ? 'border-indigo-500 bg-indigo-500/10' : 'border-edge bg-surface-raised/60'
             }`}
           >
             <div
-              className={`text-sm font-medium ${active ? 'text-indigo-200' : 'text-zinc-300'}`}
+              className={`text-body font-medium ${active ? 'text-indigo-200' : 'text-fg-secondary'}`}
             >
               {o.label}
             </div>
             {o.desc && (
-              <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{o.desc}</div>
+              <div className="mt-0.5 text-caption leading-relaxed text-fg-tertiary">{o.desc}</div>
             )}
           </button>
         );

@@ -78,7 +78,7 @@ async function loadAllCommands(
 }
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /**
  * Quick command management for mobile: list / create / edit / delete for both
@@ -226,24 +226,24 @@ export function MobileQuickCommandSection() {
           setFormMessage(null);
           setForm(EMPTY_FORM);
         }}
-        className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-edge px-3 py-3 text-sm text-zinc-300 transition-colors duration-100 active:scale-[0.99] active:bg-zinc-900"
+        className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-edge px-3 py-3 text-body text-fg-secondary pressable active:bg-surface"
       >
         <Plus className="h-4 w-4" />
         新建快捷命令
       </button>
 
       {displayError && (
-        <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+        <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300">
           {displayError}
         </div>
       )}
 
       {loading && commands.length === 0 && (
-        <p className="py-8 text-center text-sm text-zinc-500">加载中…</p>
+        <p className="py-8 text-center text-body text-fg-tertiary">加载中…</p>
       )}
 
       {!loading && commands.length === 0 && !displayError && (
-        <p className="py-8 text-center text-sm text-zinc-500">
+        <p className="py-8 text-center text-body text-fg-tertiary">
           暂无快捷命令，新建后会显示在终端输入栏上方。
         </p>
       )}
@@ -251,25 +251,25 @@ export function MobileQuickCommandSection() {
       {commands.map((cmd) => (
         <div
           key={cmd.id}
-          className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3"
+          className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3"
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium text-zinc-100">
+              <span className="truncate text-body font-medium text-fg">
                 {cmd.name}
               </span>
-              <span className="flex-shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+              <span className="flex-shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-caption text-fg-tertiary">
                 {cmd.scope === 'global'
                   ? '全局'
                   : (connectionName(cmd.sessionKey) ?? '指定连接')}
               </span>
               {cmd.insertOnly && (
-                <span className="flex-shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                <span className="flex-shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-caption font-medium text-amber-300">
                   仅插入
                 </span>
               )}
             </div>
-            <div className="mt-0.5 truncate font-mono text-xs text-zinc-500">
+            <div className="mt-0.5 truncate font-mono text-meta text-fg-tertiary">
               {cmd.commands.join(' ; ')}
             </div>
           </div>
@@ -288,7 +288,7 @@ export function MobileQuickCommandSection() {
                 insertOnly: cmd.insertOnly,
               });
             }}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft"
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft"
             aria-label={`编辑 ${cmd.name}`}
           >
             <Pencil className="h-4 w-4" />
@@ -296,7 +296,7 @@ export function MobileQuickCommandSection() {
           <button
             type="button"
             onClick={() => setDeleteTarget(cmd)}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-state-soft active:text-red-400"
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-fg-tertiary active:bg-state-soft active:text-red-400"
             aria-label={`删除 ${cmd.name}`}
           >
             <Trash2 className="h-4 w-4" />
@@ -314,7 +314,7 @@ export function MobileQuickCommandSection() {
             <button
               type="button"
               onClick={() => setForm(null)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -322,7 +322,7 @@ export function MobileQuickCommandSection() {
               type="button"
               onClick={() => void handleSubmit()}
               disabled={saving}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
             >
               {saving ? '保存中…' : '保存'}
             </button>
@@ -334,13 +334,13 @@ export function MobileQuickCommandSection() {
             {formMessage && (
               <div
                 role={formMessage.tone === 'error' ? 'alert' : undefined}
-                className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${formMessageClass(formMessage.tone)}`}
+                className={`rounded-lg border px-3 py-2 text-meta leading-relaxed ${formMessageClass(formMessage.tone)}`}
               >
                 {formMessage.text}
               </div>
             )}
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">名称</label>
+              <label className="mb-1 block text-meta text-fg-secondary">名称</label>
               <input
                 type="text"
                 value={form.name}
@@ -350,7 +350,7 @@ export function MobileQuickCommandSection() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">
+              <label className="mb-1 block text-meta text-fg-secondary">
                 作用域
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -374,20 +374,20 @@ export function MobileQuickCommandSection() {
                       key={s.value}
                       type="button"
                       onClick={() => setForm({ ...form, scope: s.value })}
-                      className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
+                      className={`rounded-xl border px-3 py-2.5 text-left pressable ${
                         active
                           ? 'border-indigo-500 bg-indigo-500/10'
-                          : 'border-edge bg-zinc-800/60'
+                          : 'border-edge bg-surface-raised/60'
                       }`}
                     >
                       <div
-                        className={`text-sm font-medium ${
-                          active ? 'text-indigo-200' : 'text-zinc-300'
+                        className={`text-body font-medium ${
+                          active ? 'text-indigo-200' : 'text-fg-secondary'
                         }`}
                       >
                         {s.label}
                       </div>
-                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                      <div className="mt-0.5 text-caption text-fg-tertiary">
                         {s.desc}
                       </div>
                     </button>
@@ -396,7 +396,7 @@ export function MobileQuickCommandSection() {
               </div>
               {form.scope === 'session' &&
                 (connections.length === 0 ? (
-                  <p className="mt-2 text-xs text-zinc-500">
+                  <p className="mt-2 text-meta text-fg-tertiary">
                     暂无已保存的连接，请先在连接页保存一个连接。
                   </p>
                 ) : (
@@ -427,7 +427,7 @@ export function MobileQuickCommandSection() {
                 ))}
             </div>
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">
+              <label className="mb-1 block text-meta text-fg-secondary">
                 {form.insertOnly
                   ? '命令（仅插入模式，单行内容）'
                   : '命令（每行一条，按顺序执行）'}
@@ -460,10 +460,10 @@ export function MobileQuickCommandSection() {
                 />
               )}
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-edge bg-zinc-800/60 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised/60 px-3 py-2.5">
               <div className="min-w-0 pr-3">
-                <div className="text-sm text-zinc-200">点击后自动执行</div>
-                <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                <div className="text-body text-fg">点击后自动执行</div>
+                <div className="mt-0.5 text-caption leading-relaxed text-fg-tertiary">
                   关闭后点击仅插入内容、不自动回车，可先手动改参数再执行
                 </div>
               </div>
@@ -476,8 +476,8 @@ export function MobileQuickCommandSection() {
             {!form.insertOnly && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="text-xs text-zinc-400">多条命令间隔</label>
-                  <span className="font-mono text-xs text-indigo-300">
+                  <label className="text-meta text-fg-secondary">多条命令间隔</label>
+                  <span className="font-mono text-meta text-indigo-300">
                     {form.intervalMs}ms
                   </span>
                 </div>
@@ -505,20 +505,20 @@ export function MobileQuickCommandSection() {
         title="确认删除"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             删除快捷命令「{deleteTarget?.name}」？此操作不可撤销。
           </p>
           <button
             type="button"
             onClick={() => void handleDelete()}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+            className="rounded-xl bg-red-600 px-4 py-3 text-body font-medium text-white active:bg-red-500"
           >
             删除
           </button>
           <button
             type="button"
             onClick={() => setDeleteTarget(null)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>

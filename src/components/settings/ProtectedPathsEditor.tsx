@@ -100,12 +100,12 @@ export function ProtectedPathsEditor({
 
   const chip =
     'inline-flex items-center gap-1 rounded-lg border py-0.5 pl-2 pr-1 font-mono';
-  const size = compact ? 'text-xs py-1' : 'text-xs';
-  const xBtn = `text-zinc-500 hover:text-red-400 active:text-red-400 ${compact ? 'px-1.5' : 'px-1'}`;
+  const size = compact ? 'text-meta py-1' : 'text-meta';
+  const xBtn = `text-fg-tertiary hover:text-red-400 active:text-red-400 ${compact ? 'px-2' : 'px-1'}`;
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {builtIns.map((p) => {
           const isDefault = defaults.includes(p);
           return (
@@ -113,13 +113,13 @@ export function ProtectedPathsEditor({
               key={`b:${p}`}
               className={`${chip} ${size} ${
                 isDefault
-                  ? 'border-edge bg-zinc-800 text-zinc-200'
+                  ? 'border-edge bg-surface-raised text-fg'
                   : 'border-indigo-700/50 bg-indigo-500/10 text-indigo-200'
               }`}
             >
               {p}
               {isDefault && (
-                <span className="font-sans text-[10px] text-zinc-500">
+                <span className="font-sans text-caption text-fg-tertiary">
                   内置
                 </span>
               )}
@@ -157,14 +157,14 @@ export function ProtectedPathsEditor({
         {removed.map((p) => (
           <span
             key={`r:${p}`}
-            className={`${chip} ${size} border-dashed border-edge-strong text-zinc-500 line-through`}
+            className={`${chip} ${size} border-dashed border-edge-strong text-fg-tertiary line-through`}
             title="已移除，点 ↺ 找回"
           >
             {p}
             <button
               type="button"
               onClick={() => restore(p)}
-              className={`${compact ? 'px-1.5' : 'px-1'} text-zinc-400 no-underline hover:text-indigo-300 active:text-indigo-300`}
+              className={`${compact ? 'px-2' : 'px-1'} text-fg-secondary no-underline hover:text-indigo-300 active:text-indigo-300`}
               aria-label={`找回 ${p}`}
             >
               ↺
@@ -172,7 +172,7 @@ export function ProtectedPathsEditor({
           </span>
         ))}
         {builtIns.length + customPaths.length + removed.length === 0 && (
-          <span className="text-xs italic text-zinc-500">
+          <span className="text-meta italic text-fg-tertiary">
             {rule ? '没有受保护路径' : '正在读取…'}
           </span>
         )}
@@ -196,8 +196,8 @@ export function ProtectedPathsEditor({
           autoCorrect="off"
           spellCheck={false}
           aria-label="添加受保护路径"
-          className={`min-w-0 flex-1 rounded-lg border border-edge bg-zinc-800 font-mono text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 ${
-            compact ? 'px-3 py-2.5 text-sm' : 'px-3 py-1.5 text-sm'
+          className={`min-w-0 flex-1 rounded-lg border border-edge bg-surface-raised font-mono text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 ${
+            compact ? 'px-3 py-3 text-body' : 'px-3 py-2 text-body'
           }`}
         />
         {compact ? (
@@ -205,7 +205,7 @@ export function ProtectedPathsEditor({
             type="button"
             onClick={() => void add()}
             disabled={!draft.trim()}
-            className="flex-shrink-0 rounded-lg bg-zinc-800 px-4 py-2.5 text-sm text-zinc-200 active:bg-state-mid disabled:opacity-40"
+            className="flex-shrink-0 rounded-lg bg-surface-raised px-4 py-3 text-body text-fg active:bg-state-mid disabled:opacity-40"
           >
             添加
           </button>
@@ -220,7 +220,7 @@ export function ProtectedPathsEditor({
           </Button>
         )}
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-meta text-red-400">{error}</p>}
     </div>
   );
 }

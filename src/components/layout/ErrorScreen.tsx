@@ -47,29 +47,29 @@ export default function ErrorScreen({ error, onClose }: ErrorScreenProps) {
 
   const detail = describeError(error);
   return (
-    <div className="flex h-full flex-col bg-zinc-950 text-zinc-300">
-      <div className="flex h-8 flex-shrink-0 select-none items-center justify-between border-b border-edge-subtle bg-zinc-950">
-        <div className="flex items-center gap-2 px-2 text-xs text-zinc-500">
+    <div className="flex h-full flex-col bg-surface-sunken text-fg-secondary">
+      <div className="flex h-8 flex-shrink-0 select-none items-center justify-between bg-surface-sunken">
+        <div className="flex items-center gap-2 px-2 text-meta text-fg-tertiary">
           <span className="text-red-400">错误</span>
         </div>
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center p-6">
         <div className="w-full max-w-3xl space-y-4 text-center">
-          <h1 className="text-xl font-semibold">出错了</h1>
-          <p className="text-sm text-zinc-500">应用遇到意外错误，请尝试重新加载</p>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-edge-subtle bg-zinc-900 p-4 text-left text-xs leading-relaxed text-zinc-400">
+          <h1 className="text-headline">出错了</h1>
+          <p className="text-body text-fg-secondary">应用遇到意外错误，请尝试重新加载</p>
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-edge-subtle bg-surface p-4 text-left text-meta leading-relaxed text-fg-secondary">
             {detail}
           </pre>
           <div className="flex items-center justify-center gap-2">
             <button
               type="button"
               onClick={handleCopy}
-              className={`rounded-md border px-4 py-2 text-sm transition-colors ${
+              className={`pressable focus-ring h-8 rounded-lg border px-4 text-body transition-colors ${
                 copyState === 'copied'
                   ? 'border-emerald-700/60 text-emerald-300'
                   : copyState === 'failed'
-                    ? 'border-edge text-zinc-500'
-                    : 'border-edge text-zinc-200 hover:bg-state-soft'
+                    ? 'border-edge-subtle text-fg-tertiary'
+                    : 'border-edge-subtle text-fg hover:bg-state-soft'
               }`}
             >
               {copyState === 'copied'
@@ -81,14 +81,14 @@ export default function ErrorScreen({ error, onClose }: ErrorScreenProps) {
             <button
               type="button"
               onClick={() => (onClose ? onClose() : window.location.reload())}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-500 transition-colors"
+              className="pressable focus-ring h-8 rounded-lg bg-indigo-600 px-4 text-body text-white hover:bg-indigo-500"
             >
               {onClose ? '关闭预览' : '重新加载'}
             </button>
           </div>
-          <p className="text-xs leading-relaxed text-zinc-500">
+          <p className="text-meta leading-relaxed text-fg-tertiary">
             反馈此问题：加入 QQ 交流群{' '}
-            <span className="font-medium text-zinc-300">{QQ_GROUP}</span>
+            <span className="font-medium text-fg-secondary">{QQ_GROUP}</span>
             ，把复制的错误信息发给开发者，我们会跟进处理
           </p>
         </div>

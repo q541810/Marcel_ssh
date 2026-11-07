@@ -29,7 +29,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '' };
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** Skill management for mobile: import file / create / edit / toggle / delete. */
 export function MobileSkillSection() {
@@ -252,7 +252,7 @@ export function MobileSkillSection() {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-edge px-2 py-3 text-xs text-zinc-300 transition-colors duration-100 active:scale-[0.99] active:bg-zinc-900"
+          className="flex items-center justify-center gap-1.5 rounded-xl min-h-11 border border-dashed border-edge px-2 py-3 text-body text-fg-secondary pressable active:bg-surface"
         >
           <FileUp className="h-4 w-4" />
           导入文件
@@ -263,7 +263,7 @@ export function MobileSkillSection() {
             setMessage(null);
             setForm(EMPTY_FORM);
           }}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-edge px-2 py-3 text-xs text-zinc-300 transition-colors duration-100 active:scale-[0.99] active:bg-zinc-900"
+          className="flex items-center justify-center gap-1.5 rounded-xl min-h-11 border border-dashed border-edge px-2 py-3 text-body text-fg-secondary pressable active:bg-surface"
         >
           <Plus className="h-4 w-4" />
           手动创建
@@ -275,7 +275,7 @@ export function MobileSkillSection() {
             closeGh();
             setGhOpen(true);
           }}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-edge px-2 py-3 text-xs text-zinc-300 transition-colors duration-100 active:scale-[0.99] active:bg-zinc-900"
+          className="flex items-center justify-center gap-1.5 rounded-xl min-h-11 border border-dashed border-edge px-2 py-3 text-body text-fg-secondary pressable active:bg-surface"
         >
           <CloudDownload className="h-4 w-4" />
           GitHub
@@ -290,17 +290,17 @@ export function MobileSkillSection() {
       />
 
       {displayError && (
-        <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+        <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300">
           {displayError}
         </div>
       )}
 
       {loading && skills.length === 0 && (
-        <p className="py-8 text-center text-sm text-zinc-500">加载 Skills…</p>
+        <p className="py-8 text-center text-body text-fg-tertiary">加载 Skills…</p>
       )}
 
       {!loading && skills.length === 0 && !displayError && (
-        <p className="py-8 text-center text-sm text-zinc-500">
+        <p className="py-8 text-center text-body text-fg-tertiary">
           暂无 Skills，可导入 SKILL.md 文件或手动创建。
         </p>
       )}
@@ -317,12 +317,12 @@ export function MobileSkillSection() {
             onTouchEnd={drag.onTouchEndPending}
             style={{ transform: drag.translateFor(skill.id) }}
             className={
-              'relative flex touch-pan-y items-center gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3' +
+              'relative flex touch-pan-y items-center gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3' +
               (drag.isDragging && !isDragged
                 ? ' transition-transform duration-200 ease-out motion-reduce:transition-none'
                 : '') +
               (isDragged
-                ? ' z-50 shadow-lg shadow-black/40 ring-1 ring-indigo-400/60'
+                ? ' z-50 shadow-raised shadow-black/40 ring-1 ring-indigo-400/60'
                 : '')
             }
           >
@@ -343,26 +343,26 @@ export function MobileSkillSection() {
             className="min-w-0 flex-1 text-left"
           >
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="truncate text-sm font-medium text-zinc-100">
+              <span className="truncate text-body font-medium text-fg">
                 {skill.name}
               </span>
               {builtin && (
-                <span className="flex-shrink-0 rounded border border-edge bg-zinc-800 px-1 py-px text-[10px] leading-4 text-zinc-400">
+                <span className="flex-shrink-0 rounded border border-edge bg-surface-raised px-1 py-px text-caption leading-4 text-fg-secondary">
                   内置
                 </span>
               )}
               {skill.resources && skill.resources.length > 0 && (
-                <span className="flex-shrink-0 rounded border border-edge bg-zinc-800 px-1 py-px text-[10px] leading-4 text-zinc-400">
+                <span className="flex-shrink-0 rounded border border-edge bg-surface-raised px-1 py-px text-caption leading-4 text-fg-secondary">
                   {skill.resources.length} 资源
                 </span>
               )}
             </div>
             {skill.description ? (
-              <div className="mt-0.5 line-clamp-2 text-xs text-zinc-500">
+              <div className="mt-0.5 line-clamp-2 text-meta text-fg-tertiary">
                 {skill.description}
               </div>
             ) : (
-              <div className="mt-0.5 text-xs italic text-zinc-600">无描述</div>
+              <div className="mt-0.5 text-meta italic text-fg-disabled">无描述</div>
             )}
           </button>
           {/* Toggle 区域不参与长按拖拽 */}
@@ -386,7 +386,7 @@ export function MobileSkillSection() {
             <button
               type="button"
               onClick={() => setForm(null)}
-              className="w-full rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="w-full rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               关闭
             </button>
@@ -402,7 +402,7 @@ export function MobileSkillSection() {
                       setDeleteTarget(target);
                     }
                   }}
-                  className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-red-300 active:bg-state-mid"
+                  className="rounded-xl bg-surface-raised px-4 py-3 text-body text-red-300 active:bg-state-mid"
                 >
                   删除
                 </button>
@@ -410,7 +410,7 @@ export function MobileSkillSection() {
               <button
                 type="button"
                 onClick={() => setForm(null)}
-                className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+                className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
               >
                 取消
               </button>
@@ -418,7 +418,7 @@ export function MobileSkillSection() {
                 type="button"
                 onClick={() => void handleSubmit()}
                 disabled={saving}
-                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
               >
                 {saving ? '保存中…' : '保存'}
               </button>
@@ -429,17 +429,17 @@ export function MobileSkillSection() {
         {form && (
           <div className="space-y-3 px-4 pb-3">
             {message && (
-              <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+              <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300">
                 {message}
               </div>
             )}
             {form.readonly && (
-              <p className="text-xs text-zinc-500">
+              <p className="text-meta text-fg-tertiary">
                 内置 Skill 由应用维护并随版本自动更新，不可编辑或删除，可在列表中启用/禁用。
               </p>
             )}
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">名称</label>
+              <label className="mb-1 block text-meta text-fg-secondary">名称</label>
               <input
                 type="text"
                 value={form.name}
@@ -450,7 +450,7 @@ export function MobileSkillSection() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">
+              <label className="mb-1 block text-meta text-fg-secondary">
                 描述（帮助 Agent 判断何时使用）
               </label>
               <input
@@ -465,7 +465,7 @@ export function MobileSkillSection() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">
+              <label className="mb-1 block text-meta text-fg-secondary">
                 提示词内容
               </label>
               <textarea
@@ -477,7 +477,7 @@ export function MobileSkillSection() {
                 autoCorrect="off"
                 spellCheck={false}
                 readOnly={form.readonly}
-                className={`${inputClass} resize-none font-mono text-xs leading-relaxed`}
+                className={`${inputClass} resize-none font-mono text-meta leading-relaxed`}
               />
             </div>
             <SkillResourcesEditor
@@ -501,7 +501,7 @@ export function MobileSkillSection() {
               type="button"
               onClick={() => void handleGhImportSelected()}
               disabled={ghBusy || selected.size === 0}
-              className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
             >
               {ghBusy ? '导入中…' : `导入选中（${selected.size}）`}
             </button>
@@ -510,7 +510,7 @@ export function MobileSkillSection() {
               <button
                 type="button"
                 onClick={closeGh}
-                className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+                className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
               >
                 取消
               </button>
@@ -518,7 +518,7 @@ export function MobileSkillSection() {
                 type="button"
                 onClick={() => void handleGhFetch()}
                 disabled={ghBusy || !ghUrl.trim()}
-                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
               >
                 {ghBusy ? '拉取中…' : '拉取'}
               </button>
@@ -529,7 +529,7 @@ export function MobileSkillSection() {
         <div className="space-y-3 px-4 pb-3">
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs text-zinc-400">仓库 / 目录 / 文件地址</label>
+              <label className="text-meta text-fg-secondary">仓库 / 目录 / 文件地址</label>
               <GithubImportGuideButton
                 open={guideOpen}
                 onToggle={() => setGuideOpen((v) => !v)}
@@ -547,19 +547,19 @@ export function MobileSkillSection() {
               disabled={ghBusy}
               className={inputClass}
             />
-            <p className="mt-1 text-[11px] text-zinc-500">
+            <p className="mt-1 text-caption text-fg-tertiary">
               仓库根地址会列出其中所有 skill 供勾选；指向具体目录/文件的地址直接导入。
             </p>
           </div>
           {guideOpen && <GithubImportGuide touch />}
 
-          {ghStatus && <div className="text-xs text-zinc-500">{ghStatus}</div>}
+          {ghStatus && <div className="text-meta text-fg-tertiary">{ghStatus}</div>}
           {imp.active && (
             <SkillImportProgressBar progress={imp.progress} onCancel={imp.cancel} touch />
           )}
 
           {ghError && (
-            <div className="whitespace-pre-wrap break-words rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+            <div className="whitespace-pre-wrap break-words rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300">
               {ghError}
             </div>
           )}
@@ -569,7 +569,7 @@ export function MobileSkillSection() {
               {found.skills.map((s) => (
                 <label
                   key={s.subpath}
-                  className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 active:bg-zinc-900"
+                  className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 active:bg-surface"
                 >
                   <input
                     type="checkbox"
@@ -578,8 +578,8 @@ export function MobileSkillSection() {
                     className="mt-0.5 accent-indigo-500"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-zinc-200">{s.name}</span>
-                    <span className="block truncate text-[11px] text-zinc-500">
+                    <span className="block truncate text-body text-fg">{s.name}</span>
+                    <span className="block truncate text-caption text-fg-tertiary">
                       {s.subpath}
                       {s.resourceCount > 0 ? ` · ${s.resourceCount} 个资源文件` : ''}
                     </span>
@@ -598,20 +598,20 @@ export function MobileSkillSection() {
         title="确认删除"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             删除 Skill「{deleteTarget?.name}」？此操作不可撤销。
           </p>
           <button
             type="button"
             onClick={() => void handleDelete()}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+            className="rounded-xl bg-red-600 px-4 py-3 text-body font-medium text-white active:bg-red-500"
           >
             删除
           </button>
           <button
             type="button"
             onClick={() => setDeleteTarget(null)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>

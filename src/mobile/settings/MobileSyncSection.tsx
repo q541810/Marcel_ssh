@@ -14,7 +14,7 @@ export function MobileSyncSection() {
         <SyncPanel variant="mobile" />
       </section>
       <section>
-        <h2 className="mb-2 px-1 text-xs font-medium text-zinc-500">会话归档</h2>
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">会话归档</h2>
         <MobileArchiveSection />
       </section>
     </div>

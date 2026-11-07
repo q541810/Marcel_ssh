@@ -91,11 +91,11 @@ export default function InstallOverlay({
             : '正在卸载插件';
       if (status.kind === 'cancelling') {
         icon = (
-          <span className={`${iconClass} block text-zinc-400`}>
+          <span className={`${iconClass} block text-fg-secondary`}>
             <X className="w-10 h-10" />
           </span>
         );
-        body = <p className="text-sm text-zinc-400">正在取消，请稍候…</p>;
+        body = <p className="text-body text-fg-secondary">正在取消，请稍候…</p>;
         footer = null;
       } else {
         icon = (
@@ -105,14 +105,14 @@ export default function InstallOverlay({
         );
         body = (
           <div className="space-y-3">
-            <p className="text-sm text-zinc-400">
+            <p className="text-body text-fg-secondary">
               {kind === 'install'
                 ? '下载并解压插件源码'
                 : kind === 'update'
                   ? '下载并更新插件（保留个人数据）'
                   : '正在删除插件目录及其数据'}
               {(kind === 'install' || kind === 'update') && progress && (
-                <span className="block text-xs text-zinc-500 mt-1">
+                <span className="block text-meta text-fg-tertiary mt-1">
                   {progress.total > 0
                     ? `${progress.received} / ${progress.total}`
                     : '连接中…'}
@@ -122,7 +122,7 @@ export default function InstallOverlay({
             <div className="w-72 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
               {percent !== null ? (
                 <div
-                  className="h-full bg-indigo-500 transition-all duration-200"
+                  className="h-full bg-indigo-500 transition duration-200"
                   style={{ width: `${percent}%` }}
                 />
               ) : (
@@ -130,7 +130,7 @@ export default function InstallOverlay({
               )}
             </div>
             {percent !== null && (
-              <p className="text-xs text-zinc-500 text-right">{percent}%</p>
+              <p className="text-meta text-fg-tertiary text-right">{percent}%</p>
             )}
           </div>
         );
@@ -145,7 +145,7 @@ export default function InstallOverlay({
       icon = <Check className={`${iconClass} text-emerald-400`} />;
       title = kind === 'install' ? '安装完成' : kind === 'update' ? '更新完成' : '卸载完成';
       body = (
-        <p className="text-sm text-zinc-300 leading-relaxed">
+        <p className="text-body text-fg-secondary leading-relaxed">
           {kind === 'install'
             ? '插件已安装到本地，重启应用后插件生效。'
             : kind === 'update'
@@ -160,9 +160,9 @@ export default function InstallOverlay({
       );
       break;
     case 'cancelled':
-      icon = <X className={`${iconClass} text-zinc-400`} />;
+      icon = <X className={`${iconClass} text-fg-secondary`} />;
       title = kind === 'install' ? '已取消安装' : kind === 'update' ? '已取消更新' : '已取消卸载';
-      body = <p className="text-sm text-zinc-400">未留下任何残留文件。</p>;
+      body = <p className="text-body text-fg-secondary">未留下任何残留文件。</p>;
       footer = (
         <Button variant="primary" size="sm" onClick={onClose}>
           关闭
@@ -173,7 +173,7 @@ export default function InstallOverlay({
       icon = <AlertTriangle className={`${iconClass} text-red-400`} />;
       title = kind === 'install' ? '安装失败' : kind === 'update' ? '更新失败' : '卸载失败';
       body = (
-        <p className="text-xs text-red-400 leading-relaxed break-all max-h-28 overflow-y-auto">
+        <p className="text-meta text-red-400 leading-relaxed break-all max-h-28 overflow-y-auto">
           {status.message}
         </p>
       );
@@ -197,16 +197,16 @@ export default function InstallOverlay({
         role="dialog"
         aria-modal="true"
         onAnimationEnd={presence.onAnimationEnd}
-        className={`relative w-full max-w-md mx-4 rounded-2xl bg-zinc-800 border border-edge shadow-2xl px-6 py-8 flex flex-col items-center text-center ${
+        className={`relative w-full max-w-md mx-4 rounded-2xl bg-surface-raised border border-edge shadow-raised px-6 py-8 flex flex-col items-center text-center ${
           exiting ? 'modal-panel-exit' : 'modal-panel-enter'
         }`}
       >
         {icon}
-        <h2 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
+        <h2 className="text-title text-fg flex items-center gap-2">
           {kind === 'install' ? <Package className="w-4 h-4" /> : <Trash2 className="w-4 h-4" />}
           <span className="truncate">{pluginName}</span>
         </h2>
-        <p className="text-xs text-zinc-500 mt-0.5">{title}</p>
+        <p className="text-meta text-fg-tertiary mt-1">{title}</p>
         <div className="mt-4">{body}</div>
         {footer && <div className="mt-6">{footer}</div>}
       </div>

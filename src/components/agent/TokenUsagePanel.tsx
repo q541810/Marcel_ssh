@@ -63,7 +63,7 @@ export function TokenUsagePanel({
   // 一个空括号式的占位比一句话更难读，也没有能对比的东西。
   if (meter.usedTokens == null && !totals) {
     return (
-      <p className="text-[0.92em] leading-snug text-zinc-500" data-testid="token-usage-panel">
+      <p className="text-[0.92em] leading-snug text-fg-tertiary" data-testid="token-usage-panel">
         还没有用量记录，下一个回合开始就会记下来。
       </p>
     );
@@ -74,9 +74,9 @@ export function TokenUsagePanel({
       {/* ── 上下文占用（本会话自己） ── */}
       <section className="space-y-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[0.85em] font-medium text-zinc-400">上下文占用</span>
+          <span className="text-[0.85em] font-medium text-fg-secondary">上下文占用</span>
           <span
-            className={`text-[0.85em] ${meter.windowTokens === 0 ? 'text-amber-300/90' : 'text-zinc-500'}`}
+            className={`text-[0.85em] ${meter.windowTokens === 0 ? 'text-amber-300/90' : 'text-fg-tertiary'}`}
           >
             {meter.windowTokens === 0 ? '最近一次请求 · 未配置窗口' : '最近一次请求'}
           </span>
@@ -85,17 +85,17 @@ export function TokenUsagePanel({
         <div className="flex items-baseline justify-between gap-2">
           <span
             className={`text-[1.75em] font-semibold leading-none tabular-nums ${
-              overThreshold ? 'text-amber-300' : 'text-zinc-100'
+              overThreshold ? 'text-amber-300' : 'text-fg'
             }`}
           >
             {headline}
             {!byPercent && meter.usedTokens != null && (
-              <span className="ml-1 text-[0.5em] font-normal text-zinc-500">tokens</span>
+              <span className="ml-1 text-[0.5em] font-normal text-fg-tertiary">tokens</span>
             )}
           </span>
           {byPercent && (
             <span
-              className="text-[0.92em] tabular-nums text-zinc-400"
+              className="text-[0.92em] tabular-nums text-fg-secondary"
               title={
                 meter.usedTokens != null && meter.windowTokens > 0
                   ? `${formatExactTokens(meter.usedTokens)} / ${formatExactTokens(meter.windowTokens)}`
@@ -115,7 +115,7 @@ export function TokenUsagePanel({
         </div>
 
         {meter.breakdown && meter.windowTokens > 0 && (
-          <div className="relative h-1.5 flex w-full overflow-hidden rounded-full bg-zinc-700">
+          <div className="relative h-1.5 flex w-full overflow-hidden rounded-full bg-state-mid">
             {/* 整条长度 = provider 报的占用比例；内部按估算比例切分（分母是估算
                 总量，不是窗口）——长度可信、切分是估算，界线画清 */}
             <div
@@ -147,11 +147,11 @@ export function TokenUsagePanel({
           <dl className="grid grid-cols-3 gap-x-2">
             {segments.map((s) => (
               <div key={s.key} className="min-w-0">
-                <dt className="flex items-center gap-1.5 text-[0.85em] text-zinc-400">
+                <dt className="flex items-center gap-1.5 text-[0.85em] text-fg-secondary">
                   <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${s.color}`} aria-hidden />
                   <span className="truncate">{s.label}</span>
                 </dt>
-                <dd className="mt-0.5 text-[0.85em] tabular-nums text-zinc-300">
+                <dd className="mt-0.5 text-[0.85em] tabular-nums text-fg-secondary">
                   ~{formatCompactTokens(s.tokens)}
                 </dd>
               </div>
@@ -160,7 +160,7 @@ export function TokenUsagePanel({
         )}
 
         {meter.windowTokens === 0 && (
-          <p className="text-[0.85em] leading-snug text-zinc-500">
+          <p className="text-[0.85em] leading-snug text-fg-tertiary">
             在设置里给模型填上窗口，这里就会按占比显示；到
             {Math.round(COMPACT_THRESHOLD_RATIO * 100)}% 会自动压缩上下文。
           </p>
@@ -172,13 +172,13 @@ export function TokenUsagePanel({
       {/* ── 本会话累计 ── */}
       <section className="space-y-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[0.85em] font-medium text-zinc-400">本会话累计</span>
-          <span className="text-[0.85em] text-zinc-500">含子 agent</span>
+          <span className="text-[0.85em] font-medium text-fg-secondary">本会话累计</span>
+          <span className="text-[0.85em] text-fg-tertiary">含子 agent</span>
         </div>
 
         {!totals ? (
           // 走到这里 = 有过请求但渠道没报用量（一点数据都没有的情况上面已经返回）
-          <p className="text-[0.85em] leading-snug text-zinc-500">
+          <p className="text-[0.85em] leading-snug text-fg-tertiary">
             这个渠道没有返回用量（只有上面的上下文占用，而且是估算的）。
           </p>
         ) : (
@@ -199,9 +199,9 @@ export function TokenUsagePanel({
             />
             <CacheHitRow totals={totals} />
             <div className="flex items-baseline justify-between gap-2 border-t border-edge/70 pt-1">
-              <span className="text-[0.92em] text-zinc-400">合计</span>
+              <span className="text-[0.92em] text-fg-secondary">合计</span>
               <span
-                className="text-[1em] font-semibold text-zinc-100 tabular-nums"
+                className="text-[1em] font-semibold text-fg tabular-nums"
                 title={formatExactTokens(totals.totalTokens)}
               >
                 {formatCompactTokens(totals.totalTokens)}
@@ -243,11 +243,11 @@ function CacheHitRow({ totals }: { totals: NonNullable<ReturnType<typeof usageTo
     return (
       <div data-testid="cache-hit-row">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[0.92em] text-zinc-400">缓存命中率</span>
-          <span className="text-[1em] tabular-nums text-zinc-500">—</span>
+          <span className="text-[0.92em] text-fg-secondary">缓存命中率</span>
+          <span className="text-[1em] tabular-nums text-fg-tertiary">—</span>
         </div>
         {totals.cachedReadTokens == null && (
-          <div className="mt-0.5 text-[0.85em] text-zinc-500">该渠道没有返回缓存用量</div>
+          <div className="mt-0.5 text-[0.85em] text-fg-tertiary">该渠道没有返回缓存用量</div>
         )}
       </div>
     );
@@ -255,15 +255,15 @@ function CacheHitRow({ totals }: { totals: NonNullable<ReturnType<typeof usageTo
   return (
     <div data-testid="cache-hit-row">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[0.92em] text-zinc-400">缓存命中率</span>
+        <span className="text-[0.92em] text-fg-secondary">缓存命中率</span>
         <span
-          className="text-[1em] tabular-nums text-zinc-100"
+          className="text-[1em] tabular-nums text-fg"
           title={`命中 ${formatExactTokens(totals.cachedReadTokens ?? 0)} / 输入 ${formatExactTokens(totals.promptTokens)}`}
         >
           {formatPercent(percent)}%
         </span>
       </div>
-      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700" aria-hidden>
+      <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-state-mid" aria-hidden>
         <div
           className="h-full rounded-full bg-emerald-400"
           style={{ width: `${percent}%` }}
@@ -289,15 +289,15 @@ function UsageRow({
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[0.92em] text-zinc-400">{label}</span>
+        <span className="text-[0.92em] text-fg-secondary">{label}</span>
         <span
-          className="text-[1em] text-zinc-100 tabular-nums"
+          className="text-[1em] text-fg tabular-nums"
           title={formatExactTokens(value)}
         >
           {formatCompactTokens(value)}
         </span>
       </div>
-      {caption && <div className="mt-0.5 text-[0.85em] text-zinc-500">{caption}</div>}
+      {caption && <div className="mt-0.5 text-[0.85em] text-fg-tertiary">{caption}</div>}
     </div>
   );
 }

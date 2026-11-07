@@ -103,8 +103,8 @@ function MemoryCard({ meta }: { meta: MemoryToolMeta }) {
     else setError('这条记忆已经不在了（被删除或撤销）');
   };
 
-  const btn = `rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-state-mid/60 active:scale-[0.96] transition disabled:opacity-40 ${
-    mobile ? 'px-2.5 py-1.5 text-xs' : 'px-2 py-0.5 text-[11px]'
+  const btn = `rounded-md text-fg-secondary hover:text-fg hover:bg-state-mid/60 pressable disabled:opacity-40 ${
+    mobile ? 'px-2.5 py-1.5 text-meta' : 'px-2 py-0.5 text-caption'
   }`;
 
   return (
@@ -123,10 +123,10 @@ function MemoryCard({ meta }: { meta: MemoryToolMeta }) {
       >
         {expanded && item && (
           <div className="min-w-0 ml-3 border-l border-edge/50 pl-3 pr-1.5 py-1.5">
-            <div className="whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-400">
+            <div className="whitespace-pre-wrap break-words text-meta leading-relaxed text-fg-secondary">
               {meta.op === 'update' && meta.before && meta.before.content !== item.content ? (
                 <>
-                  <span className="text-zinc-600 line-through">{meta.before.content}</span>
+                  <span className="text-fg-disabled line-through">{meta.before.content}</span>
                   <br />
                   {item.content}
                 </>
@@ -146,10 +146,10 @@ function MemoryCard({ meta }: { meta: MemoryToolMeta }) {
                 </button>
               </div>
             )}
-            {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+            {error && <p className="mt-1 text-meta text-red-400">{error}</p>}
           </div>
         )}
-        {expanded && !item && error && <p className="ml-3 pl-3 text-xs text-red-400">{error}</p>}
+        {expanded && !item && error && <p className="ml-3 pl-3 text-meta text-red-400">{error}</p>}
       </ToolCardFrame>
       <MemoryEditDialog open={!!editing} item={editing} onClose={() => setEditing(null)} />
     </>

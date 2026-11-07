@@ -705,7 +705,7 @@ export default function MobileTerminalHost({
   );
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-zinc-950">
+    <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken">
       {listPresence.mounted && (
         <div
           onAnimationEnd={listPresence.onAnimationEnd}
@@ -734,17 +734,17 @@ export default function MobileTerminalHost({
       {PasswordPromptEl}
 
       {!showList && panelMode === 'connecting' && (
-        <div className="flex-shrink-0 border-b border-amber-900/40 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-200">
+        <div className="flex-shrink-0 border-b border-amber-900/40 bg-amber-950/30 px-3 py-1.5 text-meta text-amber-200">
           正在连接…
         </div>
       )}
       {!showList && panelMode === 'error' && activeSession?.errorMessage && (
-        <div className="flex-shrink-0 border-b border-red-900/40 bg-red-950/30 px-3 py-1.5 text-xs text-red-300">
+        <div className="flex-shrink-0 border-b border-red-900/40 bg-red-950/30 px-3 py-1.5 text-meta text-red-300">
           {activeSession.errorMessage}
         </div>
       )}
       {!showList && panelMode === 'disconnected' && (
-        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-zinc-900/60 px-3 py-1.5 text-xs text-zinc-400">
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-surface/60 px-3 py-1.5 text-meta text-fg-secondary">
           <span>会话已断开{activeSession?.configId ? '，可点击重连' : ''}</span>
           <button
             type="button"
@@ -756,7 +756,7 @@ export default function MobileTerminalHost({
         </div>
       )}
       {ioError && !showList && (
-        <div className="flex-shrink-0 border-b border-red-900/40 bg-red-950/30 px-3 py-1.5 text-xs text-red-300">
+        <div className="flex-shrink-0 border-b border-red-900/40 bg-red-950/30 px-3 py-1.5 text-meta text-red-300">
           {ioError}
         </div>
       )}
@@ -776,7 +776,7 @@ export default function MobileTerminalHost({
             />
           )}
           {copyHint && hasSelection && !copied && (
-            <div className="pointer-events-none flex-shrink-0 border-t border-indigo-500/30 bg-indigo-500/15 px-3 py-1.5 text-center text-[11px] text-indigo-200">
+            <div className="pointer-events-none flex-shrink-0 border-t border-indigo-500/30 bg-indigo-500/15 px-3 py-1.5 text-center text-caption text-indigo-200">
               已选中 · 点下方复制键复制
             </div>
           )}
@@ -787,7 +787,7 @@ export default function MobileTerminalHost({
             onKey={handleAuxKey}
           />
           {!isLive && (
-            <div className="pointer-events-none px-2 pb-1 text-center text-[10px] text-zinc-600">
+            <div className="pointer-events-none px-2 pb-1 text-center text-caption text-fg-disabled">
               未连接时输入不会发送
             </div>
           )}

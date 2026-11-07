@@ -30,7 +30,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
           setEditing(false);
           if (p !== currentPath) onNavigate(p);
         }}
-        className="flex-1 rounded-md bg-zinc-800 border border-edge px-2 py-0.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 font-mono"
+        className="flex-1 rounded-md bg-surface-raised border border-edge h-6 px-2 text-body text-fg outline-none focus:border-indigo-500 font-mono"
         autoFocus
       />
     );
@@ -38,7 +38,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
 
   return (
     <div
-      className="flex-1 flex items-center gap-0.5 text-xs text-zinc-400 overflow-x-auto whitespace-nowrap cursor-text rounded-md px-2 py-0.5 hover:bg-state-soft transition-colors"
+      className="flex-1 flex items-center gap-0.5 text-body text-fg-secondary overflow-x-auto whitespace-nowrap cursor-text rounded-md px-2 h-6 hover:bg-state-soft transition-colors"
       onClick={() => {
         setEditValue(currentPath);
         setEditing(true);
@@ -51,14 +51,14 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
           e.stopPropagation();
           onNavigate('/');
         }}
-        className="text-zinc-400 hover:text-indigo-400 transition-colors px-0.5"
+        className="text-fg-secondary hover:text-indigo-400 transition-colors px-0.5"
         title="根目录"
       >
         /
       </button>
       {pathParts.map((part, i) => (
         <span key={i} className="flex items-center">
-          <span className="text-zinc-600">&gt;</span>
+          <span className="text-fg-disabled">&gt;</span>
           <button
             type="button"
             onClick={(e) => {

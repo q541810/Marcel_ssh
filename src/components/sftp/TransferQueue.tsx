@@ -17,19 +17,19 @@ import { cancelTransfer } from '@/stores/transferScheduler';
 
 function KindIcon({ item }: { item: StoredTransferItem }) {
   if (item.kind === 'download') {
-    return <ArrowDownToLine className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+    return <ArrowDownToLine size={16} strokeWidth={1.5} className="text-emerald-400 flex-shrink-0" />;
   }
   if (item.kind === 'folder-upload') {
-    return <FolderUp className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />;
+    return <FolderUp size={16} strokeWidth={1.5} className="text-indigo-400 flex-shrink-0" />;
   }
-  return <ArrowUpFromLine className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />;
+  return <ArrowUpFromLine size={16} strokeWidth={1.5} className="text-indigo-400 flex-shrink-0" />;
 }
 
 function StatusIndicator({ item }: { item: StoredTransferItem }) {
   if (item.status === 'queued') {
     return (
-      <span className="flex items-center gap-1 text-[10px] text-zinc-500 flex-shrink-0">
-        <Clock className="w-3 h-3" />
+      <span className="flex items-center gap-1 text-caption text-fg-tertiary flex-shrink-0">
+        <Clock size={14} strokeWidth={1.5} />
         排队中
       </span>
     );
@@ -43,11 +43,11 @@ function StatusIndicator({ item }: { item: StoredTransferItem }) {
     );
   }
   if (item.status === 'done') {
-    return <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+    return <Check size={16} strokeWidth={1.5} className="text-emerald-400 flex-shrink-0" />;
   }
   return (
     <X
-      className={`w-3.5 h-3.5 flex-shrink-0 ${item.status === 'error' ? 'text-red-400' : 'text-zinc-400'}`}
+      className={`w-3.5 h-3.5 flex-shrink-0 ${item.status === 'error' ? 'text-red-400' : 'text-fg-secondary'}`}
     />
   );
 }
@@ -55,7 +55,7 @@ function StatusIndicator({ item }: { item: StoredTransferItem }) {
 function statusTextClass(item: StoredTransferItem): string {
   if (item.status === 'error') return 'text-red-300';
   if (item.status === 'done') return 'text-emerald-300';
-  if (item.status === 'cancelled') return 'text-zinc-500';
+  if (item.status === 'cancelled') return 'text-fg-tertiary';
   return item.kind === 'download' ? 'text-emerald-300' : 'text-indigo-300';
 }
 
@@ -80,18 +80,18 @@ function TransferRow({
   const pct = item.total > 0 ? Math.min(100, Math.round((item.written * 100) / item.total)) : 0;
 
   return (
-    <div className="flex flex-col gap-1 px-3 py-2 border-b border-edge-subtle/60 last:border-b-0">
+    <div className="flex flex-col gap-1 px-3 py-2">
       <div className="flex items-center gap-2 min-w-0">
         <KindIcon item={item} />
         {item.source === 'agent' && (
           <span
-            className="flex-shrink-0 text-[9px] px-1 py-px rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-medium leading-tight"
+            className="flex-shrink-0 text-caption px-1 py-px rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-medium leading-tight"
             title="Agent 发起"
           >
             AI
           </span>
         )}
-        <span className="flex-1 min-w-0 truncate text-xs text-zinc-200" title={item.fileName}>
+        <span className="flex-1 min-w-0 truncate text-body text-fg" title={item.fileName}>
           {item.fileName}
         </span>
         <StatusIndicator item={item} />
@@ -99,7 +99,7 @@ function TransferRow({
           <button
             type="button"
             onClick={() => onCancel(item.id)}
-            className="rounded-md bg-zinc-700/60 px-2 py-0.5 text-[10px] text-zinc-300 hover:bg-red-900/60 hover:text-red-300 transition-colors flex-shrink-0"
+            className="h-5 inline-flex items-center rounded-md bg-state-soft px-2 text-caption text-fg-secondary pressable focus-ring hover:bg-red-900/60 hover:text-red-300 transition-colors flex-shrink-0"
             title={item.kind === 'download' ? '取消下载' : '取消上传'}
           >
             取消
@@ -109,21 +109,21 @@ function TransferRow({
           <button
             type="button"
             onClick={() => onRemove(item.id)}
-            className="text-zinc-500 hover:text-zinc-300 transition-colors flex-shrink-0"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-tertiary hover:bg-state-soft hover:text-fg transition-colors pressable focus-ring flex-shrink-0"
             title="移除记录"
             aria-label="移除记录"
           >
-            <X className="w-3 h-3" />
+            <X size={14} strokeWidth={1.5} />
           </button>
         )}
       </div>
-      <div className={`text-[11px] truncate ${statusTextClass(item)}`} title={item.statusText}>
+      <div className={`text-caption truncate ${statusTextClass(item)}`} title={item.statusText}>
         {item.statusText}
       </div>
       {showProgress && (
-        <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
+        <div className="w-full h-1 rounded-full bg-state-mid overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-200 ${item.kind === 'download' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+            className={`h-full rounded-full transition-[width] duration-200 ${item.kind === 'download' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -154,14 +154,14 @@ export function TransferCenterView({
   const hasFinished = list.some((item) => isFinished(item.status));
 
   return (
-    <div className="fixed left-16 bottom-2 z-50 w-[360px] max-h-[60vh] flex flex-col rounded-lg border border-edge-subtle bg-zinc-900 shadow-xl modal-panel-enter">
-      <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2">
-        <h3 className="flex-1 text-xs font-semibold text-zinc-200">传输中心</h3>
+    <div className="fixed left-16 bottom-2 z-50 w-[360px] max-h-[60vh] flex flex-col surface-glass rounded-xl modal-panel-enter">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <h3 className="flex-1 text-title text-fg">传输中心</h3>
         {hasFinished && (
           <button
             type="button"
             onClick={onClear}
-            className="rounded-md bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 hover:bg-state-mid transition-colors"
+            className="h-6 inline-flex items-center rounded-md px-2 text-meta text-fg-secondary hover:bg-state-soft hover:text-fg transition-colors pressable focus-ring"
           >
             清除已完成
           </button>
@@ -169,20 +169,20 @@ export function TransferCenterView({
         <button
           type="button"
           onClick={onClose}
-          className="text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-tertiary hover:bg-state-soft hover:text-fg transition-colors pressable focus-ring"
           title="关闭"
           aria-label="关闭"
         >
-          <X className="w-3.5 h-3.5" />
+          <X size={16} strokeWidth={1.5} />
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
         {list.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-3">
-              <ArrowUpFromLine className="w-5 h-5 text-zinc-500" />
+            <div className="w-12 h-12 rounded-full bg-surface-raised flex items-center justify-center mb-3">
+              <ArrowUpFromLine size={20} strokeWidth={1.5} className="text-fg-tertiary" />
             </div>
-            <p className="text-xs text-zinc-500">暂无传输任务</p>
+            <p className="text-body text-fg-secondary">暂无传输任务</p>
           </div>
         ) : (
           list.map((item) => (

@@ -90,12 +90,12 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
   const closeMarketPage = useMarketPageStore((s) => s.closePage);
   if (marketOpen && activeCategory === 'tools' && !isSearching) {
     return (
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-zinc-900">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
         <div className="flex-shrink-0 border-b border-edge-subtle px-4 py-2">
           <button
             type="button"
             onClick={closeMarketPage}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-state-soft/60 hover:text-zinc-200"
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-body text-fg-secondary transition-colors hover:bg-state-soft/60 hover:text-fg"
           >
             <ChevronLeft className="h-4 w-4" />
             返回{getSettingsCategoryLabel('tools')}
@@ -139,7 +139,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
       onScroll={(e) => {
         if (!showRulesPage) mainScrollTop.current = e.currentTarget.scrollTop;
       }}
-      className="flex-1 overflow-y-auto bg-zinc-900"
+      className="flex-1 overflow-y-auto bg-surface"
     >
       <div
         className="settings-layout-frame mx-auto py-8"
@@ -153,12 +153,12 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
           <RiskRulesPage />
         ) : (
           <>
-            <h1 className="text-2xl font-bold text-zinc-100 mb-6">
+            <h1 className="text-headline text-fg mb-6">
               {isSearching ? `搜索：${searchQuery}` : getSettingsCategoryLabel(activeCategory)}
             </h1>
 
             {visibleSections.length === 0 && isSearching && (
-              <div className="text-zinc-500 text-center py-12">未找到匹配的设置项</div>
+              <div className="text-fg-tertiary text-center py-12">未找到匹配的设置项</div>
             )}
 
             <div

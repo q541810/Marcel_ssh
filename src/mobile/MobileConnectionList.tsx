@@ -272,7 +272,7 @@ export default function MobileConnectionList({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-zinc-950"
+      className="flex h-full min-h-0 flex-col bg-surface-sunken"
       style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
     >
       <header className="flex-shrink-0 border-b border-edge-subtle px-4 py-3">
@@ -280,7 +280,7 @@ export default function MobileConnectionList({
           <button
             type="button"
             onClick={onBack}
-            className="mb-2 flex items-center gap-1 text-xs text-indigo-400 active:text-indigo-300"
+            className="mb-2 flex items-center gap-1 text-meta text-indigo-400 active:text-indigo-300"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             {backLabel}
@@ -288,15 +288,15 @@ export default function MobileConnectionList({
         )}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-base font-semibold text-zinc-100">连接</h1>
-            <p className="mt-0.5 text-xs text-zinc-500">
+            <h1 className="text-title font-semibold text-fg">连接</h1>
+            <p className="mt-0.5 text-meta text-fg-tertiary">
               选择已保存的 SSH 连接
             </p>
           </div>
           <button
             type="button"
             onClick={openNewForm}
-            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white active:bg-indigo-500"
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 bg-indigo-600 px-3 py-2 text-body font-medium text-white active:bg-indigo-500"
           >
             <Plus className="h-3.5 w-3.5" />
             新建
@@ -313,9 +313,9 @@ export default function MobileConnectionList({
           都会看到空态与转圈来回切。
         */}
         {!loaded && connections.length === 0 && !displayError && (
-          <div className="load-indicator-delayed flex flex-col items-center justify-center gap-2 py-16 text-zinc-500">
+          <div className="load-indicator-delayed flex flex-col items-center justify-center gap-2 py-16 text-fg-tertiary">
             <Loader2 className="h-6 w-6 animate-spin" />
-            <span className="text-sm">加载连接列表…</span>
+            <span className="text-body">加载连接列表…</span>
           </div>
         )}
 
@@ -324,24 +324,24 @@ export default function MobileConnectionList({
             className={`flex flex-col items-center justify-center gap-3 px-4 py-16 text-center ${revealOf('__empty__', 0).className}`}
             style={revealOf('__empty__', 0).style}
           >
-            <WifiOff className="h-10 w-10 text-zinc-600" />
-            <p className="text-sm text-zinc-400">暂无已保存的连接</p>
+            <WifiOff className="h-10 w-10 text-fg-disabled" />
+            <p className="text-body text-fg-secondary">暂无已保存的连接</p>
             <button
               type="button"
               onClick={openNewForm}
-              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-body font-medium text-white active:bg-indigo-500"
             >
               <Plus className="h-4 w-4" />
               新建连接
             </button>
-            <p className="max-w-xs text-xs leading-relaxed text-zinc-600">
+            <p className="max-w-xs text-meta leading-relaxed text-fg-disabled">
               保存的连接会安全存于本机密钥链与配置中。
             </p>
           </div>
         )}
 
         {displayError && (
-          <div className="mb-3 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+          <div className="mb-3 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300">
             {displayError}
           </div>
         )}
@@ -363,7 +363,7 @@ export default function MobileConnectionList({
                   className="flex items-center gap-2 active:opacity-70"
                 >
                   <svg
-                    className={`h-4 w-4 flex-shrink-0 text-zinc-500 transition-transform duration-[280ms] ${isCollapsed ? '' : 'rotate-90'}`}
+                    className={`h-4 w-4 flex-shrink-0 text-fg-tertiary transition-transform duration-[280ms] ${isCollapsed ? '' : 'rotate-90'}`}
                     style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
                     fill="none"
                     stroke="currentColor"
@@ -386,7 +386,7 @@ export default function MobileConnectionList({
                       }
                     }}
                     autoFocus
-                    className="flex-1 bg-zinc-800 text-zinc-200 px-2 py-1 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="flex-1 bg-surface-raised text-fg px-2 py-1 rounded text-body focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 ) : (
                   <button
@@ -397,23 +397,23 @@ export default function MobileConnectionList({
                     }}
                     className="flex flex-1 items-center gap-2 text-left"
                   >
-                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                    <span className="text-meta font-semibold uppercase tracking-wider text-fg-tertiary">
                       {group.name}
                     </span>
-                    <span className="text-xs text-zinc-600">({group.items.length})</span>
+                    <span className="text-meta text-fg-disabled">({group.items.length})</span>
                   </button>
                 )}
               </div>
 
               <div
-                className={`grid transition-all duration-[280ms] ${
+                className={`grid transition-[grid-template-rows] duration-320 ${
                   isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
                 }`}
                 style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
               >
                 <div className="overflow-hidden">
                   <ul
-                    className={`flex flex-col gap-2 transition-all duration-[220ms] ${
+                    className={`flex flex-col gap-2 transition-[transform,opacity] duration-200 ${
                       isCollapsed ? '-translate-y-1 opacity-0' : 'translate-y-0 opacity-100'
                     }`}
                     style={{
@@ -437,11 +437,11 @@ export default function MobileConnectionList({
                         className={`${
                           // 被拖的行必须零过渡（跟手 1:1）；其余行保留过渡，拖拽时才有让位动画
                           dragging
-                            ? 'relative z-10 shadow-xl shadow-black/40'
+                            ? 'relative z-10 shadow-raised shadow-black/40'
                             : `transition-transform ${drag.isDragging ? 'duration-150' : ''}`
                         } ${reveal.className}`}
                       >
-                        <div className="flex w-full items-center rounded-xl border border-edge-subtle bg-zinc-900 pr-1">
+                        <div className="flex w-full items-center rounded-xl border border-edge-subtle bg-surface pr-1">
                           <button
                             type="button"
                             disabled={busy || connectingId != null}
@@ -450,9 +450,9 @@ export default function MobileConnectionList({
                               if (drag.shouldSuppressClick()) return;
                               void handleConnect(conn);
                             }}
-                            className="flex min-w-0 flex-1 items-center gap-3 rounded-l-xl px-3 py-3 text-left active:scale-[0.99] disabled:opacity-60"
+                            className="pressable flex min-w-0 flex-1 items-center gap-3 rounded-l-xl px-3 py-3 text-left disabled:opacity-60"
                           >
-                            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-indigo-400">
+                            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-surface-raised text-indigo-400">
                               {busy ? (
                                 <Loader2 className="h-5 w-5 animate-spin" />
                               ) : (
@@ -461,12 +461,12 @@ export default function MobileConnectionList({
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex min-w-0 items-center gap-1.5">
-                                <div className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">
+                                <div className="min-w-0 flex-1 truncate text-body font-medium text-fg">
                                   {conn.name || formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
                                 </div>
                                 <RemotePlatformBadge compact platform={conn.remotePlatform} />
                               </div>
-                              <div className="truncate text-xs text-zinc-500">
+                              <div className="truncate text-meta text-fg-tertiary">
                                 {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
                               </div>
                             </div>
@@ -475,7 +475,7 @@ export default function MobileConnectionList({
                             type="button"
                             data-nodrag
                             onClick={() => openMemorySettings({ scope: 'host', key: conn.id })}
-                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft"
+                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft"
                             aria-label={`${conn.name} 的记忆（${hostMemoryCount(conn.id)} 条）`}
                           >
                             <Bookmark className="h-4 w-4" />
@@ -484,7 +484,7 @@ export default function MobileConnectionList({
                             type="button"
                             data-nodrag
                             onClick={() => openEditForm(conn)}
-                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft"
+                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft"
                             aria-label={`编辑 ${conn.name}`}
                           >
                             <Pencil className="h-4 w-4" />
@@ -496,7 +496,7 @@ export default function MobileConnectionList({
                               setDeleteMemories(false);
                               setDeleteTarget(conn);
                             }}
-                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-state-soft active:text-red-400"
+                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-tertiary active:bg-state-soft active:text-red-400"
                             aria-label={`删除 ${conn.name}`}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -541,11 +541,11 @@ export default function MobileConnectionList({
         title="确认删除"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             删除连接「{deleteTargetLabel}」？此操作不可撤销。
           </p>
           {deleteTargetMemoryCount > 0 && (
-            <label className="mb-1 flex items-start gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-sm text-zinc-200">
+            <label className="mb-1 flex items-start gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-body text-fg">
               <input
                 type="checkbox"
                 checked={deleteMemories}
@@ -554,7 +554,7 @@ export default function MobileConnectionList({
               />
               <span>
                 同时删除这台机器的 {deleteTargetMemoryCount} 条记忆
-                <span className="mt-0.5 block text-xs text-zinc-500">
+                <span className="mt-0.5 block text-meta text-fg-tertiary">
                   不删的话会留在「设置 → 记忆 → 已删除的连接」里
                 </span>
               </span>
@@ -563,14 +563,14 @@ export default function MobileConnectionList({
           <button
             type="button"
             onClick={() => void handleDeleteConnection()}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+            className="rounded-xl bg-red-600 px-4 py-3 text-body font-medium text-white active:bg-red-500"
           >
             删除
           </button>
           <button
             type="button"
             onClick={() => setDeleteTarget(null)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>

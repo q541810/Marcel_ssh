@@ -84,9 +84,9 @@ function SuggestionCard({ message }: ToolViewProps) {
   return (
     <div
       data-testid="suggestion-card"
-      className="my-2 w-fit max-w-full rounded-xl border border-edge bg-zinc-800/50 px-3 py-2 text-[13px] leading-5 animate-fadeIn"
+      className="my-2 w-fit max-w-full rounded-xl bg-surface-raised px-3 py-2 text-body leading-5 animate-fadeIn"
     >
-      <div className="text-zinc-300">{suggestion.question}</div>
+      <div className="text-fg">{suggestion.question}</div>
       <ol className="mt-1 space-y-px">
         {suggestion.options.map((option, index) => (
           <li key={`${index}:${option}`}>
@@ -94,17 +94,17 @@ function SuggestionCard({ message }: ToolViewProps) {
               type="button"
               disabled={disabled}
               onClick={() => void pick(option)}
-              className={`flex w-full min-w-0 items-baseline gap-1.5 rounded-md px-1.5 text-left text-zinc-400 transition-colors ${
-                mobile ? 'min-h-9 py-1.5 active:bg-state-soft' : 'py-0.5 hover:bg-state-soft hover:text-zinc-100'
+              className={`flex w-full min-w-0 items-baseline gap-1.5 rounded-md px-1.5 text-left text-fg transition-colors ${
+                mobile ? 'min-h-9 py-1.5 active:bg-state-soft' : 'py-0.5 hover:bg-state-soft hover:text-fg'
               } ${disabled ? 'cursor-default opacity-60' : ''}`}
             >
-              <span className="flex-shrink-0 text-zinc-500">{index + 1}.</span>
+              <span className="flex-shrink-0 text-fg-tertiary">{index + 1}.</span>
               <span className="min-w-0 [overflow-wrap:anywhere]">{option}</span>
             </button>
           </li>
         ))}
       </ol>
-      {error && <div className="mt-1 px-1.5 text-[12px] text-zinc-500">没发出去：{error}</div>}
+      {error && <div className="mt-1 px-1.5 text-meta text-fg-tertiary">没发出去：{error}</div>}
     </div>
   );
 }

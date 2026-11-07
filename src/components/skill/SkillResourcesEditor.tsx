@@ -105,17 +105,17 @@ export default function SkillResourcesEditor({
   const selFile = fileIndex >= 0 ? resources[fileIndex] : null;
 
   const inputCls =
-    'w-full rounded-lg bg-zinc-900 border border-edge px-2.5 text-zinc-100 font-mono ' +
-    'placeholder-zinc-500 focus:outline-none focus:border-indigo-500 ' +
-    (touch ? 'py-2.5 text-sm' : 'py-1.5 text-xs');
+    'w-full rounded-lg bg-surface border border-edge px-3 text-fg font-mono ' +
+    'placeholder-fg-tertiary focus:outline-none focus:border-indigo-500 ' +
+    (touch ? 'py-3 text-body' : 'py-2 text-meta');
   // 外形与伸缩分开：并排的操作按钮 flex-1 均分；输入行里的「创建」定宽不换行
   const btnShape =
-    'flex items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium whitespace-nowrap ' +
+    'flex items-center justify-center gap-2 rounded-lg px-2 text-meta font-medium whitespace-nowrap ' +
     'transition-colors ' +
     (touch ? 'min-h-11' : 'h-8');
   const btnFill = 'bg-indigo-600 text-white hover:bg-indigo-500 active:bg-indigo-500';
   const btnPrimary = `${btnShape} min-w-0 flex-1 ${btnFill}`;
-  const btnGhost = `${btnShape} min-w-0 flex-1 border border-edge text-zinc-200 hover:bg-state-soft active:bg-state-soft`;
+  const btnGhost = `${btnShape} min-w-0 flex-1 border border-edge text-fg hover:bg-state-soft active:bg-state-soft`;
   const btnCreate = `${btnShape} shrink-0 px-4 ${btnFill} disabled:opacity-40`;
 
   const clearMessages = () => {
@@ -258,7 +258,7 @@ export default function SkillResourcesEditor({
 
   const indentGuides = (depth: number) =>
     Array.from({ length: depth }, (_, i) => (
-      <span key={i} aria-hidden className='ml-1.5 w-3.5 shrink-0 border-l border-edge-subtle' />
+      <span key={i} aria-hidden className='ml-2 w-3.5 shrink-0 border-l border-edge-subtle' />
     ));
   const rowHeight = touch ? 'min-h-11' : 'min-h-7';
   const slot = touch ? 'w-9' : 'w-5';
@@ -288,7 +288,7 @@ export default function SkillResourcesEditor({
             aria-label={opts.chevron.label}
             aria-expanded={!opts.chevron.collapsed}
             onClick={opts.chevron.onToggle}
-            className={`flex shrink-0 items-center justify-center text-zinc-500 hover:text-zinc-300 ${slot}`}
+            className={`flex shrink-0 items-center justify-center text-fg-tertiary hover:text-fg-secondary ${slot}`}
           >
             {opts.chevron.collapsed ? (
               <ChevronRight className='h-3.5 w-3.5' />
@@ -297,7 +297,7 @@ export default function SkillResourcesEditor({
             )}
           </button>
         ) : opts.fixedOpen ? (
-          <span aria-hidden className={`flex shrink-0 items-center justify-center text-zinc-600 ${slot}`}>
+          <span aria-hidden className={`flex shrink-0 items-center justify-center text-fg-disabled ${slot}`}>
             <ChevronDown className='h-3.5 w-3.5' />
           </span>
         ) : (
@@ -308,14 +308,14 @@ export default function SkillResourcesEditor({
           onClick={opts.onSelect}
           disabled={!opts.onSelect}
           aria-current={opts.selected || undefined}
-          className={`flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left disabled:cursor-default ${
-            opts.selected || !opts.onSelect ? '' : 'hover:text-zinc-100'
+          className={`flex min-w-0 flex-1 items-center gap-2 py-1 text-left disabled:cursor-default ${
+            opts.selected || !opts.onSelect ? '' : 'hover:text-fg'
           }`}
         >
           {opts.children}
         </button>
         {opts.aside !== undefined && (
-          <span className='flex shrink-0 items-center pl-2 text-[10px] text-zinc-500'>{opts.aside}</span>
+          <span className='flex shrink-0 items-center pl-2 text-caption text-fg-tertiary'>{opts.aside}</span>
         )}
       </div>
     </li>
@@ -333,8 +333,8 @@ export default function SkillResourcesEditor({
         aside: fmtSize(byteLength(r.content)),
         children: (
           <>
-            <FileText className='h-3.5 w-3.5 shrink-0 text-zinc-500' />
-            <span className={`truncate font-mono text-[12px] ${selected ? 'text-white' : 'text-zinc-300'}`}>
+            <FileText className='h-3.5 w-3.5 shrink-0 text-fg-tertiary' />
+            <span className={`truncate font-mono text-meta ${selected ? 'text-white' : 'text-fg-secondary'}`}>
               {node.name}
             </span>
           </>
@@ -359,11 +359,11 @@ export default function SkillResourcesEditor({
           children: (
             <>
               {isCollapsed ? (
-                <Folder className='h-3.5 w-3.5 shrink-0 text-zinc-400' />
+                <Folder className='h-3.5 w-3.5 shrink-0 text-fg-secondary' />
               ) : (
-                <FolderOpen className='h-3.5 w-3.5 shrink-0 text-zinc-400' />
+                <FolderOpen className='h-3.5 w-3.5 shrink-0 text-fg-secondary' />
               )}
-              <span className={`truncate font-mono text-[12px] ${selected ? 'text-white' : 'text-zinc-200'}`}>
+              <span className={`truncate font-mono text-meta ${selected ? 'text-white' : 'text-fg'}`}>
                 {node.name}
               </span>
             </>
@@ -381,13 +381,13 @@ export default function SkillResourcesEditor({
     const isRoot = node.path === '';
     const confirming = confirmDelete === `dir:${node.path}`;
     return (
-      <div className='mt-2 space-y-2 rounded-xl border border-edge-subtle bg-zinc-900/50 p-3'>
+      <div className='mt-2 space-y-2 rounded-xl border border-edge-subtle bg-surface/50 p-3'>
         <div className='flex items-center gap-2'>
-          <FolderOpen className='h-4 w-4 shrink-0 text-zinc-400' />
-          <span className='min-w-0 flex-1 truncate font-mono text-[12px] text-zinc-100'>
+          <FolderOpen className='h-4 w-4 shrink-0 text-fg-secondary' />
+          <span className='min-w-0 flex-1 truncate font-mono text-meta text-fg'>
             {isRoot ? '根目录（与 SKILL.md 同级）' : `${node.path}/`}
           </span>
-          <span className='shrink-0 text-[11px] text-zinc-500'>{node.fileCount} 个文件</span>
+          <span className='shrink-0 text-caption text-fg-tertiary'>{node.fileCount} 个文件</span>
         </div>
 
         <div className='flex gap-2'>
@@ -470,7 +470,7 @@ export default function SkillResourcesEditor({
         )}
 
         {node.fileCount === 0 && !isRoot && (
-          <p className='text-[11px] text-zinc-500'>空文件夹不会随 skill 保存，放入文件后才会保留。</p>
+          <p className='text-caption text-fg-tertiary'>空文件夹不会随 skill 保存，放入文件后才会保留。</p>
         )}
 
         {!isRoot && (
@@ -479,7 +479,7 @@ export default function SkillResourcesEditor({
               type='button'
               onClick={() => handleDeleteDir(node)}
               className={
-                'rounded-lg px-3 text-xs font-medium transition-colors ' +
+                'rounded-lg px-3 text-meta font-medium transition-colors ' +
                 (touch ? 'min-h-11 ' : 'h-7 ') +
                 (confirming
                   ? 'bg-red-600 text-white hover:bg-red-500'
@@ -498,10 +498,10 @@ export default function SkillResourcesEditor({
   const filePanel = (r: SkillResource, index: number) => {
     const confirming = confirmDelete === `file:${r.path}`;
     return (
-      <div className='mt-2 rounded-xl border border-edge-subtle bg-zinc-900/50 p-3'>
+      <div className='mt-2 rounded-xl border border-edge-subtle bg-surface/50 p-3'>
         <div className='mb-2'>
           {readOnly ? (
-            <span className='block truncate font-mono text-[12px] text-zinc-200'>{r.path}</span>
+            <span className='block truncate font-mono text-meta text-fg'>{r.path}</span>
           ) : (
             <input
               key={r.path}
@@ -533,7 +533,7 @@ export default function SkillResourcesEditor({
           className={inputCls + ' min-h-32 resize-y leading-relaxed'}
         />
         <div className='mt-2 flex items-center justify-between gap-2'>
-          <span className='text-[11px] text-zinc-500'>
+          <span className='text-caption text-fg-tertiary'>
             {fmtSize(byteLength(r.content))}
             {!readOnly && ' · 改上方路径即可改名或移动'}
           </span>
@@ -542,7 +542,7 @@ export default function SkillResourcesEditor({
               type='button'
               onClick={() => handleDeleteFile(index)}
               className={
-                'shrink-0 rounded-lg px-3 text-xs font-medium transition-colors ' +
+                'shrink-0 rounded-lg px-3 text-meta font-medium transition-colors ' +
                 (touch ? 'min-h-11 ' : 'h-7 ') +
                 (confirming
                   ? 'bg-red-600 text-white hover:bg-red-500'
@@ -559,22 +559,22 @@ export default function SkillResourcesEditor({
 
   return (
     <div>
-      <label className='mb-1 block text-xs text-zinc-400'>附属资源文件（{resources.length}）</label>
-      <p className='text-[11px] leading-relaxed text-zinc-500'>
+      <label className='mb-1 block text-meta text-fg-secondary'>附属资源文件（{resources.length}）</label>
+      <p className='text-caption leading-relaxed text-fg-tertiary'>
         Agent 读完 SKILL.md 后，按路径读取这些文档。
       </p>
-      <details className='group mb-2 text-[11px] text-zinc-500'>
-        <summary className='inline-flex cursor-pointer select-none list-none items-center gap-0.5 py-1 text-indigo-300/80 hover:text-indigo-300 [&::-webkit-details-marker]:hidden'>
+      <details className='group mb-2 text-caption text-fg-tertiary'>
+        <summary className='inline-flex cursor-pointer select-none list-none items-center gap-1 py-1 text-indigo-300/80 hover:text-indigo-300 [&::-webkit-details-marker]:hidden'>
           <ChevronRight className='h-3 w-3 transition-transform group-open:rotate-90' />
           路径有什么用？
         </summary>
-        <p className='rounded-lg bg-zinc-900/60 px-2.5 py-2 leading-relaxed'>
+        <p className='rounded-lg bg-surface/60 px-3 py-2 leading-relaxed'>
           路径必须和 SKILL.md 正文里的引用一致。例如正文写了「详见 references/api.md」，就把文件放进
           references 文件夹，文件名为 api.md；Agent 会用这个路径去读。文件夹只是路径的一段，并不是真实目录。
         </p>
       </details>
 
-      <ul className='overflow-hidden rounded-xl border border-edge-subtle bg-zinc-900/50 py-1'>
+      <ul className='overflow-hidden rounded-xl border border-edge-subtle bg-surface/50 py-1'>
         {row({
           key: 'root',
           depth: 0,
@@ -583,8 +583,8 @@ export default function SkillResourcesEditor({
           fixedOpen: true,
           children: (
             <>
-              <FolderOpen className='h-3.5 w-3.5 shrink-0 text-zinc-400' />
-              <span className={`font-mono text-[12px] ${rootSelected ? 'text-white' : 'text-zinc-200'}`}>
+              <FolderOpen className='h-3.5 w-3.5 shrink-0 text-fg-secondary' />
+              <span className={`font-mono text-meta ${rootSelected ? 'text-white' : 'text-fg'}`}>
                 根目录
               </span>
             </>
@@ -598,14 +598,14 @@ export default function SkillResourcesEditor({
           children: (
             <>
               <FileText className='h-3.5 w-3.5 shrink-0 text-indigo-400' />
-              <span className='font-mono text-[12px] text-zinc-100'>SKILL.md</span>
-              <span className='truncate text-[10px] text-zinc-600'>内容在上方「提示词内容」</span>
+              <span className='font-mono text-meta text-fg'>SKILL.md</span>
+              <span className='truncate text-caption text-fg-disabled'>内容在上方「提示词内容」</span>
             </>
           ),
         })}
         {tree.children.map((c) => renderNode(c, 1))}
         {resources.length === 0 && emptyDirs.length === 0 && (
-          <li className={`text-[11px] text-zinc-600 ${touch ? 'py-3' : 'py-1.5'}`} style={{ paddingLeft: 56 }}>
+          <li className={`text-caption text-fg-disabled ${touch ? 'py-3' : 'py-2'}`} style={{ paddingLeft: 56 }}>
             还没有附属文件
           </li>
         )}
@@ -613,8 +613,8 @@ export default function SkillResourcesEditor({
 
       {selFile ? filePanel(selFile, fileIndex) : !readOnly && selDirNode ? dirPanel(selDirNode) : null}
 
-      {notice && <p className='mt-2 text-[11px] text-emerald-400'>{notice}</p>}
-      {error && <p className='mt-2 whitespace-pre-line text-[11px] text-red-400'>{error}</p>}
+      {notice && <p className='mt-2 text-caption text-emerald-400'>{notice}</p>}
+      {error && <p className='mt-2 whitespace-pre-line text-caption text-red-400'>{error}</p>}
     </div>
   );
 }

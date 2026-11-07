@@ -33,7 +33,7 @@ export default function RemotePlatformBadge({
   const meta = PLATFORM_META[platform];
   return (
     <span
-      className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-state-soft px-1.5 py-px text-[10px] font-medium leading-4 text-zinc-400"
+      className="inline-flex flex-shrink-0 items-center gap-1 rounded bg-state-soft px-1.5 py-px text-caption font-medium leading-4 text-fg-secondary"
       title={`远端系统：${meta.label}`}
     >
       <span className={`h-1 w-1 rounded-full ${meta.dot}`} aria-hidden="true" />

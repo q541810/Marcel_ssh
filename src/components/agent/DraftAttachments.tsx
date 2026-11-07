@@ -30,12 +30,12 @@ export default function DraftAttachments({ attachments, mobile = false }: Props)
           onRetry={(id) => { void attachments.retry(id); }}
         />
         {blockedReason && (
-          <p role="status" className="mt-1.5 px-1 text-xs leading-relaxed text-zinc-300">{blockedReason}</p>
+          <p role="status" className="mt-1.5 px-1 text-meta leading-relaxed text-fg-secondary">{blockedReason}</p>
         )}
       </div>
     )}
     {notice && (
-      <div role="status" className="mb-2 flex min-w-0 items-center gap-1 rounded-lg border border-amber-800/50 bg-amber-950/60 pl-2.5 text-xs leading-relaxed text-amber-200">
+      <div role="status" className="mb-2 flex min-w-0 items-center gap-1 rounded-lg border border-amber-800/50 bg-amber-950/60 pl-2.5 text-meta leading-relaxed text-amber-200">
         <span className="min-w-0 flex-1 break-words py-2">{notice}</span>
         <button
           type="button"

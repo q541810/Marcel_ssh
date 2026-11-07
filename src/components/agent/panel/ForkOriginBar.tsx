@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { AgentContentBand } from './AgentContentBand';
 
 type ForkOriginBarProps = {
@@ -19,10 +20,10 @@ export function ForkOriginBar({ originTitle, onBack, mobile = false }: ForkOrigi
   return (
     <AgentContentBand
       data-testid="fork-origin-bar"
-      className="flex-shrink-0 border-b border-edge-subtle bg-zinc-900/90 backdrop-blur"
+      className="flex-shrink-0 border-b border-edge-subtle bg-surface/90 backdrop-blur"
     >
       <div
-        className={`flex items-center gap-2 text-xs ${mobile ? 'min-h-11' : 'py-1.5'}`}
+        className={`flex items-center gap-2 text-meta ${mobile ? 'min-h-11' : 'py-1.5'}`}
       >
         <svg
           className="h-3.5 w-3.5 flex-shrink-0 text-indigo-400"
@@ -38,9 +39,9 @@ export function ForkOriginBar({ originTitle, onBack, mobile = false }: ForkOrigi
             d="M6 3v12m0 0a3 3 0 103 3 3 3 0 00-3-3zm12-6a3 3 0 10-3-3 3 3 0 003 3zm0 0a9 9 0 01-9 9"
           />
         </svg>
-        <span className="min-w-0 flex-1 truncate text-zinc-400">
-          分叉自 <span className="text-zinc-300">{originTitle}</span>
-          <span className="text-zinc-600"> · 这里的改动不会影响原会话</span>
+        <span className="min-w-0 flex-1 truncate text-fg-secondary">
+          分叉自 <span className="text-fg-secondary">{originTitle}</span>
+          <span className="text-fg-disabled"> · 这里的改动不会影响原会话</span>
         </span>
         <button
           type="button"
@@ -49,9 +50,7 @@ export function ForkOriginBar({ originTitle, onBack, mobile = false }: ForkOrigi
             mobile ? 'min-h-11 px-2' : 'px-1.5 py-0.5 hover:bg-state-soft'
           }`}
         >
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
+          <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
           返回原会话
         </button>
       </div>

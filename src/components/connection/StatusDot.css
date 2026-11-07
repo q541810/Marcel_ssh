@@ -1,0 +1,57 @@
+/* 连接状态点：连接中柔和呼吸；刚连上时向外扩散一圈光晕（只播一次）后静止。 */
+.status-dot {
+  position: relative;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+}
+.status-dot[data-status='connected'] {
+  background-color: var(--color-emerald-500);
+}
+.status-dot[data-status='connecting'] {
+  background-color: var(--color-fg-tertiary);
+  animation: status-dot-breathe 1.6s var(--ease-standard) infinite;
+}
+.status-dot[data-status='disconnected'] {
+  background-color: var(--color-fg-disabled);
+}
+.status-dot[data-status='error'] {
+  background-color: var(--color-red-500);
+}
+.status-dot-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background-color: var(--color-emerald-500);
+  pointer-events: none;
+  animation: status-dot-ring 600ms var(--ease-standard) 1 forwards;
+}
+@keyframes status-dot-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes status-dot-ring {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot[data-status='connecting'] {
+    animation: none;
+  }
+  .status-dot-ring {
+    display: none;
+  }
+}

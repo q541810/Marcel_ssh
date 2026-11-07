@@ -514,16 +514,16 @@ export default function MobileImageViewer({
                 aria-hidden
                 className="h-28 w-40 rounded-lg bg-white/5 motion-safe:animate-pulse"
               />
-              <div className="text-xs text-white/60">正在加载图片…</div>
+              <div className="text-meta text-white/60">正在加载图片…</div>
               {progress && progress.total > 0 && (
                 <div className="flex w-56 flex-col gap-1">
                   <div className="h-1.5 overflow-hidden rounded-full bg-white/20">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200 motion-reduce:transition-none"
+                      className="h-full bg-indigo-500 transition-[width] duration-200 motion-reduce:transition-none"
                       style={{ width: `${progressPct}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-xs text-white/70">
+                  <div className="flex justify-between text-meta text-white/70">
                     <span>
                       {formatSize(progress.written)} /{' '}
                       {formatSize(progress.total)}
@@ -541,14 +541,14 @@ export default function MobileImageViewer({
               className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6"
             >
               <p
-                className={`break-words text-center text-sm ${unavailableKind === 'remote' ? 'text-white/70' : 'text-white'}`}
+                className={`break-words text-center text-body ${unavailableKind === 'remote' ? 'text-white/70' : 'text-white'}`}
               >
                 {unavailableKind === 'remote' ? `${REMOTE_IMAGE_HINT}（${error}）` : error}
               </p>
               <button
                 type="button"
                 onClick={handleClose}
-                className="min-h-12 rounded-lg bg-white/15 px-4 py-2 text-sm text-white active:bg-white/25 focus-visible:outline-white"
+                className="min-h-12 rounded-lg bg-white/15 px-4 py-2 text-body text-white active:bg-white/25 focus-visible:outline-white"
               >
                 关闭
               </button>
@@ -568,13 +568,13 @@ export default function MobileImageViewer({
               <div className="min-w-0 flex-1">
                 <div
                   aria-hidden="true"
-                  className="truncate text-sm font-medium text-white"
+                  className="truncate text-body font-medium text-white"
                   title={fileName}
                 >
                   {fileName}
                 </div>
                 {details && (
-                  <div className="text-xs text-white/70">{details}</div>
+                  <div className="text-meta text-white/70">{details}</div>
                 )}
               </div>
               <button
@@ -597,7 +597,7 @@ export default function MobileImageViewer({
               </button>
             </div>
             <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 bg-gradient-to-t from-black/90 to-transparent px-3 pb-2 pt-6">
-              <span className="text-xs text-white/70">
+              <span className="text-meta text-white/70">
                 双指缩放，放大后拖动
               </span>
               <div className="flex max-w-full items-center gap-2">
@@ -615,7 +615,7 @@ export default function MobileImageViewer({
                 </button>
                 <output
                   aria-label="图片缩放比例"
-                  className="min-w-10 shrink-0 text-center text-sm tabular-nums text-white"
+                  className="min-w-10 shrink-0 text-center text-body tabular-nums text-white"
                 >
                   {zoomPct != null ? `${zoomPct}%` : '—'}
                 </output>

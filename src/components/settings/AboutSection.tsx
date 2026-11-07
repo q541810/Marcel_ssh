@@ -130,13 +130,13 @@ export default function AboutSection() {
       </div>
       <Card id="settings-about" title="应用信息">
         <SettingItem id="about-name" label="应用名称" sectionId="settings-about">
-          <span className="text-sm text-zinc-300">{APP_NAME}</span>
+          <span className="text-body text-fg-secondary">{APP_NAME}</span>
         </SettingItem>
         <SettingItem id="about-version" label="当前版本" sectionId="settings-about">
           <button
             type="button"
             onClick={handleVersionTap}
-            className="rounded px-1 text-left text-sm text-zinc-300 transition-colors hover:bg-state-soft hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-indigo-400"
+            className="rounded px-1 text-left text-body text-fg-secondary transition-colors hover:bg-state-soft hover:text-fg focus-visible:outline-2 focus-visible:outline-indigo-400"
             title="版本信息"
           >
             {appVersion}
@@ -154,22 +154,22 @@ export default function AboutSection() {
               检查更新
             </Button>
             {result && !result.hasUpdate && (
-              <span className="text-sm text-emerald-400">已是最新版本</span>
+              <span className="text-body text-emerald-400">已是最新版本</span>
             )}
-            {error && <span className="text-sm text-red-400">{error}</span>}
+            {error && <span className="text-body text-red-400">{error}</span>}
           </div>
           {result && result.hasUpdate && (
-            <div className="mt-3 rounded-lg border border-edge bg-zinc-800/50 p-4 space-y-3">
-              <p className="text-sm text-zinc-200">
+            <div className="mt-3 rounded-lg border border-edge bg-surface-raised/50 p-4 space-y-3">
+              <p className="text-body text-fg">
                 新版本 <span className="text-indigo-400 font-medium">{result.latestVersion}</span> 可用！
               </p>
               {updateState.status === 'downloading' ? (
                 /* 已在下载：后端对重复触发是幂等 no-op，所以这里不给按钮，
                    改成展示进度（后台继续下载，关掉设置页也不受影响） */
-                <p className="text-sm text-indigo-300">
+                <p className="text-body text-indigo-300">
                   正在后台下载 {updateState.version} ·{' '}
                   {updatePercent(updateState.downloaded, updateState.total)}%
-                  <span className="block text-xs text-zinc-500">
+                  <span className="block text-meta text-fg-tertiary">
                     下载在后台继续，关掉设置页也不受影响。
                   </span>
                 </p>
@@ -186,7 +186,7 @@ export default function AboutSection() {
                     >
                       立即安装 {updateState.version}
                     </Button>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-meta text-fg-tertiary">
                       {capabilities?.installKind === 'apk'
                         ? '安装包已下载完成，点击后在系统安装界面确认即可。'
                         : updateMode === 'off'
@@ -212,7 +212,7 @@ export default function AboutSection() {
                         先装 {updateState.version}
                       </Button>
                     </div>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-meta text-fg-tertiary">
                       已就绪的是旧版本 {updateState.version}；
                       {result.latestVersion} 下载完成后会替换它，也可以先装旧版本。
                     </p>
@@ -227,7 +227,7 @@ export default function AboutSection() {
                   >
                     后台下载
                   </Button>
-                  <p className="text-xs text-zinc-500">
+                  <p className="text-meta text-fg-tertiary">
                     {capabilities.installKind === 'apk'
                       ? '下载完成后在提示里点「立即安装」即可；也可以在下面把更新方式设为「自动更新」。'
                       : '下载完成后可留意标题栏进度；应用退出时会自动安装新版本。'}
@@ -239,7 +239,7 @@ export default function AboutSection() {
                     去下载
                   </Button>
                   {updateMode === 'off' && (
-                    <p className="mt-3 text-xs text-zinc-500">
+                    <p className="mt-3 text-meta text-fg-tertiary">
                       当前更新方式是「关闭」，本机不下载也不缓存安装包；想在这里直接后台下载，把下面的更新方式改成「自动更新」或「仅提醒」。
                     </p>
                   )}

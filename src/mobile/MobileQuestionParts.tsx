@@ -9,7 +9,7 @@ export function MobileQuestionBody({ form, compact = false }: { form: QuestionFo
   if (!current) return null;
   return (
     <>
-      <p className={`text-sm leading-relaxed ${compact ? 'text-zinc-100' : 'text-zinc-200'}`}>{current.question}</p>
+      <p className={`text-body leading-relaxed ${compact ? 'text-fg' : 'text-fg'}`}>{current.question}</p>
 
       {current.options && current.options.length > 0 && (
         <div className="space-y-1.5">
@@ -25,7 +25,7 @@ export function MobileQuestionBody({ form, compact = false }: { form: QuestionFo
                 className={`w-full rounded-xl border px-3 text-left ${compact ? 'py-2.5' : 'py-3'} ${
                   isSelected
                     ? 'border-indigo-500 bg-indigo-600/15'
-                    : 'border-edge bg-zinc-800/50 active:bg-state-soft'
+                    : 'border-edge bg-surface-raised/50 active:bg-state-soft'
                 }`}
               >
                 <div className="flex items-center gap-2.5">
@@ -41,12 +41,12 @@ export function MobileQuestionBody({ form, compact = false }: { form: QuestionFo
                         <span className="h-2 w-2 rounded-full bg-white" />
                       ))}
                   </span>
-                  <span className={`text-sm font-medium ${isSelected ? 'text-indigo-200' : 'text-zinc-300'}`}>
+                  <span className={`text-body font-medium ${isSelected ? 'text-indigo-200' : 'text-fg-secondary'}`}>
                     {opt.label}
                   </span>
                 </div>
                 {opt.description && (
-                  <p className="ml-[1.875rem] mt-0.5 text-xs text-zinc-500">{opt.description}</p>
+                  <p className="ml-[1.875rem] mt-0.5 text-meta text-fg-tertiary">{opt.description}</p>
                 )}
               </button>
             );
@@ -69,7 +69,7 @@ export function MobileQuestionBody({ form, compact = false }: { form: QuestionFo
               : '或输入自定义回答…'
             : '输入你的回答…'
         }
-        className="w-full resize-none rounded-xl border border-edge bg-zinc-950 px-3 py-2.5 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+        className="w-full resize-none rounded-xl border border-edge bg-surface-sunken px-3 py-2.5 text-body leading-relaxed text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
       />
     </>
   );
@@ -84,7 +84,7 @@ export function MobileQuestionFooter({ form, className = '' }: { form: QuestionF
         <button
           type="button"
           onClick={form.prev}
-          className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+          className="rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
         >
           上一题
         </button>
@@ -92,7 +92,7 @@ export function MobileQuestionFooter({ form, className = '' }: { form: QuestionF
       <button
         type="button"
         onClick={form.next}
-        className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+        className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500"
       >
         {isLast ? '提交答案' : '下一题'}
       </button>

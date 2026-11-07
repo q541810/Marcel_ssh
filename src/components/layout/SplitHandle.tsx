@@ -85,7 +85,7 @@ export default function SplitHandle({
       {/* 指示条：静态不可见，hover / 拖动 / 聚焦点亮 */}
       <div
         aria-hidden
-        className={`absolute inset-y-0 left-0 w-1 bg-indigo-500 transition-opacity duration-150 ${
+        className={`absolute inset-y-0 left-0 w-1 bg-indigo-500 transition-opacity duration-120 ${
           active ? 'opacity-70' : 'opacity-0 group-hover:opacity-40 group-focus-visible:opacity-60'
         }`}
       />

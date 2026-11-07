@@ -95,12 +95,12 @@ export default function MobileMultiHostPicker({
         }}
         disabled={buttonDisabled}
         className={[
-          'flex min-w-0 max-w-[7.5rem] items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-all active:scale-95',
+          'flex min-w-0 max-w-[7.5rem] items-center gap-1 rounded-full border px-2 py-1 text-caption font-medium pressable',
           buttonDisabled
-            ? 'cursor-not-allowed border-edge-subtle text-zinc-600'
+            ? 'cursor-not-allowed border-edge-subtle text-fg-disabled'
             : selected.length > 0
               ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200'
-              : 'border-edge/80 bg-zinc-900/60 text-zinc-300',
+              : 'border-edge/80 bg-surface/60 text-fg-secondary',
         ].join(' ')}
         title={
           currentLabel
@@ -119,7 +119,7 @@ export default function MobileMultiHostPicker({
           {currentLabel || '未连接'}
         </span>
         {selected.length > 0 && (
-          <span className="flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-indigo-500 px-1 text-[10px] font-semibold leading-none text-white">
+          <span className="flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-indigo-500 px-1 text-caption font-semibold leading-none text-white">
             {selected.length}
           </span>
         )}
@@ -132,7 +132,7 @@ export default function MobileMultiHostPicker({
         title={
           <div className="flex w-full items-center justify-between pr-6">
             <span>目标机器</span>
-            <span className="text-[11px] font-normal text-zinc-500">
+            <span className="text-caption font-normal text-fg-tertiary">
               当前机 + {selected.length} 台可跨机
             </span>
           </div>
@@ -144,15 +144,15 @@ export default function MobileMultiHostPicker({
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-indigo-100">
+                  <span className="truncate text-meta font-semibold text-indigo-100">
                     {currentLabel || '未连接服务器'}
                   </span>
-                  <span className="flex h-[15px] flex-shrink-0 items-center rounded bg-indigo-500/25 px-1 text-[9px] font-semibold tracking-wide text-indigo-200">
+                  <span className="flex h-[15px] flex-shrink-0 items-center rounded bg-indigo-500/25 px-1 text-caption font-semibold tracking-wide text-indigo-200">
                     当前
                   </span>
                 </span>
                 {currentConn ? (
-                  <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
+                  <span className="mt-0.5 block truncate text-caption text-indigo-300/70">
                     {currentConn.group || '未分组'} ·{' '}
                     {formatConnLabel(
                       currentConn.username,
@@ -162,28 +162,28 @@ export default function MobileMultiHostPicker({
                     )}
                   </span>
                 ) : (
-                  <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
+                  <span className="mt-0.5 block truncate text-caption text-indigo-300/70">
                     临时连接（未保存）· 仅当前机器可执行
                   </span>
                 )}
               </span>
             </div>
-            <p className="mt-1.5 text-[10px] leading-relaxed text-indigo-200/60">
+            <p className="mt-1.5 text-caption leading-relaxed text-indigo-200/60">
               Agent 默认在这台机器上执行；始终可用，无需勾选。
             </p>
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+            <span className="text-caption font-semibold uppercase tracking-wide text-fg-tertiary">
               可跨机目标
             </span>
-            <span className="text-[10px] text-zinc-600">
+            <span className="text-caption text-fg-disabled">
               勾选后 Agent 可携 host 操作
             </span>
           </div>
 
           {others.length === 0 ? (
-            <div className="px-2 py-6 text-center text-xs text-zinc-500">
+            <div className="px-2 py-6 text-center text-meta text-fg-tertiary">
               暂无其他已保存连接，请先在连接列表添加机器
             </div>
           ) : (
@@ -195,10 +195,10 @@ export default function MobileMultiHostPicker({
                     key={conn.id}
                     type="button"
                     onClick={() => toggle(conn.id)}
-                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors active:scale-[0.99] ${
+                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left pressable ${
                       active
                         ? 'bg-indigo-500/10 text-indigo-100'
-                        : 'bg-zinc-900/50 text-zinc-300'
+                        : 'bg-surface/50 text-fg-secondary'
                     }`}
                   >
                     <span
@@ -225,10 +225,10 @@ export default function MobileMultiHostPicker({
                       )}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">
+                      <span className="block truncate text-meta font-medium">
                         {conn.name}
                       </span>
-                      <span className="block truncate text-[10px] text-zinc-500">
+                      <span className="block truncate text-caption text-fg-tertiary">
                         {conn.group || '未分组'} ·{' '}
                         {formatConnLabel(
                           conn.username,
@@ -244,7 +244,7 @@ export default function MobileMultiHostPicker({
             </div>
           )}
 
-          <p className="text-[10px] leading-relaxed text-zinc-500">
+          <p className="text-caption leading-relaxed text-fg-tertiary">
             Agent 的 bash / 子agent 可用 host 指定这些机器；未勾选的不在集合内，
             即使在线也会被拒绝。当前机器始终可执行。
           </p>

@@ -123,7 +123,7 @@ export default function Settings() {
 
   if (!loaded || !draft || !actionsValue) {
     return (
-      <div className="flex items-center justify-center h-full text-zinc-400">
+      <div className="flex items-center justify-center h-full text-fg-secondary">
         加载设置中...
       </div>
     );

@@ -232,7 +232,7 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={handleBack}
-              className="-ml-1 flex-shrink-0 rounded-lg px-2 py-1 text-xs text-indigo-300 active:bg-state-soft"
+              className="-ml-1 flex-shrink-0 rounded-lg min-h-11 px-2 py-1 text-body text-indigo-300 active:bg-state-soft"
             >
               ‹ 返回
             </button>
@@ -246,7 +246,7 @@ export default function MobileChatHistorySheet({
       {selectedConv ? (
         <div className="flex flex-col">
           {activeMatchIds.length > 0 && (
-            <div className="sticky top-0 z-10 flex flex-shrink-0 items-center justify-between gap-2 border-b border-indigo-500/15 bg-zinc-900/95 px-4 py-1.5 text-xs backdrop-blur-sm">
+            <div className="sticky top-0 z-10 flex flex-shrink-0 items-center justify-between gap-2 border-b border-indigo-500/15 bg-surface/95 px-4 py-1.5 text-meta backdrop-blur-sm">
               <span className="text-indigo-300/90">
                 匹配 {matchIndex + 1}/{activeMatchIds.length}
                 {activeMatchIds.length >= 200 ? '+' : ''}
@@ -256,7 +256,7 @@ export default function MobileChatHistorySheet({
                   type="button"
                   disabled={matchIndex <= 0}
                   onClick={() => goMatch(-1)}
-                  className="rounded-lg bg-zinc-800 px-3.5 py-1 text-sm text-zinc-200 active:bg-state-mid disabled:opacity-30"
+                  className="rounded-lg bg-surface-raised px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
                   aria-label="上一条匹配"
                 >
                   ▲
@@ -265,7 +265,7 @@ export default function MobileChatHistorySheet({
                   type="button"
                   disabled={matchIndex >= activeMatchIds.length - 1}
                   onClick={() => goMatch(1)}
-                  className="rounded-lg bg-zinc-800 px-3.5 py-1 text-sm text-zinc-200 active:bg-state-mid disabled:opacity-30"
+                  className="rounded-lg bg-surface-raised px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
                   aria-label="下一条匹配"
                 >
                   ▼
@@ -273,7 +273,7 @@ export default function MobileChatHistorySheet({
               </div>
             </div>
           )}
-          <div className="truncate px-4 pb-1 pt-2 text-[11px] text-zinc-500">
+          <div className="truncate px-4 pb-1 pt-2 text-caption text-fg-tertiary">
             {connNameById.get(selectedConv.connectionId) ??
               selectedConv.connectionId}
             {' · '}
@@ -281,12 +281,12 @@ export default function MobileChatHistorySheet({
           </div>
           <div className="px-3 pb-3">
             {loadingMsgs && (
-              <p className="py-8 text-center text-sm text-zinc-500">
+              <p className="py-8 text-center text-body text-fg-tertiary">
                 加载消息…
               </p>
             )}
             {!loadingMsgs && messages.length === 0 && (
-              <p className="py-8 text-center text-sm text-zinc-500">
+              <p className="py-8 text-center text-body text-fg-tertiary">
                 该会话暂无消息
               </p>
             )}
@@ -313,10 +313,10 @@ export default function MobileChatHistorySheet({
         </div>
       ) : (
         <div className="flex flex-col">
-          <div className="sticky top-0 z-10 bg-zinc-900 px-4 pb-2 pt-1">
+          <div className="sticky top-0 z-10 bg-surface px-4 pb-2 pt-1">
             <div className="relative">
               <svg
-                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-tertiary"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -333,13 +333,13 @@ export default function MobileChatHistorySheet({
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="搜索聊天记录…"
-                className="w-full rounded-lg border border-edge bg-zinc-800 py-2 pl-9 pr-9 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg border border-edge bg-surface-raised py-2 pl-9 pr-9 text-body text-fg placeholder:text-fg-tertiary focus:border-indigo-500 focus:outline-none"
               />
               {searchInput && (
                 <button
                   type="button"
                   onClick={clearSearch}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1.5 text-zinc-500 active:text-zinc-200"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1.5 text-fg-tertiary active:text-fg"
                   aria-label="清除搜索"
                 >
                   <svg
@@ -364,16 +364,16 @@ export default function MobileChatHistorySheet({
                 onClick={() => setShowArchived(!showArchived)}
                 aria-pressed={showArchived}
                 className={
-                  "flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] " +
+                  "flex items-center gap-1 rounded-full border px-2.5 py-1 text-caption " +
                   (showArchived
                     ? "border-amber-700/60 bg-amber-950/40 text-amber-300"
-                    : "border-edge bg-zinc-800/60 text-zinc-400")
+                    : "border-edge bg-surface-raised/60 text-fg-secondary")
                 }
               >
                 <Archive className="h-3 w-3" />
                 显示已归档
               </button>
-              <span className="text-[10px] text-zinc-600">
+              <span className="text-caption text-fg-disabled">
                 {showArchived ? '搜索与列表均包含归档' : '归档可在清理前恢复'}
               </span>
             </div>
@@ -383,7 +383,7 @@ export default function MobileChatHistorySheet({
             {archiveError && (
               <div
                 role="alert"
-                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300"
               >
                 {archiveError}
               </div>
@@ -391,19 +391,19 @@ export default function MobileChatHistorySheet({
             {isSearching ? (
               <>
                 {loadingSearch && (
-                  <p className="py-8 text-center text-sm text-zinc-500">
+                  <p className="py-8 text-center text-body text-fg-tertiary">
                     搜索中…
                   </p>
                 )}
                 {!loadingSearch && searchResults.length === 0 && (
-                  <p className="py-8 text-center text-sm text-zinc-500">
+                  <p className="py-8 text-center text-body text-fg-tertiary">
                     没有找到匹配的聊天记录
                   </p>
                 )}
                 {!loadingSearch &&
                   groupedSearch.map((group) => (
                     <div key={group.connectionId} className="mb-2">
-                      <div className="truncate px-3 py-1 text-xs font-medium text-zinc-500">
+                      <div className="truncate px-3 py-1 text-meta font-medium text-fg-tertiary">
                         {group.label}
                       </div>
                       <ul className="space-y-1">
@@ -412,15 +412,15 @@ export default function MobileChatHistorySheet({
                             <button
                               type="button"
                               onClick={() => handleOpenSearchResult(r)}
-                              className="w-full rounded-lg bg-zinc-800/60 px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-state-soft"
+                              className="w-full rounded-lg bg-surface-raised/60 px-3 py-2.5 text-left text-body text-fg-secondary active:bg-state-soft"
                             >
                               <div className="truncate font-medium">
                                 {r.title}
                               </div>
-                              <div className="mt-0.5 line-clamp-2 break-words text-xs text-zinc-500">
+                              <div className="mt-0.5 line-clamp-2 break-words text-meta text-fg-tertiary">
                                 {r.matchedSnippet}
                               </div>
-                              <div className="mt-0.5 text-xs text-indigo-400/80">
+                              <div className="mt-0.5 text-meta text-indigo-400/80">
                                 {formatMatchCountLabel(r.matchCount)}
                               </div>
                             </button>
@@ -433,14 +433,14 @@ export default function MobileChatHistorySheet({
             ) : (
               <>
                 {(loadingConvs || connectionsLoading) && (
-                  <p className="py-8 text-center text-sm text-zinc-500">
+                  <p className="py-8 text-center text-body text-fg-tertiary">
                     加载中…
                   </p>
                 )}
                 {!loadingConvs &&
                   !connectionsLoading &&
                   connections.length === 0 && (
-                    <p className="py-8 text-center text-sm text-zinc-500">
+                    <p className="py-8 text-center text-body text-fg-tertiary">
                       暂无连接记录
                     </p>
                   )}
@@ -455,23 +455,23 @@ export default function MobileChatHistorySheet({
                           onClick={() =>
                             setExpandedConnId(expanded ? null : conn.id)
                           }
-                          className={`w-full rounded-lg px-3 py-2.5 text-left text-sm ${
+                          className={`w-full rounded-lg px-3 py-2.5 text-left text-body ${
                             expanded
-                              ? 'bg-zinc-800 text-zinc-100'
-                              : 'bg-zinc-800/60 text-zinc-300 active:bg-state-soft'
+                              ? 'bg-surface-raised text-fg'
+                              : 'bg-surface-raised/60 text-fg-secondary active:bg-state-soft'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="min-w-0 truncate">
                               {connLabel(conn)}
                             </span>
-                            <span className="flex-shrink-0 text-xs text-zinc-500">
+                            <span className="flex-shrink-0 text-meta text-fg-tertiary">
                               {convs.length}
                             </span>
                           </div>
                         </button>
                         {expanded && convs.length === 0 && (
-                          <p className="px-4 py-2 text-xs text-zinc-600">
+                          <p className="px-4 py-2 text-meta text-fg-disabled">
                             该连接暂无会话
                           </p>
                         )}
@@ -479,22 +479,22 @@ export default function MobileChatHistorySheet({
                           <div className="mt-1 space-y-2 pl-2">
                             {groupConversationsWithPinned(convs).map((group) => (
                               <div key={group.key} className="space-y-1">
-                                <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                                <div className="px-2 text-caption font-semibold uppercase tracking-wider text-fg-tertiary">
                                   {group.label}
                                 </div>
                                 <ul className="space-y-1">
                                   {group.items.map((conv) => (
-                                    <li key={conv.id} className="flex items-center gap-1 rounded-lg bg-zinc-800/40">
+                                    <li key={conv.id} className="flex items-center gap-1 rounded-lg bg-surface-raised/40">
                                       <button
                                         type="button"
                                         onClick={() => openConversation(conv)}
-                                        className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-state-soft rounded-lg flex items-center justify-between gap-2"
+                                        className="min-w-0 flex-1 px-3 py-2.5 text-left text-body text-fg-secondary active:bg-state-soft rounded-lg flex items-center justify-between gap-2"
                                       >
                                         <div className="min-w-0 flex-1">
                                           <div className="truncate font-medium">
                                             {conv.title}
                                           </div>
-                                          <div className="mt-0.5 text-[11px] text-zinc-500">
+                                          <div className="mt-0.5 text-caption text-fg-tertiary">
                                             {conv.forkedFromId && <ForkMark />}
                                             {new Date(conv.updatedAt).toLocaleString()}
                                           </div>
@@ -510,7 +510,7 @@ export default function MobileChatHistorySheet({
                                           e.stopPropagation();
                                           void setConversationPinned(conv.id, !conv.pinned);
                                         }}
-                                        className="mr-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                        className="mr-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                                         aria-label={conv.pinned ? `取消置顶 ${conv.title}` : `置顶 ${conv.title}`}
                                       >
                                         <Pin className="h-3.5 w-3.5" />
@@ -518,7 +518,7 @@ export default function MobileChatHistorySheet({
                                       <button
                                         type="button"
                                         onClick={(e) => handleStartRename(e, conv)}
-                                        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                                         aria-label={`重命名 ${conv.title}`}
                                       >
                                         <Pencil className="h-3.5 w-3.5" />
@@ -529,7 +529,7 @@ export default function MobileChatHistorySheet({
                                           e.stopPropagation();
                                           void handleArchive(conv.id);
                                         }}
-                                        className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                        className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                                         aria-label={`归档 ${conv.title}`}
                                         title="归档会话（可恢复）"
                                       >
@@ -544,11 +544,11 @@ export default function MobileChatHistorySheet({
                         )}
                         {expanded && showArchived && (
                           <div className="mt-2 space-y-1">
-                            <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-amber-500/80">
+                            <div className="px-2 text-caption font-semibold uppercase tracking-wider text-amber-500/80">
                               已归档
                             </div>
                             {(archivedByConn[conn.id] ?? []).length === 0 ? (
-                              <p className="px-2 py-2 text-xs text-zinc-600">
+                              <p className="px-2 py-2 text-meta text-fg-disabled">
                                 该连接暂无归档会话
                               </p>
                             ) : (
@@ -561,17 +561,17 @@ export default function MobileChatHistorySheet({
                                     <button
                                       type="button"
                                       onClick={() => openConversation(conv)}
-                                      className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-state-soft"
+                                      className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-body text-fg-secondary active:bg-state-soft"
                                     >
                                       <div className="truncate font-medium">{conv.title}</div>
-                                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                                      <div className="mt-0.5 text-caption text-fg-tertiary">
                                         归档于 {conv.archivedAt ? new Date(conv.archivedAt).toLocaleString() : '未知时间'}
                                       </div>
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => void handleRestoreArchived(conv)}
-                                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                                       aria-label={`恢复 ${conv.title}`}
                                       title="恢复会话"
                                     >
@@ -618,14 +618,14 @@ export default function MobileChatHistorySheet({
               }
             }}
             placeholder="请输入会话名称"
-            className="w-full rounded-xl border border-edge bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-xl border border-edge bg-surface-raised px-3.5 py-2.5 text-body text-fg placeholder-fg-tertiary focus:border-indigo-500 focus:outline-none"
             autoFocus
           />
           <div className="flex gap-2">
             <button
               type="button"
               onClick={cancelRename}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -633,7 +633,7 @@ export default function MobileChatHistorySheet({
               type="button"
               onClick={() => void handleConfirmRename()}
               disabled={!renameInput.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 active:bg-indigo-500"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-body font-medium text-white disabled:opacity-50 active:bg-indigo-500"
             >
               保存
             </button>
@@ -647,14 +647,14 @@ export default function MobileChatHistorySheet({
         title="永久删除会话"
       >
         <div className="flex flex-col gap-3 px-4 pb-4">
-          <p className="text-sm leading-relaxed text-zinc-300">
+          <p className="text-body leading-relaxed text-fg-secondary">
             永久删除「{deleteTarget?.title ?? '该会话'}」？消息会一起删除，此操作不可撤销。
             若只是想让它从列表里消失，请改用归档。
           </p>
           {archiveError && (
             <div
               role="alert"
-              className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+              className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300"
             >
               {archiveError}
             </div>
@@ -663,14 +663,14 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={() => void handleDeleteArchived()}
-              className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white active:bg-red-500"
+              className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-body font-medium text-white active:bg-red-500"
             >
               永久删除
             </button>
             <button
               type="button"
               onClick={() => setDeleteTarget(null)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>

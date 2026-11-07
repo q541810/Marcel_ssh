@@ -36,23 +36,23 @@ function BackGestureDiagnostics() {
   ];
   return (
     <section
-      className="mt-4 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+      className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
       aria-labelledby="debug-back-title"
     >
       <div className="flex items-start gap-3">
-        <Activity className="mt-0.5 h-5 w-5 shrink-0 text-zinc-300" aria-hidden="true" />
+        <Activity className="mt-1 h-5 w-5 shrink-0 text-fg-secondary" aria-hidden="true" />
         <div className="min-w-0">
-          <h2 id="debug-back-title" className="text-sm font-medium text-zinc-200">返回手势诊断</h2>
-          <p className="mt-1 text-sm leading-6 text-zinc-400">
+          <h2 id="debug-back-title" className="text-body font-medium text-fg">返回手势诊断</h2>
+          <p className="mt-1 text-body leading-6 text-fg-secondary">
             在本页从屏幕边缘慢慢向内滑一半、再滑回去（别松手到底）。「手势开始」和「进度帧」不涨，说明系统没把手势进度交给应用；涨了说明链路是通的。
           </p>
         </div>
       </div>
-      <dl className="mt-3 space-y-1.5 text-xs">
+      <dl className="mt-3 space-y-2 text-meta">
         {rows.map(([k, v]) => (
           <div key={k} className="flex items-baseline justify-between gap-3">
-            <dt className="text-zinc-500">{k}</dt>
-            <dd className="font-mono text-zinc-200">{v}</dd>
+            <dt className="text-fg-tertiary">{k}</dt>
+            <dd className="font-mono text-fg">{v}</dd>
           </div>
         ))}
       </dl>
@@ -122,42 +122,42 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
 
   return (
     <main
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-zinc-900 p-5 text-zinc-100 sm:p-7"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface p-5 text-fg sm:p-7"
       data-region="debug"
     >
       <div className="mx-auto w-full max-w-2xl">
         <button
           type="button"
           onClick={onBack ?? fallbackBack}
-          className="-ml-2 mb-5 flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-sm text-zinc-400 transition-colors hover:bg-state-soft hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-indigo-400"
+          className="-ml-2 mb-5 flex min-h-9 items-center gap-2 rounded-lg px-2 text-body text-fg-secondary transition-colors hover:bg-state-soft hover:text-fg focus-visible:outline-2 focus-visible:outline-indigo-400"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           返回设置
         </button>
         <div className="flex items-center gap-2">
           <Bug className="h-5 w-5 text-indigo-400" aria-hidden="true" />
-          <h1 className="text-xl font-semibold text-zinc-100">调试</h1>
+          <h1 className="text-headline text-fg">调试</h1>
         </div>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
+        <p className="mt-2 text-body leading-6 text-fg-secondary">
           虚拟服务器仅在本次运行中有效，重启应用后自动移除。
         </p>
         <section
-          className="mt-6 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+          className="mt-6 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
           aria-labelledby="debug-server-title"
         >
           <div className="flex items-start gap-3">
             <Server
-              className="mt-0.5 h-5 w-5 shrink-0 text-zinc-400"
+              className="mt-1 h-5 w-5 shrink-0 text-fg-secondary"
               aria-hidden="true"
             />
             <div className="min-w-0">
               <h2
                 id="debug-server-title"
-                className="text-sm font-medium text-zinc-200"
+                className="text-body font-medium text-fg"
               >
                 虚拟服务器
               </h2>
-              <p className="mt-1 text-sm leading-6 text-zinc-400">
+              <p className="mt-1 text-body leading-6 text-fg-secondary">
                 将 msfakeserver 添加到服务器列表，可直接免密连接并打开模拟终端。
               </p>
             </div>
@@ -167,7 +167,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
               type="button"
               onClick={addDebugServer}
               disabled={added}
-              className="flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300 disabled:cursor-default disabled:bg-zinc-800 disabled:text-zinc-400"
+              className="flex min-h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-body font-medium text-white transition-colors hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300 disabled:cursor-default disabled:bg-surface-raised disabled:text-fg-secondary"
             >
               {added ? (
                 <Check className="h-4 w-4" aria-hidden="true" />
@@ -180,7 +180,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
               <button
                 type="button"
                 onClick={onShowServers ?? fallbackServers}
-                className="flex min-h-10 items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-indigo-300 transition-colors hover:bg-state-soft focus-visible:outline-2 focus-visible:outline-indigo-400"
+                className="flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-body text-indigo-300 transition-colors hover:bg-state-soft focus-visible:outline-2 focus-visible:outline-indigo-400"
               >
                 去服务器列表
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -189,7 +189,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           </div>
           <p
             role="status"
-            className="mt-3 min-h-5 text-xs leading-5 text-zinc-400"
+            className="mt-3 min-h-5 text-meta leading-5 text-fg-secondary"
           >
             {added
               ? "msfakeserver 已在服务器列表中。"
@@ -202,13 +202,13 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           aria-labelledby="debug-reasoning-title"
         >
           <div className="flex items-start gap-3">
-            <Bug className="mt-0.5 h-5 w-5 shrink-0 text-indigo-300" aria-hidden="true" />
+            <Bug className="mt-1 h-5 w-5 shrink-0 text-indigo-300" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 id="debug-reasoning-title" className="text-sm font-medium text-indigo-100">思考强度调试</h2>
-              <p className="mt-1 text-sm leading-6 text-indigo-200/70">强制在模型设置中显示思考强度滑条，即使当前模型没有声明可用档位。</p>
+              <h2 id="debug-reasoning-title" className="text-body font-medium text-indigo-100">思考强度调试</h2>
+              <p className="mt-1 text-body leading-6 text-indigo-200/70">强制在模型设置中显示思考强度滑条，即使当前模型没有声明可用档位。</p>
             </div>
           </div>
-          <label className="mt-4 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-zinc-200 hover:bg-zinc-900/50">
+          <label className="mt-4 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-body text-fg hover:bg-surface/50">
             <input
               type="checkbox"
               checked={forceReasoningEffortPicker}
@@ -217,43 +217,43 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
             />
             <span>强制显示思考强度滑条</span>
           </label>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">未声明的档位仅用于界面调试，模型可能不会应用该设置。</p>
+          <p className="mt-2 text-meta leading-5 text-fg-tertiary">未声明的档位仅用于界面调试，模型可能不会应用该设置。</p>
         </section>
 
         <section
-          className="mt-4 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+          className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
           aria-labelledby="debug-plugin-title"
         >
           <div className="flex items-start gap-3">
-            <PlugZap className="mt-0.5 h-5 w-5 shrink-0 text-zinc-300" aria-hidden="true" />
+            <PlugZap className="mt-1 h-5 w-5 shrink-0 text-fg-secondary" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 id="debug-plugin-title" className="text-sm font-medium text-zinc-200">插件</h2>
-              <p className="mt-1 text-sm leading-6 text-zinc-400">重新扫描插件目录并尝试应用插件注册表变化。</p>
+              <h2 id="debug-plugin-title" className="text-body font-medium text-fg">插件</h2>
+              <p className="mt-1 text-body leading-6 text-fg-secondary">重新扫描插件目录并尝试应用插件注册表变化。</p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => void reloadPlugins()}
             disabled={pluginReloading}
-            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:cursor-wait disabled:opacity-60"
+            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:cursor-wait disabled:opacity-60"
           >
             <PlugZap className="h-4 w-4" aria-hidden="true" />
             {pluginReloading ? "正在尝试热重载…" : "尝试热重载插件"}
           </button>
-          <p className="mt-2 min-h-5 text-xs leading-5 text-zinc-400" role="status">{pluginReloadStatus}</p>
+          <p className="mt-2 min-h-5 text-meta leading-5 text-fg-secondary" role="status">{pluginReloadStatus}</p>
         </section>
 
         <section
-          className="mt-4 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+          className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
           aria-labelledby="debug-error-screen-title"
         >
           <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
+            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 id="debug-error-screen-title" className="text-sm font-medium text-zinc-200">
+              <h2 id="debug-error-screen-title" className="text-body font-medium text-fg">
                 错误界面预览
               </h2>
-              <p className="mt-1 text-sm leading-6 text-zinc-400">
+              <p className="mt-1 text-body leading-6 text-fg-secondary">
                 以示例错误全屏预览应用崩溃时的兜底界面（含复制错误信息与交流群反馈引导），不影响真实状态。
               </p>
             </div>
@@ -261,7 +261,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           <button
             type="button"
             onClick={() => setErrorPreviewOpen(true)}
-            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400"
+            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400"
           >
             <Eye className="h-4 w-4" aria-hidden="true" />
             预览错误界面
@@ -269,17 +269,17 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
         </section>
 
         <section
-          className="mt-4 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+          className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
           aria-labelledby="debug-experimental-title"
         >
           <div className="flex items-start gap-3">
-            <FlaskConical className="mt-0.5 h-5 w-5 shrink-0 text-zinc-300" aria-hidden="true" />
+            <FlaskConical className="mt-1 h-5 w-5 shrink-0 text-fg-secondary" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 id="debug-experimental-title" className="text-sm font-medium text-zinc-200">实验性功能</h2>
-              <p className="mt-1 text-sm leading-6 text-zinc-500">开启尚在测试中的界面实验，状态会保留到手动关闭。</p>
+              <h2 id="debug-experimental-title" className="text-body font-medium text-fg">实验性功能</h2>
+              <p className="mt-1 text-body leading-6 text-fg-tertiary">开启尚在测试中的界面实验，状态会保留到手动关闭。</p>
             </div>
           </div>
-          <label className="mt-4 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-zinc-200 hover:bg-zinc-900/50">
+          <label className="mt-4 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-body text-fg hover:bg-surface/50">
             <input
               type="checkbox"
               checked={lightMode}
@@ -291,8 +291,8 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
               亮色模式
             </span>
           </label>
-          <p className="mt-1 text-xs leading-5 text-zinc-500">切换后立即预览亮色配色，状态会保留到下次手动关闭。</p>
-          <label className="mt-3 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-zinc-200 hover:bg-zinc-900/50">
+          <p className="mt-1 text-meta leading-5 text-fg-tertiary">切换后立即预览亮色配色，状态会保留到下次手动关闭。</p>
+          <label className="mt-3 flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-body text-fg hover:bg-surface/50">
             <input
               type="checkbox"
               checked={debug67Mode}
@@ -304,10 +304,10 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
               67 模式
             </span>
           </label>
-          <p className="mt-1 text-xs leading-5 text-zinc-500">开启后跳过真实模型，Agent 会模拟连续输出“67”，直到设定的 token 上限；状态会保留到手动关闭。</p>
+          <p className="mt-1 text-meta leading-5 text-fg-tertiary">开启后跳过真实模型，Agent 会模拟连续输出“67”，直到设定的 token 上限；状态会保留到手动关闭。</p>
           {debug67Mode && (
-            <div className="mt-3 space-y-3 rounded-lg border border-edge-subtle bg-zinc-900/40 p-3">
-              <label className="flex items-center justify-between gap-3 text-sm text-zinc-200">
+            <div className="mt-3 space-y-3 rounded-lg border border-edge-subtle bg-surface/40 p-3">
+              <label className="flex items-center justify-between gap-3 text-body text-fg">
                 <span>输出 token 上限</span>
                 <input
                   type="number"
@@ -319,14 +319,14 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
                     const value = Number(event.currentTarget.value);
                     if (Number.isFinite(value)) setDebug67TokenLimit(value);
                   }}
-                  className="w-28 rounded-md border border-edge bg-zinc-800 px-2 py-1 text-right text-sm text-zinc-100 outline-none focus:border-indigo-500"
+                  className="w-28 rounded-md border border-edge bg-surface-raised px-2 py-1 text-right text-body text-fg outline-none focus:border-indigo-500"
                   aria-label="67 模式输出 token 上限"
                 />
               </label>
-              <label className="block text-sm text-zinc-200">
+              <label className="block text-body text-fg">
                 <span className="flex items-center justify-between">
                   <span>输出速度</span>
-                  <span className="font-mono text-xs text-zinc-400">{debug67Speed} 段/秒</span>
+                  <span className="font-mono text-meta text-fg-secondary">{debug67Speed} 段/秒</span>
                 </span>
                 <input
                   type="range"
@@ -339,7 +339,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
                   aria-label="67 模式输出速度"
                 />
               </label>
-              <label className="flex min-h-9 cursor-pointer items-center gap-3 text-sm text-zinc-200">
+              <label className="flex min-h-9 cursor-pointer items-center gap-3 text-body text-fg">
                 <input
                   type="checkbox"
                   checked={debug67Thinking}
@@ -348,7 +348,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
                 />
                 <span>先思考一会儿再输出 67</span>
               </label>
-              <p className="text-xs leading-5 text-zinc-500">开启思考后会先等待约 1.6 秒，再开始按当前速度输出。</p>
+              <p className="text-meta leading-5 text-fg-tertiary">开启思考后会先等待约 1.6 秒，再开始按当前速度输出。</p>
             </div>
           )}
         </section>

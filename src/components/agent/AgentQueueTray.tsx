@@ -51,18 +51,18 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
   return (
     <section
       aria-label="待发送队列"
-      className="mb-2 min-w-0 overflow-hidden rounded-xl border border-edge/70 bg-zinc-800/50"
+      className="mb-2 min-w-0 overflow-hidden rounded-xl border border-edge/70 bg-surface-raised/50"
     >
       {paused ? (
         <div
           role="status"
-          className="flex min-w-0 items-center gap-2 border-b border-amber-800/40 bg-amber-950/50 px-3 py-1.5 text-xs text-amber-200"
+          className="flex min-w-0 items-center gap-2 border-b border-amber-800/40 bg-amber-950/50 px-3 py-1.5 text-meta text-amber-200"
         >
           <span className="min-w-0 flex-1 leading-relaxed">{queuePauseText(paused)}</span>
           <button
             type="button"
             onClick={() => store.resume(conversationId)}
-            className={`shrink-0 rounded-md px-2 font-medium text-amber-100 transition-transform duration-100 active:scale-95 hover:bg-amber-900/40 ${
+            className={`shrink-0 rounded-md px-2 font-medium text-amber-100 pressable hover:bg-amber-900/40 ${
               mobile ? "h-11" : "h-7"
             }`}
           >
@@ -71,7 +71,7 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
           <button
             type="button"
             onClick={() => store.clear(conversationId)}
-            className={`shrink-0 rounded-md px-2 text-amber-300/80 transition-transform duration-100 active:scale-95 hover:bg-amber-900/40 ${
+            className={`shrink-0 rounded-md px-2 text-amber-300/80 pressable hover:bg-amber-900/40 ${
               mobile ? "h-11" : "h-7"
             }`}
           >
@@ -79,8 +79,8 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
           </button>
         </div>
       ) : (
-        <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-zinc-400">
-          <span className="font-medium text-zinc-300">待发送 {items.length} 条</span>
+        <div className="flex items-center gap-2 px-3 pt-1.5 text-caption text-fg-secondary">
+          <span className="font-medium text-fg-secondary">待发送 {items.length} 条</span>
           <span className="min-w-0 truncate">当前任务完成后依次发出</span>
         </div>
       )}
@@ -94,12 +94,12 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
             >
               <span
                 aria-hidden="true"
-                className="w-4 shrink-0 text-center text-[11px] tabular-nums text-zinc-500"
+                className="w-4 shrink-0 text-center text-caption tabular-nums text-fg-tertiary"
               >
                 {index + 1}
               </span>
               <span
-                className={`min-w-0 flex-1 truncate text-sm text-zinc-200 ${
+                className={`min-w-0 flex-1 truncate text-read text-fg ${
                   mobile ? "py-3" : "py-1.5"
                 }`}
                 title={message.draft.text || undefined}
@@ -107,7 +107,7 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
                 {previewOf(message)}
               </span>
               {extra > 0 && (
-                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-zinc-400">
+                <span className="flex shrink-0 items-center gap-0.5 text-caption text-fg-secondary">
                   <Paperclip aria-hidden="true" className="h-3 w-3" />
                   {extra}
                 </span>
@@ -119,7 +119,7 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
                 onClick={() => {
                   if (store.pullBack(conversationId, message.id)) onPulledBack?.();
                 }}
-                className={`flex shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-transform duration-100 active:scale-90 hover:text-zinc-100 ${iconButton}`}
+                className={`flex shrink-0 items-center justify-center rounded-lg text-fg-secondary transition-transform duration-100 hover:text-fg ${iconButton}`}
               >
                 <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
               </button>
@@ -128,7 +128,7 @@ export default function AgentQueueTray({ conversationId, mobile = false, onPulle
                 aria-label={`移除第 ${index + 1} 条`}
                 title="移除"
                 onClick={() => store.remove(conversationId, message.id)}
-                className={`flex shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-transform duration-100 active:scale-90 hover:text-red-300 ${iconButton}`}
+                className={`flex shrink-0 items-center justify-center rounded-lg text-fg-secondary transition-transform duration-100 hover:text-red-300 ${iconButton}`}
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>

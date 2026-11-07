@@ -98,32 +98,32 @@ export default function MobileActiveAgentsSheet({
       title="任务与作业中心"
       maxHeightClassName="max-h-[85dvh]"
     >
-      <div className="flex border-b border-edge-subtle px-4 pt-1 gap-4 bg-zinc-900/50">
+      <div className="flex border-b border-edge-subtle px-4 pt-1 gap-4 bg-surface/50">
         <button
           type="button"
           onClick={() => setActiveTab('agents')}
-          className={`pb-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+          className={`pb-2 text-meta font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
             activeTab === 'agents'
               ? 'border-indigo-500 text-indigo-400 font-semibold'
-              : 'border-transparent text-zinc-400'
+              : 'border-transparent text-fg-secondary'
           }`}
         >
           <span>Agent 任务</span>
-          <span className="px-1.5 py-0.2 text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full">
+          <span className="px-1.5 py-0.2 text-caption bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full">
             {runningTasks.length}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('jobs')}
-          className={`pb-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+          className={`pb-2 text-meta font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
             activeTab === 'jobs'
               ? 'border-sky-500 text-sky-400 font-semibold'
-              : 'border-transparent text-zinc-400'
+              : 'border-transparent text-fg-secondary'
           }`}
         >
           <span>后台作业 (Jobs)</span>
-          <span className="px-1.5 py-0.2 text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
+          <span className="px-1.5 py-0.2 text-caption bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
             {runningJobs.length}
           </span>
         </button>
@@ -132,8 +132,8 @@ export default function MobileActiveAgentsSheet({
       <div className="space-y-2.5 p-3">
         {activeTab === 'agents' ? (
           runningTasks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-zinc-500">
-              <p className="text-xs">暂无运行中的 Agent 任务</p>
+            <div className="flex flex-col items-center justify-center py-12 text-center text-fg-tertiary">
+              <p className="text-meta">暂无运行中的 Agent 任务</p>
             </div>
           ) : (
             runningTasks.map((task) => {
@@ -147,24 +147,24 @@ export default function MobileActiveAgentsSheet({
                 <div
                   key={task.id}
                   onClick={() => void handleJumpToTask(task)}
-                  className={`group flex flex-col p-3 rounded-xl border transition-transform duration-100 active:scale-[0.98] ${
+                  className={`group flex flex-col p-3 rounded-xl border pressable ${
                     isCurrent
-                      ? 'bg-zinc-800/90 border-indigo-500/40'
-                      : 'bg-zinc-900/70 border-edge-subtle/80 active:bg-state-soft'
+                      ? 'bg-surface-raised/90 border-indigo-500/40'
+                      : 'bg-surface/70 border-edge-subtle/80 active:bg-state-soft'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
                       {isSubTask ? (
-                        <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded flex-shrink-0">
+                        <span className="px-1.5 py-0.5 text-caption font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded flex-shrink-0">
                           {task.mode === "agent" ? "子任务 · 执行" : "子任务 · 调研"}
                         </span>
                       ) : (
-                        <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded flex-shrink-0">
+                        <span className="px-1.5 py-0.5 text-caption font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded flex-shrink-0">
                           主任务
                         </span>
                       )}
-                      <span className="text-xs font-medium text-zinc-300 truncate">
+                      <span className="text-meta font-medium text-fg-secondary truncate">
                         {sessionLabel}
                       </span>
                     </div>
@@ -174,23 +174,23 @@ export default function MobileActiveAgentsSheet({
                       {(() => {
                           const badge = taskStatusBadge(task);
                           return badge && (
-                            <span className={`text-[10px] font-medium ${badge.tone === 'amber' ? 'text-amber-400' : 'text-zinc-500'}`}>{badge.text}</span>
+                            <span className={`text-caption font-medium ${badge.tone === 'amber' ? 'text-amber-400' : 'text-fg-tertiary'}`}>{badge.text}</span>
                           );
                         })()}
                     </div>
                   </div>
 
-                  <div className="text-xs font-semibold text-zinc-100 truncate mb-1">
+                  <div className="text-meta font-semibold text-fg truncate mb-1">
                     {convTitle}
                   </div>
 
                   {task.prompt && (
-                    <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+                    <p className="text-caption text-fg-secondary line-clamp-2 leading-relaxed">
                       {task.prompt}
                     </p>
                   )}
 
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-edge-subtle/50 text-[10px] text-zinc-500">
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-edge-subtle/50 text-caption text-fg-tertiary">
                     <span>
                       {task.createdAt ? new Date(task.createdAt).toLocaleTimeString() : ''}
                     </span>
@@ -205,8 +205,8 @@ export default function MobileActiveAgentsSheet({
           )
         ) : (
           jobList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-zinc-500">
-              <p className="text-xs">暂无后台作业</p>
+            <div className="flex flex-col items-center justify-center py-12 text-center text-fg-tertiary">
+              <p className="text-meta">暂无后台作业</p>
             </div>
           ) : (
             jobList.map((job) => {
@@ -222,42 +222,42 @@ export default function MobileActiveAgentsSheet({
                   className={`flex flex-col p-3 rounded-xl border ${
                     isRunning
                       ? 'bg-sky-950/20 border-sky-800/50'
-                      : 'bg-zinc-900/70 border-edge-subtle/80'
+                      : 'bg-surface/70 border-edge-subtle/80'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded flex-shrink-0">
+                      <span className="px-1.5 py-0.5 text-caption font-mono font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded flex-shrink-0">
                         {job.jobId}
                       </span>
-                      <span className="text-xs font-medium text-zinc-300 truncate">
+                      <span className="text-meta font-medium text-fg-secondary truncate">
                         {sessionLabel}
                       </span>
                     </div>
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                    <span className={`text-caption font-medium px-1.5 py-0.5 rounded ${
                       isRunning
                         ? 'text-sky-400 bg-sky-950/60 border border-sky-800/50'
                         : job.status === 'completed'
                         ? 'text-emerald-400 bg-emerald-950/40 border border-emerald-800/40'
                         : isInterrupted
                         ? 'text-amber-400 bg-amber-950/40 border border-amber-800/40'
-                        : 'text-zinc-400 bg-zinc-800'
+                        : 'text-fg-secondary bg-surface-raised'
                     }`}>
                       {job.status}
                     </span>
                   </div>
-                  <div className="text-xs font-medium text-zinc-200 truncate mb-1">
+                  <div className="text-meta font-medium text-fg truncate mb-1">
                     {job.description || job.command}
                   </div>
-                  <div className="bg-black/40 rounded p-1.5 font-mono text-[11px] text-zinc-400 truncate mb-2">
+                  <div className="bg-black/40 rounded p-1.5 font-mono text-caption text-fg-secondary truncate mb-2">
                     $ {job.command}
                   </div>
                   {isInterrupted && (
-                    <p className="text-[10px] text-amber-400/80 leading-relaxed mb-2">
+                    <p className="text-caption text-amber-400/80 leading-relaxed mb-2">
                       上一次应用运行留下的作业：应用退出时通道就关闭了，之后的输出看不到；远端进程是否还在运行，要在服务器上确认。
                     </p>
                   )}
-                  <div className="flex items-center justify-between pt-2 border-t border-edge-subtle/50 text-[10px] text-zinc-500">
+                  <div className="flex items-center justify-between pt-2 border-t border-edge-subtle/50 text-caption text-fg-tertiary">
                     <span>
                       输出: {job.totalOutputBytes} 字节
                       {job.detail ? ` · ${job.detail}` : ''}
@@ -266,7 +266,7 @@ export default function MobileActiveAgentsSheet({
                       <button
                         type="button"
                         onClick={() => void killJob(job.jobId)}
-                        className="px-2 py-0.5 text-[11px] font-medium text-red-400 bg-red-950/40 border border-red-800/50 rounded active:scale-95 transition-all"
+                        className="px-2 py-0.5 text-caption font-medium text-red-400 bg-red-950/40 border border-red-800/50 rounded pressable"
                       >
                         终止
                       </button>

@@ -18,9 +18,9 @@ export function GithubImportGuideButton({
       aria-expanded={open}
       aria-label='GitHub 导入说明'
       className={
-        'flex shrink-0 items-center gap-1 rounded-md text-zinc-400 hover:text-zinc-200 active:text-zinc-200 ' +
+        'flex shrink-0 items-center gap-1 rounded-md text-fg-secondary hover:text-fg active:text-fg ' +
         (open ? 'text-indigo-400 ' : '') +
-        (touch ? 'px-2 py-1.5 text-xs' : 'px-1.5 py-0.5 text-[11px]')
+        (touch ? 'px-2 py-2 text-meta' : 'px-2 py-0.5 text-caption')
       }
     >
       <CircleHelp className={touch ? 'h-4 w-4' : 'h-3.5 w-3.5'} />
@@ -70,31 +70,31 @@ export default function GithubImportGuide({ touch = false }: { touch?: boolean }
   };
 
   return (
-    <div className='space-y-3 rounded-lg border border-edge/60 bg-zinc-900/60 p-3'>
+    <div className='space-y-3 rounded-lg border border-edge/60 bg-surface/60 p-3'>
       <div className='space-y-2'>
-        <div className='text-xs font-medium text-zinc-300'>可以贴这三种地址</div>
+        <div className='text-meta font-medium text-fg-secondary'>可以贴这三种地址</div>
         {EXAMPLES.map((e) => (
           <div key={e.title} className='space-y-1'>
-            <div className='text-[11px] text-zinc-400'>{e.title}</div>
+            <div className='text-caption text-fg-secondary'>{e.title}</div>
             <button
               type='button'
               onClick={() => copy(e.url)}
               title='点击复制示例'
               className={
-                'block w-full break-all rounded bg-zinc-950 px-2 py-1 text-left font-mono text-zinc-300 hover:bg-state-soft active:bg-state-soft ' +
-                (touch ? 'text-[11px]' : 'text-[10px]')
+                'block w-full break-all rounded bg-surface-sunken px-2 py-1 text-left font-mono text-fg-secondary hover:bg-state-soft active:bg-state-soft ' +
+                (touch ? 'text-caption' : 'text-caption')
               }
             >
               {e.url}
               {copied === e.url && <span className='ml-2 text-emerald-400'>已复制</span>}
             </button>
-            <p className='text-[11px] leading-relaxed text-zinc-500'>{e.desc}</p>
+            <p className='text-caption leading-relaxed text-fg-tertiary'>{e.desc}</p>
           </div>
         ))}
       </div>
       <div className='space-y-1'>
-        <div className='text-xs font-medium text-zinc-300'>导入规则</div>
-        <ul className='list-disc space-y-0.5 pl-4 text-[11px] leading-relaxed text-zinc-500'>
+        <div className='text-meta font-medium text-fg-secondary'>导入规则</div>
+        <ul className='list-disc space-y-1 pl-4 text-caption leading-relaxed text-fg-tertiary'>
           {NOTES.map((n) => (
             <li key={n}>{n}</li>
           ))}

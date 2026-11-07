@@ -490,26 +490,26 @@ export default function MobileAgentHost({
 
   return (
     <div
-      className="marcel-viz-surface-page relative flex h-full min-h-0 flex-col bg-zinc-950"
+      className="marcel-viz-surface-page relative flex h-full min-h-0 flex-col bg-surface-sunken"
       data-region="mobile-agent"
     >
       <header
-        className="flex flex-shrink-0 items-center gap-2 border-b border-edge-subtle bg-zinc-950 px-3 py-2"
+        className="flex flex-shrink-0 items-center gap-2 border-b border-edge-subtle bg-surface-sunken px-3 py-2"
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top, 0px))" }}
       >
         <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="truncate whitespace-nowrap text-sm font-semibold text-zinc-100">
+          <div className="truncate whitespace-nowrap text-body font-semibold text-fg">
             {hostLabel}
           </div>
           <div
-            className={`truncate whitespace-nowrap text-[11px] ${
+            className={`truncate whitespace-nowrap text-caption ${
               activeSession?.status === "connected"
                 ? "text-emerald-400"
                 : activeSession?.status === "connecting"
                   ? "text-amber-400"
                   : activeSession?.status === "error"
                     ? "text-red-400"
-                    : "text-zinc-500"
+                    : "text-fg-tertiary"
             }`}
           >
             {statusText}
@@ -524,7 +524,7 @@ export default function MobileAgentHost({
               setAgentsSheetTab(taskCenter.initialTab);
               setActiveAgentsSheetOpen(true);
             }}
-            className={`flex flex-shrink-0 items-center gap-1 whitespace-nowrap px-2 py-1 active:scale-95 border rounded-full text-xs font-medium transition-all ${
+            className={`flex flex-shrink-0 items-center gap-1 whitespace-nowrap px-2 py-1 border rounded-full text-meta font-medium pressable ${
               taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
                 ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
                 : taskCenter.runningJobs.length > 0
@@ -567,7 +567,7 @@ export default function MobileAgentHost({
           type="button"
           onClick={() => void handleNewConversation()}
           disabled={!canInteract || !ids}
-          className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white transition-transform duration-100 active:scale-95 active:bg-indigo-500 disabled:opacity-40"
+          className="rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body font-medium text-white pressable active:bg-indigo-500 disabled:opacity-40"
         >
           新对话
         </button>
@@ -584,7 +584,7 @@ export default function MobileAgentHost({
               setHistoryBrowserOpen(true);
             }
           }}
-          className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 transition-transform duration-100 active:scale-95 active:bg-state-mid"
+          className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg pressable active:bg-state-mid"
         >
           历史
         </button>
@@ -599,7 +599,7 @@ export default function MobileAgentHost({
       )}
 
       {rollbackHint && (
-        <div className="flex-shrink-0 border-b border-edge bg-zinc-900 px-3 py-1.5 text-center text-xs text-zinc-300">
+        <div className="flex-shrink-0 border-b border-edge bg-surface px-3 py-1.5 text-center text-meta text-fg-secondary">
           {rollbackHint}
         </div>
       )}
@@ -622,16 +622,16 @@ export default function MobileAgentHost({
             </div>
           )}
           {emptyReason !== "ready" && (
-            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-sm text-zinc-500`}>
-              <p className="font-medium text-zinc-400">
+            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-body text-fg-tertiary`}>
+              <p className="font-medium text-fg-secondary">
                 {EMPTY_STATE_COPY[emptyReason].title}
               </p>
               <p className="mt-1">{EMPTY_STATE_COPY[emptyReason].body}</p>
             </div>
           )}
           {emptyReason === "ready" && (
-            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-sm text-zinc-500`}>
-              <p className="font-medium text-zinc-400">
+            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-body text-fg-tertiary`}>
+              <p className="font-medium text-fg-secondary">
                 {activeConversationId ? "暂无消息" : "暂无会话"}
               </p>
               <p className="mt-1">
@@ -658,7 +658,7 @@ export default function MobileAgentHost({
           />
           <div
             onAnimationEnd={historyPresence.onAnimationEnd}
-            className={`absolute inset-x-0 bottom-0 z-30 max-h-[55%] overflow-y-auto rounded-t-2xl border-t border-edge bg-zinc-900 p-3 shadow-2xl ${
+            className={`absolute inset-x-0 bottom-0 z-30 max-h-[55%] overflow-y-auto rounded-t-2xl border-t border-edge bg-surface p-3 shadow-overlay ${
               historyPresence.phase === "exit"
                 ? "mobile-sheet-exit"
                 : "mobile-sheet-enter"
@@ -670,10 +670,10 @@ export default function MobileAgentHost({
                   type="button"
                   onClick={() => setHistoryMode("active")}
                   className={
-                    "rounded-lg px-2 py-1 text-xs font-medium " +
+                    "rounded-lg px-2 py-1 text-meta font-medium " +
                     (historyMode === "active"
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-400 active:bg-state-soft/60")
+                      ? "bg-surface-raised text-fg"
+                      : "text-fg-secondary active:bg-state-soft/60")
                   }
                 >
                   历史会话
@@ -686,10 +686,10 @@ export default function MobileAgentHost({
                     if (configId) void loadArchivedConversations(configId);
                   }}
                   className={
-                    "rounded-lg px-2 py-1 text-xs font-medium " +
+                    "rounded-lg px-2 py-1 text-meta font-medium " +
                     (historyMode === "archived"
                       ? "bg-amber-950/50 text-amber-300"
-                      : "text-zinc-400 active:bg-state-soft/60")
+                      : "text-fg-secondary active:bg-state-soft/60")
                   }
                 >
                   已归档{archivedList.length > 0 ? ` (${archivedList.length})` : ""}
@@ -701,7 +701,7 @@ export default function MobileAgentHost({
                   setHistoryOpen(false);
                   setHistoryMode("active");
                 }}
-                className="text-xs text-zinc-400"
+                className="text-meta text-fg-secondary"
               >
                 关闭
               </button>
@@ -709,7 +709,7 @@ export default function MobileAgentHost({
             {archiveError && (
               <div
                 role="alert"
-                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta text-red-300"
               >
                 {archiveError}
               </div>
@@ -717,12 +717,12 @@ export default function MobileAgentHost({
             {historyMode === "archived" ? (
               <div className="space-y-2">
                 {archivedLoadingNow && (
-                  <p className="py-6 text-center text-sm text-zinc-500">
+                  <p className="py-6 text-center text-body text-fg-tertiary">
                     加载归档会话…
                   </p>
                 )}
                 {!archivedLoadingNow && archivedList.length === 0 && (
-                  <p className="py-6 text-center text-sm text-zinc-500">
+                  <p className="py-6 text-center text-body text-fg-tertiary">
                     暂无归档会话
                   </p>
                 )}
@@ -732,17 +732,17 @@ export default function MobileAgentHost({
                     className="flex items-center gap-1 rounded-lg border border-amber-900/30 bg-amber-950/20"
                   >
                     <div className="min-w-0 flex-1 px-3 py-2">
-                      <div className="truncate text-sm font-medium text-zinc-300">
+                      <div className="truncate text-body font-medium text-fg-secondary">
                         {conv.title}
                       </div>
-                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                      <div className="mt-0.5 text-caption text-fg-tertiary">
                         归档于 {conv.archivedAt ? new Date(conv.archivedAt).toLocaleString() : '未知时间'}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => void handleRestoreConversation(conv.id)}
-                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                       aria-label={`恢复 ${conv.title}`}
                       title="恢复会话"
                     >
@@ -761,14 +761,14 @@ export default function MobileAgentHost({
                 ))}
               </div>
             ) : sessionConversations.length === 0 ? (
-              <p className="py-6 text-center text-sm text-zinc-500">
+              <p className="py-6 text-center text-body text-fg-tertiary">
                 暂无历史会话
               </p>
             ) : (
               <div className="space-y-3">
                 {groupedSessionConversations.map((group) => (
                   <div key={group.key} className="space-y-1">
-                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    <div className="px-1 text-caption font-semibold uppercase tracking-wider text-fg-tertiary">
                       {group.label}
                     </div>
                     <ul className="space-y-1">
@@ -780,17 +780,17 @@ export default function MobileAgentHost({
                             className={`flex items-center gap-1 rounded-lg ${
                               active
                                 ? "bg-indigo-600/20 text-indigo-200"
-                                : "bg-zinc-800/60 text-zinc-300"
+                                : "bg-surface-raised/60 text-fg-secondary"
                             }`}
                           >
                             <button
                               type="button"
                               onClick={() => void handleSelectConversation(conv.id)}
-                              className="min-w-0 flex-1 px-3 py-2 text-left text-sm active:opacity-80 flex items-center justify-between gap-2"
+                              className="min-w-0 flex-1 px-3 py-2 text-left text-body active:opacity-80 flex items-center justify-between gap-2"
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="truncate font-medium leading-snug">{conv.title}</div>
-                                <div className="mt-0.5 text-[11px] text-zinc-500">
+                                <div className="mt-0.5 text-caption text-fg-tertiary">
                                   {conv.forkedFromId && <ForkMark />}
                                   {new Date(conv.updatedAt).toLocaleString()}
                                 </div>
@@ -812,7 +812,7 @@ export default function MobileAgentHost({
                                   console.error('Failed to toggle pin:', getErrorMessage(err)),
                                 )
                               }
-                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                               aria-label={conv.pinned ? `取消置顶 ${conv.title}` : `置顶 ${conv.title}`}
                             >
                               <Pin className="h-3.5 w-3.5" />
@@ -820,7 +820,7 @@ export default function MobileAgentHost({
                             <button
                               type="button"
                               onClick={() => handleStartRename(conv.id, conv.title)}
-                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                               aria-label={`重命名 ${conv.title}`}
                             >
                               <Pencil className="h-3.5 w-3.5" />
@@ -828,7 +828,7 @@ export default function MobileAgentHost({
                             <button
                               type="button"
                               onClick={() => void handleArchiveConversation(conv.id)}
-                              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft active:text-fg"
                               aria-label={`归档 ${conv.title}`}
                               title="归档会话（可恢复）"
                             >
@@ -863,14 +863,14 @@ export default function MobileAgentHost({
               }
             }}
             placeholder="请输入会话名称"
-            className="w-full rounded-xl border border-edge bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-xl border border-edge bg-surface-raised px-3.5 py-2.5 text-body text-fg placeholder-fg-tertiary focus:border-indigo-500 focus:outline-none"
             autoFocus
           />
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setRenameTargetId(null)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -878,7 +878,7 @@ export default function MobileAgentHost({
               type="button"
               onClick={() => void handleConfirmRename()}
               disabled={!renameTitleInput.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 active:bg-indigo-500"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-body font-medium text-white disabled:opacity-50 active:bg-indigo-500"
             >
               保存
             </button>
@@ -892,21 +892,21 @@ export default function MobileAgentHost({
         title="永久删除会话"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             永久删除会话「{deleteTargetTitle}」？消息会一起删除，此操作不可撤销。
             若只是想让它从列表里消失，请改用归档。
           </p>
           <button
             type="button"
             onClick={() => void handleDeleteConversation()}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+            className="rounded-xl bg-red-600 px-4 py-3 text-body font-medium text-white active:bg-red-500"
           >
             永久删除
           </button>
           <button
             type="button"
             onClick={() => setDeleteTargetId(null)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>
@@ -918,7 +918,7 @@ export default function MobileAgentHost({
         onClose={() => setUsageSheetOpen(false)}
         title="Token 用量"
       >
-        <div className="px-4 pb-4 text-sm">
+        <div className="px-4 pb-4 text-body">
           <TokenUsagePanel
             usage={activeUsageView?.usage}
             windowTokens={activeUsageView?.windowTokens ?? 0}
@@ -931,11 +931,11 @@ export default function MobileAgentHost({
               setUsageSheetOpen(false);
               setMemorySheetOpen(true);
             }}
-            className="mt-3 flex w-full items-center gap-2 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-left transition-transform duration-100 active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100"
+            className="mt-3 flex w-full items-center gap-2 rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-left pressable disabled:opacity-40"
           >
-            <Bookmark className="h-4 w-4 flex-shrink-0 text-zinc-400" aria-hidden />
-            <span className="min-w-0 flex-1 text-zinc-200">这段对话带着的记忆</span>
-            <span className="text-xs text-zinc-500">
+            <Bookmark className="h-4 w-4 flex-shrink-0 text-fg-secondary" aria-hidden />
+            <span className="min-w-0 flex-1 text-fg">这段对话带着的记忆</span>
+            <span className="text-meta text-fg-tertiary">
               {!canInteract
                 ? "连接后可查看"
                 : injectedMemories.data
@@ -944,7 +944,7 @@ export default function MobileAgentHost({
                     : "已关闭"
                   : ""}
             </span>
-            <ChevronRight className="h-4 w-4 flex-shrink-0 text-zinc-600" aria-hidden />
+            <ChevronRight className="h-4 w-4 flex-shrink-0 text-fg-disabled" aria-hidden />
           </button>
         </div>
       </MobileSheet>
@@ -954,7 +954,7 @@ export default function MobileAgentHost({
         onClose={() => setMemorySheetOpen(false)}
         title="记忆"
       >
-        <div className="px-4 pb-4 text-sm">
+        <div className="px-4 pb-4 text-body">
           <InjectedMemoryList
             data={injectedMemories.data}
             error={injectedMemories.error}
@@ -978,11 +978,11 @@ export default function MobileAgentHost({
 
       {isSubConversation ? (
         <div className="flex-shrink-0 border-t border-edge-subtle p-3">
-          <div className="flex items-center gap-3 rounded-xl border border-edge/60 bg-zinc-900/70 px-3 py-3">
+          <div className="flex items-center gap-3 rounded-xl border border-edge/60 bg-surface/70 px-3 py-3">
             <button
               type="button"
               onClick={handleBackToParent}
-              className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600/20 px-2.5 py-2 text-xs font-medium text-indigo-300 transition-transform duration-100 active:scale-95 active:bg-indigo-600/30"
+              className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 bg-indigo-600/20 px-2.5 py-2 text-body font-medium text-indigo-300 pressable active:bg-indigo-600/30"
             >
               <svg
                 className="h-3.5 w-3.5"
@@ -1000,12 +1000,12 @@ export default function MobileAgentHost({
               返回主对话
             </button>
             <div className="min-w-0 flex-1 border-l border-edge/50 pl-3">
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-400">
+              <div className="flex min-w-0 items-center gap-1.5 text-meta text-fg-secondary">
                 {/* 本机子任务（local_subagent）：这条子对话在用户这台电脑上跑，
                     没有 SSH 会话。不标的话用户会以为它跑在某台服务器上。
                     措辞与桌面一致（任务/作业中心的 `本机`、本机工具审批横幅）。 */}
                 {subAgentIsLocal && (
-                  <span className="flex-shrink-0 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                  <span className="flex-shrink-0 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-caption font-semibold text-sky-300">
                     本机
                   </span>
                 )}
@@ -1014,7 +1014,7 @@ export default function MobileAgentHost({
                   {activeConversation?.title ?? "子agent对话"}
                 </span>
               </div>
-              <div className="mt-0.5 text-[11px] text-zinc-600">
+              <div className="mt-0.5 text-caption text-fg-disabled">
                 {subAgentMode === "agent"
                   ? "由主 Agent 派发的读写执行，不支持输入"
                   : "由主 Agent 派发的只读调研，不支持输入"}
@@ -1052,7 +1052,7 @@ export default function MobileAgentHost({
           {/* 压缩中常驻的原因说明（与桌面同文案）：发送键这时是「取消压缩」，
               回车也发不出去，没有这一行用户只会觉得输入框坏了。 */}
           {isCompacting && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-violet-800/50 bg-violet-950/50 px-2.5 py-1.5 text-xs text-violet-200">
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-violet-800/50 bg-violet-950/50 px-2.5 py-1.5 text-meta text-violet-200">
               <span className="h-2 w-2 shrink-0 rounded-full bg-violet-400/90" />
               正在压缩上下文，完成后即可发送（可点右下角取消）
             </div>
@@ -1060,7 +1060,7 @@ export default function MobileAgentHost({
           <AgentQueueTray conversationId={attachments.conversationId} mobile />
           <DraftSkillChips attachments={attachments} mobile />
           <DraftAttachments attachments={attachments} mobile />
-          <div className="agent-input rounded-2xl border border-edge bg-zinc-900 focus-within:border-indigo-500">
+          <div className="agent-input rounded-2xl border border-edge bg-surface focus-within:border-indigo-500">
             {/* 移动端不拦截回车：软键盘/IME 的「换行」键走 textarea 原生行为插入换行
                 （含拼音组合中确认候选词的回车，不会误发）；发送只走右侧按钮——
                 手机上没有 shift+Enter，若拦截回车则多行输入无法换行。桌面端语义不受影响。 */}
@@ -1080,7 +1080,7 @@ export default function MobileAgentHost({
                       : "描述您想要做的事情，输入 / 可查看命令…"
               }
               disabled={!canInteract || !ids}
-              className="w-full min-h-[2.5rem] max-h-[7.5rem] resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
+              className="w-full min-h-[2.5rem] max-h-[7.5rem] resize-none bg-transparent px-3.5 pt-3 pb-1 text-body text-fg placeholder:text-fg-tertiary outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
             />
             <div className="flex items-center px-1.5 pb-1.5">
               {/* 附件按钮：图片/文本文件导入 */}
@@ -1088,7 +1088,7 @@ export default function MobileAgentHost({
                 type="button"
                 onClick={() => void attachments.handleAttach()}
                 disabled={!canInteract || !ids}
-                className="flex h-11 w-11 flex-shrink-0 items-center justify-center -ml-0.5 text-zinc-400 active:text-zinc-200 active:bg-state-soft rounded-full transition-transform duration-150 active:scale-90 disabled:opacity-40"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center -ml-0.5 text-fg-secondary active:text-fg active:bg-state-soft rounded-full pressable disabled:opacity-40"
                 title="添加图片或文本文件"
                 aria-label="添加图片或文本文件"
               >
@@ -1098,7 +1098,7 @@ export default function MobileAgentHost({
                 <button
                   type="button"
                   onClick={() => setModeOpen((v) => !v)}
-                  className="flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-zinc-300 active:bg-state-soft transition-transform duration-150 active:scale-95"
+                  className="flex items-center gap-1 rounded-full px-2 py-1.5 text-meta font-medium text-fg-secondary active:bg-state-soft pressable"
                   title={currentModeInfo.description}
                 >
                   {currentModeInfo.label}
@@ -1114,7 +1114,7 @@ export default function MobileAgentHost({
               {modePresence.mounted && (
                 <div
                   onAnimationEnd={modePresence.onAnimationEnd}
-                  className={`absolute bottom-full left-0 z-30 mb-2 w-56 rounded-xl border border-edge bg-zinc-800 py-1 shadow-2xl ${
+                  className={`absolute bottom-full left-0 z-30 mb-2 w-56 rounded-xl border border-edge bg-surface-raised py-1 shadow-overlay ${
                     modePresence.phase === "exit"
                       ? "mobile-popover-exit"
                       : "mobile-popover-enter"
@@ -1130,16 +1130,16 @@ export default function MobileAgentHost({
                           setMode(m.value as AgentMode);
                           setModeOpen(false);
                         }}
-                        className={`w-full px-3 py-2 text-left text-sm ${
+                        className={`w-full px-3 py-2 text-left text-body ${
                           active
                             ? "bg-indigo-600/20 text-indigo-200"
-                            : "text-zinc-200 active:bg-state-mid"
+                            : "text-fg active:bg-state-mid"
                         }`}
                       >
                         <div className="font-semibold">
                           {m.label}
                         </div>
-                        <div className="mt-0.5 text-[11px] text-zinc-400">
+                        <div className="mt-0.5 text-caption text-fg-secondary">
                           {m.description}
                         </div>
                       </button>
@@ -1185,7 +1185,7 @@ export default function MobileAgentHost({
             <button
               type="button"
               onClick={() => setUsageSheetOpen(true)}
-              className="mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-transform duration-150 active:scale-95 active:bg-state-soft"
+              className="mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary pressable active:bg-state-soft"
               title={
                 meter.percent != null
                   ? `上下文占用 ${formatPercent(meter.percent)}%`
@@ -1214,7 +1214,7 @@ export default function MobileAgentHost({
               disabled={!isRunning && !isCompacting && (sending || !!attachments.sendBlockedReason || !(!!ids && canSendAgentPrompt(
                 activeSession, conversationBusy, sendDraft, attachments.items.length > 0 || attachments.skills.length > 0,
               )))}
-              className={`mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-150 active:scale-95 disabled:opacity-40 ${
+              className={`mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-white pressable disabled:opacity-40 ${
                 isRunning
                   ? "bg-red-600 active:bg-red-500"
                   : isCompacting
@@ -1240,7 +1240,7 @@ export default function MobileAgentHost({
               <button
                 type="button"
                 onClick={() => void handleSend()}
-                className="mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white transition-transform duration-150 active:scale-95 active:bg-indigo-500"
+                className="mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white pressable active:bg-indigo-500"
                 title="加入队列（当前任务完成后自动发送）"
                 aria-label="加入队列"
               >

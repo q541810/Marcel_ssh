@@ -329,14 +329,14 @@ export default function ConnectionForm({
       />
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">
+        <label className="block text-read font-medium text-fg-secondary mb-1">
           认证方式
         </label>
         <div className="flex gap-2 items-center">
           <select
             value={authMethod}
             onChange={(e) => setAuthMethod(e.target.value)}
-            className="flex-1 rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+            className="flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
           >
             <option value="Password">密码</option>
             <option value="PrivateKey">私钥</option>
@@ -363,18 +363,18 @@ export default function ConnectionForm({
       */}
       {authMethod === 'Password' && connection?.id && hasLoginPassword && (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm text-zinc-400">密码：已保存</span>
+          <span className="text-read text-fg-secondary">密码：已保存</span>
           <div className="flex gap-2">
             <Button
               variant="secondary"
-              className="py-1.5 text-xs"
+              className="py-1.5 text-meta"
               onClick={() => setPasswordPromptOpen(true)}
             >
               修改
             </Button>
             <Button
               variant="ghost"
-              className="py-1.5 text-xs"
+              className="py-1.5 text-meta"
               onClick={() => void clearLoginPassword()}
             >
               清除
@@ -386,7 +386,7 @@ export default function ConnectionForm({
       {authMethod === 'PrivateKey' && (
         <>
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
+            <label className="block text-read font-medium text-fg-secondary mb-1">
               私钥
             </label>
             <div className="flex gap-2 items-center">
@@ -396,7 +396,7 @@ export default function ConnectionForm({
                   setKeyId(e.target.value);
                   if (e.target.value) setKeyPath('');
                 }}
-                className="min-w-0 flex-1 rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                className="min-w-0 flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
               >
                 <option value="">
                   {keys.length > 0 ? '未选择（也可在下方直接填路径）' : '还没有导入私钥'}
@@ -417,7 +417,7 @@ export default function ConnectionForm({
               </Button>
             </div>
             {selectedKey && (
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-meta text-fg-tertiary">
                 {describeAlgorithm(selectedKey.algorithm)} ·{' '}
                 {shortFingerprint(selectedKey.fingerprint)} · 共{' '}
                 {keyUsage(selectedKey.id)} 条连接在用
@@ -437,18 +437,18 @@ export default function ConnectionForm({
 
           {hasPassphrase && !passphraseDirty && !passphrase ? (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm text-zinc-400">密钥密码：已保存</span>
+              <span className="text-read text-fg-secondary">密钥密码：已保存</span>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
-                  className="py-1.5 text-xs"
+                  className="py-1.5 text-meta"
                   onClick={() => setPassphraseDirty(true)}
                 >
                   修改
                 </Button>
                 <Button
                   variant="ghost"
-                  className="py-1.5 text-xs"
+                  className="py-1.5 text-meta"
                   onClick={() => void clearPassphrase()}
                 >
                   清除
@@ -474,18 +474,18 @@ export default function ConnectionForm({
           {/* 登录密码：与 SSH 登录无关，只给 agent 执行 sudo 时用 */}
           {hasLoginPassword && !loginPasswordDirty && !loginPassword ? (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm text-zinc-400">登录密码：已保存</span>
+              <span className="text-read text-fg-secondary">登录密码：已保存</span>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
-                  className="py-1.5 text-xs"
+                  className="py-1.5 text-meta"
                   onClick={() => setLoginPasswordDirty(true)}
                 >
                   修改
                 </Button>
                 <Button
                   variant="ghost"
-                  className="py-1.5 text-xs"
+                  className="py-1.5 text-meta"
                   onClick={() => void clearLoginPassword()}
                 >
                   清除
@@ -507,7 +507,7 @@ export default function ConnectionForm({
                 }
                 autoComplete="new-password"
               />
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-meta text-fg-tertiary">
                 本连接用私钥登录，用不到这个密码。填了之后，agent 执行
                 sudo 时会自动把它填给远端（我们自己的通道没有终端，sudo 没法回来问你）。
               </p>
@@ -524,11 +524,11 @@ export default function ConnectionForm({
       />
 
       {/* Jump host (ProxyJump) */}
-      <div className="rounded-lg border border-edge-subtle bg-zinc-900/40">
+      <div className="rounded-lg border border-edge-subtle bg-surface/40">
         <button
           type="button"
           onClick={() => setUseJump((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-sm text-zinc-300 hover:bg-state-soft/50 rounded-lg transition-colors"
+          className="w-full flex items-center justify-between px-3 py-2.5 text-read text-fg-secondary hover:bg-state-soft/50 rounded-lg transition-colors"
         >
           <span className="font-medium">跳板机（可选）</span>
           <span
@@ -589,7 +589,7 @@ export default function ConnectionForm({
             />
 
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1">
+              <label className="block text-read font-medium text-fg-secondary mb-1">
                 认证方式
               </label>
               <select
@@ -600,7 +600,7 @@ export default function ConnectionForm({
                   setJumpPassword('');
                   setJumpPassphrase('');
                 }}
-                className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
               >
                 <option value="withTarget">和目标相同</option>
                 <option value="Password">密码</option>
@@ -612,10 +612,10 @@ export default function ConnectionForm({
               <div>
                 {hasJumpPassword && !jumpCredDirty && !jumpPassword ? (
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-zinc-400">密码：已设置</span>
+                    <span className="text-read text-fg-secondary">密码：已设置</span>
                     <Button
                       variant="secondary"
-                      className="py-1.5 text-xs"
+                      className="py-1.5 text-meta"
                       onClick={() => setJumpCredDirty(true)}
                     >
                       修改
@@ -641,7 +641,7 @@ export default function ConnectionForm({
             {jumpAuthMethod === 'PrivateKey' && (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  <label className="block text-read font-medium text-fg-secondary mb-1">
                     私钥
                   </label>
                   <div className="flex gap-2 items-center">
@@ -651,7 +651,7 @@ export default function ConnectionForm({
                         setJumpKeyId(e.target.value);
                         if (e.target.value) setJumpKeyPath('');
                       }}
-                      className="min-w-0 flex-1 rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                      className="min-w-0 flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
                     >
                       <option value="">
                         {keys.length > 0
@@ -673,7 +673,7 @@ export default function ConnectionForm({
                     </Button>
                   </div>
                   {selectedJumpKey && (
-                    <p className="mt-1 text-xs text-zinc-500">
+                    <p className="mt-1 text-meta text-fg-tertiary">
                       {describeAlgorithm(selectedJumpKey.algorithm)} ·{' '}
                       {shortFingerprint(selectedJumpKey.fingerprint)}
                     </p>
@@ -691,10 +691,10 @@ export default function ConnectionForm({
                 )}
                 {hasJumpPassphrase && !jumpCredDirty && !jumpPassphrase ? (
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-zinc-400">密钥密码：已设置</span>
+                    <span className="text-read text-fg-secondary">密钥密码：已设置</span>
                     <Button
                       variant="secondary"
-                      className="py-1.5 text-xs"
+                      className="py-1.5 text-meta"
                       onClick={() => setJumpCredDirty(true)}
                     >
                       修改

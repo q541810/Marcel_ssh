@@ -123,16 +123,16 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
   };
 
   const counter = (n: number, max: number) => (
-    <span className={`tabular-nums ${n > max ? 'text-red-400' : 'text-zinc-500'}`}>{n}/{max}</span>
+    <span className={`tabular-nums ${n > max ? 'text-red-400' : 'text-fg-tertiary'}`}>{n}/{max}</span>
   );
 
   const fieldClass =
-    'w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors';
+    'w-full rounded-lg bg-surface border border-edge px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors';
 
   const form = (
     <div className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1.5">
-        <span className="flex items-baseline justify-between text-xs text-zinc-400">
+      <label className="flex flex-col gap-2">
+        <span className="flex items-baseline justify-between text-meta text-fg-secondary">
           <span>标题</span>
           {counter(titleLen, MEMORY_TITLE_MAX)}
         </span>
@@ -144,8 +144,8 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
           className={fieldClass}
         />
       </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="flex items-baseline justify-between text-xs text-zinc-400">
+      <label className="flex flex-col gap-2">
+        <span className="flex items-baseline justify-between text-meta text-fg-secondary">
           <span>内容</span>
           {counter(contentLen, MEMORY_CONTENT_MAX)}
         </span>
@@ -157,8 +157,8 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
           className={`${fieldClass} resize-none leading-relaxed`}
         />
       </label>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-zinc-400">种类</span>
+      <div className="flex flex-col gap-2">
+        <span className="text-meta text-fg-secondary">种类</span>
         {mobile ? (
           <MobileChoiceGroup
             ariaLabel="种类"
@@ -174,10 +174,10 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
             options={KIND_ORDER.map((k) => ({ value: k, label: KIND_LABELS[k], title: KIND_HINTS[k] }))}
           />
         )}
-        <span className="text-xs text-zinc-500">{KIND_HINTS[kind]}</span>
+        <span className="text-meta text-fg-tertiary">{KIND_HINTS[kind]}</span>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-zinc-400">谁能用到</span>
+      <div className="flex flex-col gap-2">
+        <span className="text-meta text-fg-secondary">谁能用到</span>
         {mobile ? (
           <MobileSelect
             ariaLabel="谁能用到"
@@ -206,13 +206,13 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
       </div>
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
-          <span className="text-sm text-zinc-200">置顶</span>
-          <span className="text-xs text-zinc-500">记忆很多时，置顶的总会完整带给 Agent</span>
+          <span className="text-body text-fg">置顶</span>
+          <span className="text-meta text-fg-tertiary">记忆很多时，置顶的总会完整带给 Agent</span>
         </div>
         <Toggle checked={pinned} onChange={setPinned} />
       </div>
       {(error || (invalid && (titleLen > 0 || contentLen > 0))) && (
-        <p className="text-xs text-red-400">{error ?? invalid}</p>
+        <p className="text-meta text-red-400">{error ?? invalid}</p>
       )}
     </div>
   );
@@ -222,7 +222,7 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
       <button
         type="button"
         onClick={onClose}
-        className="rounded-lg px-4 py-2 text-sm text-zinc-300 hover:bg-state-mid/60 active:scale-[0.97] transition"
+        className="rounded-lg px-4 py-2 text-body text-fg-secondary hover:bg-state-mid/60 transition"
       >
         取消
       </button>
@@ -230,7 +230,7 @@ export default function MemoryEditDialog({ open, onClose, item, defaultScope, on
         type="button"
         onClick={() => void save()}
         disabled={!!invalid || saving}
-        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 active:scale-[0.97] transition disabled:opacity-40 disabled:active:scale-100"
+        className="rounded-lg bg-indigo-600 px-4 py-2 text-body font-medium text-white hover:bg-indigo-500 transition disabled:opacity-40"
       >
         {saving ? '保存中…' : '保存'}
       </button>

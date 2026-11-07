@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from "react";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
 import { AGENT_MODES } from "@/lib/constants";
@@ -33,11 +34,11 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
         type="button"
         onClick={() => setModeDrawerOpen((v) => !v)}
         className={`
-                flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs font-medium transition-colors rounded-full
+                flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-meta font-medium transition-colors rounded-full
                 ${
                   modeDrawerOpen
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-state-mid/50"
+                    ? "bg-state-mid text-fg"
+                    : "text-fg-secondary hover:text-fg hover:bg-state-mid/50"
                 }
               `}
         title={currentModeInfo.description}
@@ -45,28 +46,16 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
         aria-expanded={modeDrawerOpen}
       >
         <span className="truncate min-w-0">{currentModeInfo.label}</span>
-        <svg
-          className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${
+        <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${
             modeDrawerOpen ? "rotate-180" : ""
-          }`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+          }`} strokeWidth={1.5} />
       </button>
 
       {modeDrawerPresence.mounted && (
         <div
           role="listbox"
           onAnimationEnd={modeDrawerPresence.onAnimationEnd}
-          className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-edge bg-zinc-800 shadow-2xl py-1 z-30 ${
+          className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] origin-bottom-left rounded-xl surface-glass py-1 z-30 ${
             modeDrawerPresence.phase === "exit"
               ? "mobile-popover-exit"
               : "mobile-popover-enter"
@@ -94,19 +83,19 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`text-sm font-semibold ${
-                      active ? "text-indigo-300" : "text-zinc-200"
+                    className={`text-body font-medium ${
+                      active ? "text-indigo-300" : "text-fg"
                     }`}
                   >
                     {m.label}
                   </span>
                   {active && (
-                    <span className="text-xs text-indigo-400">
+                    <span className="text-meta text-indigo-400">
                       已选
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-zinc-400 mt-0.5">
+                <p className="text-meta text-fg-secondary mt-0.5">
                   {m.description}
                 </p>
               </button>

@@ -22,22 +22,22 @@ export function ApprovalTarget({
 }) {
   if (!targetHost && !isLocalTool) return null;
   return (
-    <div className="space-y-1 text-xs">
+    <div className="space-y-1 text-meta">
       {targetHost && (
-        <div className="flex items-start gap-2 text-zinc-400">
-          <Server className="mt-[3px] h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
+        <div className="flex items-start gap-2 text-fg-secondary">
+          <Server className="mt-[3px] h-3.5 w-3.5 shrink-0 text-fg-tertiary" aria-hidden />
           <span className="min-w-0 break-words">
             在 <span className="font-semibold text-amber-300">{targetHost}</span> 上执行
-            <span className="text-zinc-500"> · 非当前会话</span>
+            <span className="text-fg-tertiary"> · 非当前会话</span>
           </span>
         </div>
       )}
       {isLocalTool && (
-        <div className="flex items-start gap-2 text-zinc-400">
-          <Monitor className="mt-[3px] h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
+        <div className="flex items-start gap-2 text-fg-secondary">
+          <Monitor className="mt-[3px] h-3.5 w-3.5 shrink-0 text-fg-tertiary" aria-hidden />
           <span className="min-w-0 break-words">
             <span className="font-semibold text-sky-300">本机</span>
-            <span className="text-zinc-500">
+            <span className="text-fg-tertiary">
               {isLocalSubagent
                 ? ' · 子 agent 只在运行 Marcel SSH 的这台电脑上工作'
                 : ' · 在运行 Marcel SSH 的这台电脑上执行，不经 SSH'}

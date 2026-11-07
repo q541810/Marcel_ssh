@@ -211,14 +211,14 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           <button
             type="button"
             onClick={() => setTab('all')}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'all' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-state-soft hover:text-zinc-100'}`}
+            className={`rounded-md px-2 py-1 text-meta ${tab === 'all' ? 'bg-indigo-600 text-white' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'}`}
           >
             全部
           </button>
           <button
             type="button"
             onClick={() => setTab('global')}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'global' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-state-soft hover:text-zinc-100'}`}
+            className={`rounded-md px-2 py-1 text-meta ${tab === 'global' ? 'bg-indigo-600 text-white' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'}`}
           >
             全局
           </button>
@@ -226,7 +226,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
             type="button"
             onClick={() => setTab('session')}
             disabled={!canUseSessionCommands}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'session' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-state-soft hover:text-zinc-100'} disabled:cursor-not-allowed disabled:opacity-40`}
+            className={`rounded-md px-2 py-1 text-meta ${tab === 'session' ? 'bg-indigo-600 text-white' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'} disabled:cursor-not-allowed disabled:opacity-40`}
             title={canUseSessionCommands ? '当前连接快捷指令' : '当前会话未绑定保存的连接配置'}
           >
             当前连接
@@ -237,32 +237,32 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索快捷指令..."
-          className="flex-1 rounded-md bg-zinc-800 border border-edge px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+          className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
         />
         <button
           type="button"
           onClick={handleNew}
           disabled={tab === 'session' && !canUseSessionCommands}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md bg-surface-raised px-2 py-1 text-meta text-fg hover:bg-state-mid disabled:cursor-not-allowed disabled:opacity-40"
         >
           新建
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {message && <div className="mb-2 rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-300">{message}</div>}
-        {error && <div className="mb-2 rounded-lg bg-red-950/60 px-3 py-2 text-xs text-red-200">{error}</div>}
+        {message && <div className="mb-2 rounded-lg bg-surface-raised px-3 py-2 text-meta text-fg-secondary">{message}</div>}
+        {error && <div className="mb-2 rounded-lg bg-red-950/60 px-3 py-2 text-meta text-red-200">{error}</div>}
 
         {loading ? (
-          <div className="py-6 text-center text-sm text-zinc-500">加载中...</div>
+          <div className="py-6 text-center text-read text-fg-tertiary">加载中...</div>
         ) : visibleCommands.length === 0 ? (
-          <div className="py-6 text-center text-sm text-zinc-500">暂无快捷指令</div>
+          <div className="py-6 text-center text-read text-fg-tertiary">暂无快捷指令</div>
         ) : (
           <div className="flex flex-col gap-2">
             {visibleCommands.map((command) => (
               <div
                 key={command.id}
-                className="group relative flex items-center justify-between rounded-lg border border-edge-subtle bg-zinc-950/50 px-3 py-2 transition-all duration-200 hover:border-edge-strong hover:bg-zinc-900 hover:shadow-md"
+                className="group relative flex items-center justify-between rounded-lg border border-edge-subtle bg-surface-sunken/50 px-3 py-2 transition-[background-color,border-color,box-shadow] duration-200 hover:border-edge-strong hover:bg-surface hover:shadow-raised"
                 onContextMenu={(e) => handleContextMenu(e, command.id)}
               >
                 <button
@@ -271,11 +271,11 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                   disabled={!!executingId}
                   className="flex-1 text-left disabled:opacity-60"
                 >
-                  <div className="text-sm font-medium text-zinc-100">{command.name}</div>
-                  <div className="mt-0.5 text-xs text-zinc-500 transition-colors group-hover:text-zinc-400">
+                  <div className="text-read font-medium text-fg">{command.name}</div>
+                  <div className="mt-0.5 text-meta text-fg-tertiary transition-colors group-hover:text-fg-secondary">
                     {tab === 'all' && `${command.scope === 'global' ? '全局' : '当前连接'} · `}
                     {command.insertOnly && (
-                      <span className="mr-1 rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-300">
+                      <span className="mr-1 rounded bg-amber-500/15 px-1 py-px text-caption font-medium text-amber-300">
                         仅插入
                       </span>
                     )}
@@ -289,7 +289,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                       e.stopPropagation();
                       setActiveMenuId(activeMenuId === command.id ? null : command.id);
                     }}
-                    className="rounded p-1 text-zinc-500 transition-colors hover:bg-state-soft hover:text-zinc-200"
+                    className="rounded p-1 text-fg-tertiary transition-colors hover:bg-state-soft hover:text-fg"
                   >
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                       <circle cx="12" cy="5" r="1.5" />
@@ -298,7 +298,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                     </svg>
                   </button>
                   {activeMenuId === command.id && (
-                    <div className="absolute right-0 top-full z-10 mt-1 w-24 rounded-lg border border-edge bg-zinc-800 p-1 shadow-lg">
+                    <div className="absolute right-0 top-full z-10 mt-1 w-24 rounded-lg border border-edge bg-surface-raised p-1 shadow-lg">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -307,7 +307,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                           setFormMessage(null);
                           setActiveMenuId(null);
                         }}
-                        className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                        className="w-full rounded px-2 py-1.5 text-left text-meta text-fg-secondary hover:bg-state-mid"
                       >
                         编辑
                       </button>
@@ -317,7 +317,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                           e.stopPropagation();
                           handleDelete(command);
                         }}
-                        className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
+                        className="w-full rounded px-2 py-1.5 text-left text-meta text-red-400 hover:bg-red-950/60"
                       >
                         删除
                       </button>
@@ -332,36 +332,36 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
 
       {form && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-3">
+          <div className="modal-panel-enter w-96 rounded-xl bg-surface-raised border border-edge shadow-2xl p-4">
+            <h3 className="text-read font-semibold text-fg mb-3">
               {form.id ? '编辑快捷指令' : '新建快捷指令'}
             </h3>
             {formMessage && (
               <div
                 role={formMessage.tone === 'error' ? 'alert' : undefined}
-                className={`mb-3 rounded-lg border px-3 py-2 text-xs leading-relaxed ${formMessageClass(formMessage.tone)}`}
+                className={`mb-3 rounded-lg border px-3 py-2 text-meta leading-relaxed ${formMessageClass(formMessage.tone)}`}
               >
                 {formMessage.text}
               </div>
             )}
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">名称</label>
+                <label className="mb-1 block text-meta text-fg-secondary">名称</label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500"
                   placeholder="例如：查看磁盘"
                   autoFocus
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-400">作用域</label>
+                  <label className="mb-1 block text-meta text-fg-secondary">作用域</label>
                   <select
                     value={form.scope}
                     onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope | '' })}
-                    className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500"
                   >
                     <option value="" disabled>请选择</option>
                     <option value="global">全局</option>
@@ -370,26 +370,26 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                 </div>
                 {!form.insertOnly && (
                   <div>
-                    <label className="mb-1 block text-xs text-zinc-400">间隔 ms</label>
+                    <label className="mb-1 block text-meta text-fg-secondary">间隔 ms</label>
                     <input
                       type="number"
                       min={0}
                       value={form.intervalMs}
                       onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
-                      className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                      className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500"
                     />
                   </div>
                 )}
               </div>
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">
+                <label className="mb-1 block text-meta text-fg-secondary">
                   {form.insertOnly ? '命令（仅插入模式，单行内容）' : '命令（一行一条，按顺序执行）'}
                 </label>
                 {form.insertOnly ? (
                   <input
                     value={form.commandsText}
                     onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
-                    className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 font-mono text-meta text-fg outline-none focus:border-indigo-500"
                     placeholder="例如：docker run -it --name app nginx"
                   />
                 ) : (
@@ -397,15 +397,15 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                     value={form.commandsText}
                     onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
                     rows={4}
-                    className="w-full resize-none rounded-md bg-zinc-900 border border-edge px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full resize-none rounded-md bg-surface border border-edge px-2 py-1.5 font-mono text-meta text-fg outline-none focus:border-indigo-500"
                     placeholder={'pwd\ndf -h'}
                   />
                 )}
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-zinc-900 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-surface px-3 py-2.5">
                 <div>
-                  <div className="text-xs text-zinc-200">点击后自动执行</div>
-                  <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                  <div className="text-meta text-fg">点击后自动执行</div>
+                  <div className="mt-0.5 text-caption leading-relaxed text-fg-tertiary">
                     关闭后点击仅插入内容、不自动回车，可先手动改参数再执行
                   </div>
                 </div>
@@ -420,14 +420,14 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
               <button
                 type="button"
                 onClick={() => setForm(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={handleSubmit}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                className="px-3 py-1.5 rounded-lg text-meta text-white bg-indigo-600 hover:bg-indigo-500"
               >
                 保存
               </button>

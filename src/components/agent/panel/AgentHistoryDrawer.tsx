@@ -1,3 +1,4 @@
+import { Check, ChevronLeft, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArchiveRestore, Pin, Trash2 } from "lucide-react";
 import type { AnimatedPresence } from "@/hooks/useAnimatedPresence";
@@ -168,7 +169,7 @@ export function AgentHistoryDrawer({
       />
       <div
         onAnimationEnd={presence.onAnimationEnd}
-        className={`absolute top-0 right-0 h-full w-72 bg-zinc-950 border-l border-edge-subtle z-30 flex flex-col shadow-2xl ${
+        className={`absolute top-0 right-0 h-full w-72 bg-surface-sunken border-l border-edge-subtle z-30 flex flex-col shadow-overlay ${
           presence.phase === "exit"
             ? "animate-slideOutRight"
             : "animate-slideInRight"
@@ -180,16 +181,14 @@ export function AgentHistoryDrawer({
               type="button"
               key="archived-title"
               onClick={() => switchMode("active")}
-              className={`flex items-center gap-1 text-sm font-semibold text-zinc-200 hover:text-zinc-100 ${viewEnter}`}
+              className={`flex items-center gap-1 text-read font-semibold text-fg hover:text-fg ${viewEnter}`}
               title="返回历史会话"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+              <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
               已归档
             </button>
           ) : (
-            <h3 key="active-title" className={`text-sm font-semibold text-zinc-200 ${viewEnter}`}>
+            <h3 key="active-title" className={`text-read font-semibold text-fg ${viewEnter}`}>
               历史会话
             </h3>
           )}
@@ -198,13 +197,13 @@ export function AgentHistoryDrawer({
               <button
                 type="button"
                 onClick={() => switchMode("archived")}
-                className="flex items-center gap-1 p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-state-mid transition-colors"
+                className="flex items-center gap-1 p-1 rounded text-fg-secondary hover:text-fg hover:bg-state-mid transition-colors"
                 title="查看已归档会话"
                 aria-label="查看已归档会话"
               >
                 <Archive className="w-4 h-4" />
                 {archivedConversations.length > 0 && (
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-caption text-fg-tertiary">
                     {archivedConversations.length}
                   </span>
                 )}
@@ -215,21 +214,9 @@ export function AgentHistoryDrawer({
               onClick={onClose}
               title="关闭"
               aria-label="关闭"
-              className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-state-mid transition-colors"
+              className="p-1 rounded text-fg-secondary hover:text-fg hover:bg-state-mid transition-colors"
             >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <X className="w-4 h-4" strokeWidth={1.5} />
             </button>
           </div>
         </div>
@@ -237,12 +224,12 @@ export function AgentHistoryDrawer({
         {mode === "archived" ? (
           <div key="archived-body" className={`flex-1 overflow-y-auto p-2 space-y-1 ${viewEnter}`}>
             {archivedLoading && archivedConversations.length === 0 && (
-              <div className="text-center text-zinc-500 text-sm mt-8">加载中…</div>
+              <div className="text-center text-fg-tertiary text-read mt-8">加载中…</div>
             )}
             {!archivedLoading && archivedConversations.length === 0 && (
-              <div className="text-center text-zinc-500 text-sm mt-8 px-4">
+              <div className="text-center text-fg-tertiary text-read mt-8 px-4">
                 <p>暂无归档会话</p>
-                <p className="mt-1 text-xs text-zinc-600">
+                <p className="mt-1 text-meta text-fg-disabled">
                   归档不会删除消息，可随时恢复；超过保留期的归档会在启动时自动清理。
                 </p>
               </div>
@@ -250,11 +237,11 @@ export function AgentHistoryDrawer({
             {archivedConversations.map((conv) => (
               <div
                 key={conv.id}
-                className="group flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm text-zinc-400 hover:bg-state-soft/60"
+                className="group flex items-center gap-1 px-2 py-1.5 rounded-lg text-read text-fg hover:bg-state-soft/60"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium text-zinc-300">{conv.title}</div>
-                  <div className="text-[11px] text-zinc-500 mt-0.5">
+                  <div className="truncate font-medium text-fg">{conv.title}</div>
+                  <div className="text-caption text-fg-tertiary mt-0.5">
                     归档于{" "}
                     {new Date(conv.archivedAt ?? conv.updatedAt).toLocaleString()}
                   </div>
@@ -262,7 +249,7 @@ export function AgentHistoryDrawer({
                 <button
                   type="button"
                   onClick={(e) => void handleUnarchive(e, conv.id)}
-                  className="p-1 rounded text-zinc-500 hover:text-emerald-300 hover:bg-state-mid/80 transition-colors flex-shrink-0"
+                  className="p-1 rounded text-fg-tertiary hover:text-emerald-300 hover:bg-state-mid/80 transition-colors flex-shrink-0"
                   title="恢复到会话列表"
                   aria-label="恢复会话"
                 >
@@ -271,7 +258,7 @@ export function AgentHistoryDrawer({
                 <button
                   type="button"
                   onClick={(e) => void handleDeletePermanently(e, conv.id)}
-                  className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-state-mid/80 transition-colors flex-shrink-0"
+                  className="p-1 rounded text-fg-tertiary hover:text-red-400 hover:bg-state-mid/80 transition-colors flex-shrink-0"
                   title="永久删除"
                   aria-label="永久删除会话"
                 >
@@ -283,13 +270,13 @@ export function AgentHistoryDrawer({
         ) : (
           <div key="active-body" className={`flex-1 overflow-y-auto p-2 space-y-3 ${viewEnter}`}>
             {sessionConversations.length === 0 && (
-              <div className="text-center text-zinc-500 text-sm mt-8">
+              <div className="text-center text-fg-tertiary text-read mt-8">
                 <p>暂无历史会话</p>
               </div>
             )}
             {groupedSessionConversations.map((group) => (
               <div key={group.key} className="space-y-1">
-                <div className="px-2 py-1 text-[11px] font-semibold text-zinc-500 tracking-wider uppercase">
+                <div className="px-2 py-1 text-caption font-semibold text-fg-tertiary tracking-wider uppercase">
                   {group.label}
                 </div>
                 {group.items.map((conv) => {
@@ -298,10 +285,10 @@ export function AgentHistoryDrawer({
                   return (
                     <div
                       key={conv.id}
-                      className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                      className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg text-read transition-colors ${
                         isActive
-                          ? "bg-state-selected text-zinc-100 ring-1 ring-edge/50"
-                          : "text-zinc-400 hover:bg-state-soft/60 hover:text-zinc-200"
+                          ? "bg-state-selected text-fg ring-1 ring-edge/50"
+                          : "text-fg-secondary hover:bg-state-soft/60 hover:text-fg"
                       }`}
                     >
                       {isEditing ? (
@@ -320,7 +307,7 @@ export function AgentHistoryDrawer({
                                 handleCancelRename();
                               }
                             }}
-                            className="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-zinc-900 border border-indigo-500 rounded text-zinc-100 focus:outline-none"
+                            className="flex-1 min-w-0 px-1.5 py-0.5 text-meta bg-surface border border-indigo-500 rounded text-fg focus:outline-none"
                             placeholder="会话名称"
                           />
                           <button
@@ -329,19 +316,15 @@ export function AgentHistoryDrawer({
                             className="p-1 rounded text-emerald-400 hover:bg-state-mid transition-colors flex-shrink-0"
                             title="确认"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
+                            <Check className="w-3.5 h-3.5" strokeWidth={1.5} />
                           </button>
                           <button
                             type="button"
                             onClick={handleCancelRename}
-                            className="p-1 rounded text-zinc-400 hover:bg-state-mid hover:text-zinc-200 transition-colors flex-shrink-0"
+                            className="p-1 rounded text-fg-secondary hover:bg-state-mid hover:text-fg transition-colors flex-shrink-0"
                             title="取消"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
+                            <X className="w-3.5 h-3.5" strokeWidth={1.5} />
                           </button>
                         </div>
                       ) : (
@@ -352,7 +335,7 @@ export function AgentHistoryDrawer({
                           >
                             <div className="min-w-0 flex-1">
                               <div className="truncate font-medium leading-snug">{conv.title}</div>
-                              <div className="text-[11px] text-zinc-500 mt-0.5">
+                              <div className="text-caption text-fg-tertiary mt-0.5">
                                 {conv.forkedFromId && <ForkMark />}
                                 {new Date(conv.updatedAt).toLocaleString()}
                               </div>
@@ -375,7 +358,7 @@ export function AgentHistoryDrawer({
                                 console.error('Failed to toggle pin:', getErrorMessage(err));
                               });
                             }}
-                            className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                            className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
                             title={conv.pinned ? "取消置顶" : "置顶会话"}
                             aria-label={conv.pinned ? "取消置顶" : "置顶会话"}
                           >
@@ -383,7 +366,7 @@ export function AgentHistoryDrawer({
                           </button>
                           <button
                             onClick={(e) => startRenameConversation(e, conv.id, conv.title)}
-                            className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                            className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
                             title="重命名会话"
                           >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -397,7 +380,7 @@ export function AgentHistoryDrawer({
                           </button>
                           <button
                             onClick={(e) => void handleArchiveConversation(e, conv.id)}
-                            className="p-1 rounded text-zinc-500 hover:text-amber-300 hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                            className="p-1 rounded text-fg-tertiary hover:text-amber-300 hover:bg-state-mid/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
                             title="归档会话（可恢复）"
                             aria-label="归档会话"
                           >
@@ -416,7 +399,7 @@ export function AgentHistoryDrawer({
         {error && (
           <div
             role="alert"
-            className="mx-2 mb-2 rounded-lg border border-red-900 bg-red-950/60 px-2 py-1.5 text-xs text-red-300"
+            className="mx-2 mb-2 rounded-lg border border-red-900 bg-red-950/60 px-2 py-1.5 text-meta text-red-300"
           >
             {error}
           </div>

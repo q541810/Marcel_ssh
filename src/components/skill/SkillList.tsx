@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Pencil, Sparkles, Trash2 } from 'lucide-react';
 import { useSkillStore } from '@/stores/skillStore';
 import type { Skill } from '@/lib/types';
 import { isBuiltinSkill, sortSkillsForDisplay } from '@/lib/builtinSkills';
@@ -52,10 +53,10 @@ function SkillCard({
         onDragEnd={onDragEnd}
         onDragOver={onDragOver}
         className={
-          'group rounded-lg border transition-colors px-2 py-2 ' +
+          'group rounded-xl border transition-colors p-4 ' +
           (skill.enabled
             ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
-            : 'bg-zinc-900/40 border-edge-subtle hover:border-edge') +
+            : 'bg-surface-raised border-edge-subtle hover:border-edge') +
           (draggable ? ' cursor-grab active:cursor-grabbing' : '') +
           (dragging ? ' opacity-40' : '')
         }
@@ -66,24 +67,24 @@ function SkillCard({
             onClick={() => setExpanded((v) => !v)}
             className='flex-1 min-w-0 text-left'
           >
-            <div className='flex items-center gap-1.5 min-w-0'>
-              <span className='text-sm font-medium text-zinc-200 truncate'>{skill.name}</span>
+            <div className='flex items-center gap-2 min-w-0'>
+              <span className='text-body font-medium text-fg truncate'>{skill.name}</span>
               {builtin && (
-                <span className='flex-shrink-0 rounded px-1 py-px text-[10px] leading-4 bg-zinc-800 text-zinc-400 border border-edge'>
+                <span className='flex-shrink-0 rounded px-1 py-px text-caption leading-4 bg-surface-raised text-fg-secondary border border-edge'>
                   内置
                 </span>
               )}
               {skill.resources && skill.resources.length > 0 && (
                 <span
                   title={`含 ${skill.resources.length} 个资源文件`}
-                  className='flex-shrink-0 rounded px-1 py-px text-[10px] leading-4 bg-zinc-800 text-zinc-400 border border-edge'
+                  className='flex-shrink-0 rounded px-1 py-px text-caption leading-4 bg-surface-raised text-fg-secondary border border-edge'
                 >
                   {skill.resources.length} 资源
                 </span>
               )}
             </div>
             {skill.description && (
-              <div className='text-xs text-zinc-500 truncate'>{skill.description}</div>
+              <div className='text-meta text-fg-tertiary truncate'>{skill.description}</div>
             )}
           </button>
           {!builtin && (
@@ -91,33 +92,27 @@ function SkillCard({
               <button
                 onClick={onEdit}
                 title='编辑'
-                className='flex-shrink-0 p-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-state-soft opacity-0 group-hover:opacity-100 transition-all'
+                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-soft opacity-0 group-hover:opacity-100 transition'
               >
-                <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2}
-                    d='M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z' />
-                </svg>
+                <Pencil size={14} strokeWidth={1.5} />
               </button>
               <button
                 onClick={onDelete}
                 title='删除'
-                className='flex-shrink-0 p-1 rounded-md text-zinc-500 hover:text-red-400 hover:bg-state-soft opacity-0 group-hover:opacity-100 transition-all'
+                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-red-400 hover:bg-state-soft opacity-0 group-hover:opacity-100 transition'
               >
-                <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2}
-                    d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3' />
-                </svg>
+                <Trash2 size={14} strokeWidth={1.5} />
               </button>
             </>
           )}
         </div>
         {expanded && (
           <>
-            <pre className='mt-2 text-xs text-zinc-400 whitespace-pre-wrap break-words font-sans px-1'>
+            <pre className='mt-2 text-meta text-fg-secondary whitespace-pre-wrap break-words font-sans px-1'>
 {skill.prompt}
             </pre>
             {skill.resources && skill.resources.length > 0 && (
-              <div className='mt-2 px-1 text-[11px] text-zinc-500 break-words'>
+              <div className='mt-2 px-1 text-caption text-fg-tertiary break-words'>
                 附属资源：{skill.resources.map((r) => r.path).join('、')}
               </div>
             )}
@@ -318,15 +313,20 @@ export default function SkillList() {
         }}
       >
         {loading && skills.length === 0 && (
-          <p className='text-sm text-zinc-500 text-center mt-4'>加载中...</p>
+          <div className="space-y-2 px-1 mt-2" aria-label='加载中...'>
+            <div className="h-12 rounded-lg bg-state-soft animate-pulse" />
+            <div className="h-12 rounded-lg bg-state-soft animate-pulse" />
+            <div className="h-12 rounded-lg bg-state-soft animate-pulse" />
+          </div>
         )}
 
         {!loading && skills.length === 0 && (
           <div className='text-center mt-6 px-3'>
-            <p className='text-sm text-zinc-500 mb-3'>暂无 skill</p>
+            <Sparkles size={24} strokeWidth={1.5} className='mx-auto mb-2 text-fg-tertiary' />
+            <p className='text-body text-fg-secondary mb-3'>暂无 skill</p>
             <button
               onClick={() => setCreateOpen(true)}
-              className='text-xs text-indigo-400 hover:text-indigo-300 underline'
+              className='text-meta text-indigo-400 hover:text-indigo-300 underline'
             >
               创建 Skill
             </button>
@@ -387,7 +387,7 @@ export default function SkillList() {
         )}
 
         {!loading && skills.length > 0 && filtered.length === 0 && (
-          <p className='text-sm text-zinc-500 text-center mt-4'>无匹配 skill</p>
+          <p className='text-body text-fg-tertiary text-center mt-4'>无匹配 skill</p>
         )}
       </div>
 

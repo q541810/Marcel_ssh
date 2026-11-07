@@ -46,10 +46,10 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
     >
       <div
         onClick={onExpand}
-        className="group relative flex items-center gap-3 p-3 pl-3.5 pr-3 rounded-2xl bg-zinc-900/95 backdrop-blur-xl border border-edge/80 hover:border-edge-strong text-zinc-100 shadow-2xl transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] cursor-pointer select-none"
+        className="group relative flex items-center gap-3 p-3 pl-3.5 pr-3 rounded-2xl bg-surface/95 backdrop-blur-xl border border-edge/80 hover:border-edge-strong text-fg shadow-overlay transition-colors duration-200 pressable cursor-pointer select-none"
       >
         {/* Subtle status icon container without aggressive glow */}
-        <div className="relative flex items-center justify-center h-8 w-8 rounded-xl bg-zinc-800 border border-edge shrink-0">
+        <div className="relative flex items-center justify-center h-8 w-8 rounded-xl bg-surface-raised border border-edge shrink-0">
           {isApproval ? (
             <ShieldAlert className="w-4 h-4 text-amber-400" />
           ) : (
@@ -60,7 +60,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
         {/* Main Content Area */}
         <div className="min-w-0 flex-1 pr-1">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-xs font-semibold text-zinc-100 truncate max-w-[200px]">
+            <span className="text-meta font-semibold text-fg truncate max-w-[200px]">
               {isApproval ? `需要批准：${toolName}` : `回答提问 (${questionCount} 项)`}
             </span>
             {disposition && (
@@ -69,21 +69,21 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
               </Badge>
             )}
             {(interaction.queueLength ?? 1) > 1 && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-800 rounded-full text-zinc-400 border border-edge font-medium shrink-0">
+              <span className="text-caption px-1.5 py-0.5 bg-surface-raised rounded-full text-fg-secondary border border-edge font-medium shrink-0">
                 1/{interaction.queueLength}
               </span>
             )}
           </div>
 
           {/* Context Info (Session name & conversation title) */}
-          <div className="flex items-center gap-1 text-[11px] text-zinc-400 truncate max-w-[240px]">
-            <span className="text-zinc-300 truncate">
+          <div className="flex items-center gap-1 text-caption text-fg-secondary truncate max-w-[240px]">
+            <span className="text-fg-secondary truncate">
               {formatInteractionSessionLabel(interaction.sessionTarget, privacyMode)}
             </span>
             {interaction.conversationTitle && (
               <>
-                <span className="text-zinc-600">·</span>
-                <span className="truncate text-zinc-400">{interaction.conversationTitle}</span>
+                <span className="text-fg-disabled">·</span>
+                <span className="truncate text-fg-secondary">{interaction.conversationTitle}</span>
               </>
             )}
           </div>
@@ -99,7 +99,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
             <button
               type="button"
               onClick={(e) => onNavigateToContext(e)}
-              className="px-2 py-1.5 rounded-xl bg-zinc-800 hover:bg-state-mid active:scale-95 text-indigo-300 text-xs font-medium border border-edge transition-all flex items-center gap-1"
+              className="px-2 py-1.5 rounded-xl bg-surface-raised hover:bg-state-mid pressable text-indigo-300 text-meta font-medium border border-edge transition-colors flex items-center gap-1"
               title="切换到该任务所在的会话"
             >
               <span>跳转</span>
@@ -113,7 +113,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
                 e.stopPropagation();
                 onReject();
               }}
-              className="p-2 rounded-xl bg-zinc-800 hover:bg-red-950/80 hover:text-red-200 hover:border-red-500/40 text-zinc-300 border border-edge active:scale-95 transition-all"
+              className="p-2 rounded-xl bg-surface-raised hover:bg-red-950/80 hover:text-red-200 hover:border-red-500/40 text-fg-secondary border border-edge pressable transition-colors"
               title="拒绝"
               aria-label="拒绝"
             >
@@ -128,7 +128,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
                 e.stopPropagation();
                 onApprove();
               }}
-              className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm active:scale-95 transition-all"
+              className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm pressable transition-colors"
               title="批准"
               aria-label="批准"
             >
@@ -142,7 +142,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
               e.stopPropagation();
               onExpand();
             }}
-            className="p-2 rounded-xl bg-zinc-800 hover:bg-state-mid text-zinc-400 hover:text-zinc-200 border border-edge active:scale-95 transition-all"
+            className="p-2 rounded-xl bg-surface-raised hover:bg-state-mid text-fg-secondary hover:text-fg border border-edge pressable transition-colors"
             title="展开弹窗"
             aria-label="展开"
           >

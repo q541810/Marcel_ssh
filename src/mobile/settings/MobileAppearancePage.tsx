@@ -12,7 +12,7 @@ export function MobileAppearancePage() {
     <div className="flex flex-col gap-4">
       <MobileAppearanceSection />
       <section>
-        <h2 className="mb-2 px-1 text-xs font-medium text-zinc-500">快捷命令</h2>
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">快捷命令</h2>
         <MobileQuickCommandSection />
       </section>
     </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useCallback, useState } from 'react';
-import { Archive, ArchiveRestore, Pin, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Pencil, Pin, Search, Trash2, X } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import Modal from '@/components/ui/Modal';
 import Toggle from '@/components/ui/Toggle';
@@ -188,40 +188,26 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
         <div className="px-3 pt-1 pb-2 border-b border-edge-subtle flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="relative flex-1">
-              <svg
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z"
-                />
-              </svg>
+              <Search size={16} strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-tertiary pointer-events-none" />
               <input
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="搜索聊天记录…"
-                className="w-full rounded-lg bg-zinc-800 border border-edge pl-9 pr-8 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg bg-surface-raised border border-edge pl-9 pr-8 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
               />
               {searchInput && (
                 <button
                   type="button"
                   onClick={clearSearch}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-200"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-fg-tertiary hover:text-fg"
                   title="清除"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <X size={16} strokeWidth={1.5} />
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0">
               <Toggle
                 checked={showArchived}
                 onChange={setShowArchived}
@@ -233,7 +219,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
           {actionError && (
             <div
               role="alert"
-              className="mt-2 rounded-lg border border-red-900 bg-red-950/60 px-2 py-1.5 text-xs text-red-300"
+              className="mt-2 rounded-lg border border-red-900 bg-red-950/60 px-2 py-2 text-meta text-red-300"
             >
               {actionError}
             </div>
@@ -242,37 +228,37 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
 
         <div className="flex flex-1 overflow-hidden">
           {/* Left sidebar */}
-          <div className="w-64 flex-shrink-0 bg-zinc-800 border-r border-edge overflow-y-auto p-2 space-y-1">
+          <div className="w-64 flex-shrink-0 bg-surface-raised border-r border-edge overflow-y-auto p-2 space-y-1">
             {isSearching ? (
               <>
                 {loadingSearch && (
-                  <div className="p-4 text-sm text-zinc-500">搜索中…</div>
+                  <div className="p-4 text-body text-fg-tertiary">搜索中…</div>
                 )}
                 {!loadingSearch && searchResults.length === 0 && (
-                  <div className="p-4 text-sm text-zinc-500">没有找到匹配的聊天记录</div>
+                  <div className="p-4 text-body text-fg-tertiary">没有找到匹配的聊天记录</div>
                 )}
                 {!loadingSearch &&
                   groupedSearch.map((group) => (
                     <div key={group.connectionId} className="space-y-1 mb-2">
-                      <div className="px-3 py-1 text-xs font-medium text-zinc-500 truncate">
+                      <div className="px-3 py-1 text-meta font-medium text-fg-tertiary truncate">
                         {group.label}
                       </div>
                       {group.items.map((r) => (
                         <button
                           key={r.conversationId}
                           type="button"
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                          className={`w-full text-left px-3 py-2 rounded-lg text-body transition-colors ${
                             selectedConvId === r.conversationId
-                              ? 'bg-zinc-700 text-zinc-100'
-                              : 'text-zinc-400 hover:bg-state-mid hover:text-zinc-200'
+                              ? 'bg-zinc-700 text-fg'
+                              : 'text-fg-secondary hover:bg-state-mid hover:text-fg'
                           }`}
                           onClick={() => void openSearchResult(r)}
                         >
                           <div className="truncate font-medium">{r.title}</div>
-                          <div className="text-xs text-zinc-500 mt-0.5 line-clamp-2 break-words">
+                          <div className="text-meta text-fg-tertiary mt-1 line-clamp-2 break-words">
                             {r.matchedSnippet}
                           </div>
-                          <div className="text-xs text-indigo-400/80 mt-0.5">
+                          <div className="text-meta text-indigo-400/80 mt-1">
                             {formatMatchCountLabel(r.matchCount)}
                           </div>
                         </button>
@@ -283,10 +269,10 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
             ) : (
               <>
                 {loadingConvs && (
-                  <div className="p-4 text-sm text-zinc-500">加载中...</div>
+                  <div className="p-4 text-body text-fg-tertiary">加载中...</div>
                 )}
                 {!loadingConvs && connections.length === 0 && (
-                  <div className="p-4 text-sm text-zinc-500">暂无连接记录</div>
+                  <div className="p-4 text-body text-fg-tertiary">暂无连接记录</div>
                 )}
                 {connections.map((conn) => {
                   const convs = conversationsByConn[conn.id] || [];
@@ -297,10 +283,10 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                     <div key={conn.id} className="space-y-1">
                       <button
                         type="button"
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                        className={`w-full text-left px-3 py-2 rounded-lg text-body transition-colors ${
                           isSelected
-                            ? 'bg-zinc-700 text-zinc-100'
-                            : 'text-zinc-400 hover:bg-state-mid hover:text-zinc-200'
+                            ? 'bg-zinc-700 text-fg'
+                            : 'text-fg-secondary hover:bg-state-mid hover:text-fg'
                         }`}
                         onClick={() => {
                           setSelectedConnId(isSelected ? null : conn.id);
@@ -308,7 +294,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                       >
                         <div className="flex items-center justify-between">
                           <span className="truncate">{connLabel(conn)}</span>
-                          <span className="ml-2 text-xs text-zinc-500 flex-shrink-0">
+                          <span className="ml-2 text-meta text-fg-tertiary flex-shrink-0">
                             {showArchived && archived.length > 0
                               ? `${convs.length} + ${archived.length}`
                               : convs.length}
@@ -319,16 +305,16 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                         <div className="space-y-2 pl-2 mt-1">
                           {groupConversationsWithPinned(convs).map((group) => (
                             <div key={group.key} className="space-y-1">
-                              <div className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                              <div className="px-2 py-0.5 text-caption font-semibold text-fg-tertiary uppercase tracking-wider">
                                 {group.label}
                               </div>
                               {group.items.map((conv) => (
                                 <div
                                   key={conv.id}
-                                  className={`group/conv flex items-center justify-between px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                                  className={`group/conv flex items-center justify-between px-2 py-2 rounded-lg text-body transition-colors ${
                                     selectedConvId === conv.id
-                                      ? 'bg-zinc-700 text-zinc-100 ring-1 ring-edge-strong'
-                                      : 'text-zinc-400 hover:bg-state-mid/60 hover:text-zinc-200'
+                                      ? 'bg-zinc-700 text-fg ring-1 ring-edge-strong'
+                                      : 'text-fg-secondary hover:bg-state-mid/60 hover:text-fg'
                                   }`}
                                 >
                                   <button
@@ -343,7 +329,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                   >
                                     <div className="min-w-0 flex-1">
                                       <div className="truncate font-medium">{conv.title}</div>
-                                      <div className="text-[11px] text-zinc-500 mt-0.5">
+                                      <div className="text-caption text-fg-tertiary mt-1">
                                         {conv.forkedFromId && <ForkMark />}
                                         {new Date(conv.updatedAt).toLocaleString()}
                                       </div>
@@ -359,7 +345,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                       e.stopPropagation();
                                       void setConversationPinned(conv.id, !conv.pinned);
                                     }}
-                                    className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                    className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
                                     title={conv.pinned ? '取消置顶' : '置顶会话'}
                                     aria-label={conv.pinned ? '取消置顶' : '置顶会话'}
                                   >
@@ -368,22 +354,15 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                   <button
                                     type="button"
                                     onClick={(e) => handleRenameInModal(e, conv.id, conv.title)}
-                                    className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                    className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
                                     title="重命名会话"
                                   >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                      />
-                                    </svg>
+                                    <Pencil size={14} strokeWidth={1.5} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={(e) => void handleArchiveConversation(e, conv.id)}
-                                    className="p-1 rounded text-zinc-500 hover:text-amber-300 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                    className="p-1 rounded text-fg-tertiary hover:text-amber-300 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
                                     title="归档会话（可恢复）"
                                     aria-label="归档会话"
                                   >
@@ -397,22 +376,22 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                       )}
                       {isSelected && showArchived && (
                         <div className="space-y-1 pl-2 mt-1">
-                          <div className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                          <div className="px-2 py-0.5 text-caption font-semibold text-fg-tertiary uppercase tracking-wider">
                             已归档
                           </div>
                           {archivedLoading && archived.length === 0 && (
-                            <div className="px-2 py-1 text-[11px] text-zinc-600">加载中…</div>
+                            <div className="px-2 py-1 text-caption text-fg-disabled">加载中…</div>
                           )}
                           {!archivedLoading && archived.length === 0 && (
-                            <div className="px-2 py-1 text-[11px] text-zinc-600">暂无归档会话</div>
+                            <div className="px-2 py-1 text-caption text-fg-disabled">暂无归档会话</div>
                           )}
                           {archived.map((conv) => (
                             <div
                               key={conv.id}
-                              className={`group/conv flex items-center justify-between px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                              className={`group/conv flex items-center justify-between px-2 py-2 rounded-lg text-body transition-colors ${
                                 selectedConvId === conv.id
-                                  ? 'bg-zinc-700 text-zinc-100 ring-1 ring-edge-strong'
-                                  : 'text-zinc-400 hover:bg-state-mid/60 hover:text-zinc-200'
+                                  ? 'bg-zinc-700 text-fg ring-1 ring-edge-strong'
+                                  : 'text-fg-secondary hover:bg-state-mid/60 hover:text-fg'
                               }`}
                             >
                               <button
@@ -426,7 +405,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                 }}
                               >
                                 <div className="truncate font-medium">{conv.title}</div>
-                                <div className="text-[11px] text-zinc-500 mt-0.5">
+                                <div className="text-caption text-fg-tertiary mt-1">
                                   归档于{" "}
                                   {new Date(conv.archivedAt ?? conv.updatedAt).toLocaleString()}
                                 </div>
@@ -436,7 +415,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                 onClick={(e) =>
                                   void handleUnarchiveConversation(e, conv.id, conn.id)
                                 }
-                                className="p-1 rounded text-zinc-500 hover:text-emerald-300 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                className="p-1 rounded text-fg-tertiary hover:text-emerald-300 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
                                 title="恢复到会话列表"
                                 aria-label="恢复会话"
                               >
@@ -445,7 +424,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                               <button
                                 type="button"
                                 onClick={(e) => void handleDeleteArchived(e, conv.id)}
-                                className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                className="p-1 rounded text-fg-tertiary hover:text-red-400 hover:bg-state-strong transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
                                 title="永久删除"
                                 aria-label="永久删除会话"
                               >
@@ -456,7 +435,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                         </div>
                       )}
                       {isSelected && convs.length === 0 && !showArchived && (
-                        <div className="pl-5 pr-3 py-2 text-xs text-zinc-600">该连接暂无会话</div>
+                        <div className="pl-5 pr-3 py-2 text-meta text-fg-disabled">该连接暂无会话</div>
                       )}
                     </div>
                   );
@@ -466,23 +445,23 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
           </div>
 
           {/* Right content */}
-          <div className="flex-1 flex flex-col bg-zinc-900 overflow-hidden">
+          <div className="flex-1 flex flex-col bg-surface overflow-hidden">
             {selectedConv && (
               <div className="flex items-center justify-between px-4 py-3 border-b border-edge-subtle flex-shrink-0">
                 <div className="min-w-0">
-                  <h4 className="text-sm font-semibold text-zinc-100 truncate">{selectedConv.title}</h4>
+                  <h4 className="text-body font-semibold text-fg truncate">{selectedConv.title}</h4>
                   {selectedConn && (
-                    <p className="text-xs text-zinc-500 truncate">{connLabel(selectedConn)}</p>
+                    <p className="text-meta text-fg-tertiary truncate">{connLabel(selectedConn)}</p>
                   )}
                 </div>
-                <span className="text-xs text-zinc-600 flex-shrink-0 ml-3">
+                <span className="text-meta text-fg-disabled flex-shrink-0 ml-3">
                   {new Date(selectedConv.updatedAt).toLocaleString()}
                 </span>
               </div>
             )}
 
             {activeMatchIds.length > 0 && selectedConvId && (
-              <div className="flex items-center justify-center gap-3 px-4 py-1.5 border-b border-indigo-500/15 bg-indigo-500/5 sticky top-0 z-10 flex-shrink-0 text-xs text-zinc-300">
+              <div className="flex items-center justify-center gap-3 px-4 py-2 border-b border-indigo-500/15 bg-indigo-500/5 sticky top-0 z-10 flex-shrink-0 text-meta text-fg-secondary">
                 <span className="text-indigo-300/90">
                   匹配到 {activeMatchIds.length}
                   {activeMatchIds.length >= 200 ? '+' : ''} 条结果
@@ -492,19 +471,19 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                     type="button"
                     disabled={matchIndex <= 0}
                     onClick={() => goMatch(-1)}
-                    className="px-1.5 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-2 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="上一条"
                   >
                     ◀
                   </button>
-                  <span className="tabular-nums text-zinc-400 min-w-[3rem] text-center">
+                  <span className="tabular-nums text-fg-secondary min-w-[3rem] text-center">
                     {matchIndex + 1}/{activeMatchIds.length}
                   </span>
                   <button
                     type="button"
                     disabled={matchIndex >= activeMatchIds.length - 1}
                     onClick={() => goMatch(1)}
-                    className="px-1.5 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-2 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="下一条"
                   >
                     ▶
@@ -515,15 +494,15 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-1">
               {loadingMsgs && (
-                <div className="p-4 text-sm text-zinc-500">加载消息...</div>
+                <div className="p-4 text-body text-fg-tertiary">加载消息...</div>
               )}
               {!loadingMsgs && !selectedConvId && (
-                <div className="flex items-center justify-center h-full text-sm text-zinc-500">
+                <div className="flex items-center justify-center h-full text-body text-fg-tertiary">
                   请选择一个会话查看消息
                 </div>
               )}
               {!loadingMsgs && selectedConvId && messages.length === 0 && (
-                <div className="flex items-center justify-center h-full text-sm text-zinc-500">
+                <div className="flex items-center justify-center h-full text-body text-fg-tertiary">
                   该会话暂无消息
                 </div>
               )}

@@ -37,17 +37,17 @@ export default function PluginConfigModal({ open, onClose, pluginId, pluginName,
     <Modal open={open} onClose={handleClose} title={`${pluginName} - 配置`} size="xl">
       <div className="w-full h-full relative">
         {error ? (
-          <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+          <div className="w-full h-full flex items-center justify-center bg-surface">
             <div className="text-center space-y-3 px-4">
-              <div className="text-red-400 text-sm font-medium">配置页面加载失败</div>
-              <div className="text-zinc-500 text-xs break-all">{error}</div>
+              <div className="text-red-400 text-body font-medium">配置页面加载失败</div>
+              <div className="text-fg-tertiary text-meta break-all">{error}</div>
               <button
                 type="button"
                 onClick={() => {
                   setError(null);
                   setRetryKey((k) => k + 1);
                 }}
-                className="mt-2 px-3 py-1.5 text-xs bg-zinc-700 text-zinc-200 rounded-lg hover:bg-state-strong transition-colors"
+                className="mt-2 px-3 py-2 text-meta bg-zinc-700 text-fg rounded-lg hover:bg-state-strong transition-colors"
               >
                 重试
               </button>

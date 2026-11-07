@@ -95,7 +95,7 @@ describe('时间线卡', () => {
     expect(container.textContent).toContain('等待回答');
     expect(container.textContent).not.toContain('未回答');
     const badge = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === '等待回答')!;
-    expect(badge.className).toContain('text-zinc-500');
+    expect(badge.className).toContain('text-fg-tertiary');
     // 折叠时不出问答正文
     expect(container.querySelector('[data-testid="thread-ask"]')).toBeNull();
     // 展开后问题下面也是灰字「等待回答」

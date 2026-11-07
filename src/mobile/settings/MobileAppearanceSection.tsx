@@ -52,7 +52,7 @@ export function MobileAppearanceSection() {
         label="终端字号"
         description="只影响终端，不影响界面文字和代码编辑器"
         trailing={
-          <span className="w-12 text-right font-mono text-sm text-indigo-300">
+          <span className="w-12 text-right font-mono text-body text-indigo-300">
             {settings.fontSize}px
           </span>
         }
@@ -82,7 +82,7 @@ export function MobileAppearanceSection() {
       </MobileSettingRow>
 
       {/* 对话显示（原 display 分区，合并到外观以减少分区数量） */}
-      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+      <div className="mt-2 mb-1 px-1 text-meta font-medium text-fg-tertiary">
         对话显示
       </div>
       <MobileSettingRow

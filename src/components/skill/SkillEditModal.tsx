@@ -50,7 +50,7 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
     <Modal open={open} onClose={handleClose} title='编辑 Skill'>
       <div className='px-4 pb-4 space-y-4'>
         {saveError && (
-          <div className='rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400 whitespace-pre-wrap break-words'>
+          <div className='rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-meta text-red-400 whitespace-pre-wrap break-words'>
             {saveError}
           </div>
         )}
@@ -69,14 +69,14 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
         <div className='flex justify-end gap-2 pt-2'>
           <button
             onClick={handleClose}
-            className='px-4 py-1.5 text-sm rounded-lg bg-zinc-700 text-zinc-200 hover:bg-state-strong transition-colors'
+            className='px-4 py-2 text-body rounded-lg bg-zinc-700 text-fg hover:bg-state-strong transition-colors'
           >
             取消
           </button>
           <button
             onClick={handleConfirm}
             disabled={!valid || saving}
-            className='px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+            className='px-4 py-2 text-body rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
           >
             {saving ? '保存中...' : '保存'}
           </button>

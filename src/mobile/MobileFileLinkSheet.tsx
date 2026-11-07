@@ -44,16 +44,16 @@ export default function MobileFileLinkSheet({
                 onClose();
                 onCopyRelative(c);
               }}
-              className="rounded-xl bg-zinc-800 px-4 py-3 text-left text-sm text-zinc-100 active:bg-state-mid"
+              className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
             >
               {c.label}
-              <span className="mt-0.5 block break-all font-mono text-[11px] text-zinc-500">{c.text}</span>
+              <span className="mt-0.5 block break-all font-mono text-caption text-fg-tertiary">{c.text}</span>
             </button>
           ))}
           <button
             type="button"
             onClick={() => setRelativeView(false)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             返回
           </button>
@@ -79,11 +79,11 @@ export default function MobileFileLinkSheet({
                 onClose();
                 onSelect(item.id as FileActionId);
               }}
-              className="rounded-xl bg-zinc-800 px-4 py-3 text-left text-sm text-zinc-100 active:bg-state-mid"
+              className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
             >
               {item.label}{item.children ? ' ›' : ''}
               {item.hint && (
-                <span className="mt-0.5 block break-all font-mono text-[11px] text-zinc-500">
+                <span className="mt-0.5 block break-all font-mono text-caption text-fg-tertiary">
                   {item.hint}
                 </span>
               )}
@@ -93,7 +93,7 @@ export default function MobileFileLinkSheet({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+          className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
         >
           取消
         </button>

@@ -106,13 +106,13 @@ export default function KeyManager({
     ? 'min-h-[52px] rounded-xl px-3 py-3 transition-colors active:bg-state-soft/70'
     : 'rounded-lg px-3 py-2 transition-colors';
   const rowActionClass = touch
-    ? 'shrink-0 rounded-lg px-3 py-2 text-sm transition-colors active:bg-state-mid/60'
-    : 'shrink-0 rounded px-1.5 py-1 text-xs transition-colors';
+    ? 'shrink-0 rounded-lg px-3 py-2 text-read transition-colors active:bg-state-mid/60'
+    : 'shrink-0 rounded px-1.5 py-1 text-meta transition-colors';
   const fieldClass = touch
-    ? 'w-full rounded-xl border border-edge bg-zinc-800 px-3 py-3 text-base text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500'
-    : 'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
-  const inlineBtnClass = touch ? 'py-2.5 text-sm' : 'py-1.5 text-sm';
-  const smallBtnClass = touch ? 'py-2 text-sm' : 'py-1 text-xs';
+    ? 'w-full rounded-xl border border-edge bg-surface-raised px-3 py-3 text-base text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500'
+    : 'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-read text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  const inlineBtnClass = touch ? 'py-2.5 text-read' : 'py-1.5 text-read';
+  const smallBtnClass = touch ? 'py-2 text-read' : 'py-1 text-meta';
 
   useEffect(() => {
     void reload();
@@ -215,13 +215,13 @@ export default function KeyManager({
 
   return (
     <div className="space-y-3 p-4">
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-meta leading-relaxed text-fg-tertiary">
         导入的私钥会加密保存在本设备（应用自己的目录，磁盘上是密文），
         原文件之后挪走或删掉都不影响，多台连接也可以共用同一把。
       </p>
 
       {keys.length === 0 ? (
-        <p className="rounded-lg border border-edge/60 bg-zinc-900/40 px-3 py-4 text-center text-sm text-zinc-500">
+        <p className="rounded-lg border border-edge/60 bg-surface/40 px-3 py-4 text-center text-read text-fg-tertiary">
           还没有导入任何私钥
         </p>
       ) : (
@@ -238,7 +238,7 @@ export default function KeyManager({
                 className={`border ${rowClass} ${
                   selected
                     ? 'border-indigo-500/70 bg-indigo-500/10'
-                    : 'border-edge bg-zinc-900/40'
+                    : 'border-edge bg-surface/40'
                 }`}
               >
                 {renamingId === key.id ? (
@@ -276,18 +276,18 @@ export default function KeyManager({
                       className="min-w-0 flex-1 text-left"
                       aria-pressed={selected}
                     >
-                      <div className="truncate text-sm text-zinc-100">
+                      <div className="truncate text-read text-fg">
                         {key.name}
                         {key.encrypted && (
-                          <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">
+                          <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-caption text-amber-300">
                             带密码
                           </span>
                         )}
                         {selected && (
-                          <span className="ml-2 text-[10px] text-indigo-300">已选用</span>
+                          <span className="ml-2 text-caption text-indigo-300">已选用</span>
                         )}
                       </div>
-                      <div className="truncate text-[11px] text-zinc-500">
+                      <div className="truncate text-caption text-fg-tertiary">
                         {describeAlgorithm(key.algorithm)} · {shortFingerprint(key.fingerprint)}
                         {usage > 0 && ` · ${usage} 条连接在用`}
                       </div>
@@ -300,7 +300,7 @@ export default function KeyManager({
                         setRenameValue(key.name);
                         setConfirmingDeleteId(null);
                       }}
-                      className={`${rowActionClass} text-zinc-400 hover:text-zinc-200`}
+                      className={`${rowActionClass} text-fg-secondary hover:text-fg`}
                     >
                       重命名
                     </button>
@@ -318,7 +318,7 @@ export default function KeyManager({
 
                 {origin?.changed && (
                   <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-700/50 bg-amber-950/20 px-2.5 py-2">
-                    <p className="text-xs leading-relaxed text-amber-200">
+                    <p className="text-meta leading-relaxed text-amber-200">
                       原文件已经是另一把钥匙了，库里这份还是旧的——如果你换过密钥，
                       连接会一直被服务器拒绝。
                     </p>
@@ -334,7 +334,7 @@ export default function KeyManager({
                 )}
 
                 {origin?.missing && (
-                  <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                  <p className="mt-2 text-caption leading-relaxed text-fg-tertiary">
                     原来的文件（
                     <span className="break-all">{origin.originPath}</span>
                     ）已不在，不影响使用。
@@ -343,7 +343,7 @@ export default function KeyManager({
 
                 {confirming && (
                   <div className="mt-2 rounded-md border border-red-900/50 bg-red-950/30 px-2.5 py-2">
-                    <p className="text-xs leading-relaxed text-red-200">
+                    <p className="text-meta leading-relaxed text-red-200">
                       删除这把私钥？密文文件会一并删除。
                       {usage > 0
                         ? `有 ${usage} 条连接正在用它，它们之后需要重新选择一把。`
@@ -399,7 +399,7 @@ export default function KeyManager({
 
       {pending && (
         <div className="space-y-2 rounded-lg border border-amber-700/50 bg-amber-950/20 px-3 py-3">
-          <p className="text-xs leading-relaxed text-amber-200">
+          <p className="text-meta leading-relaxed text-amber-200">
             {pendingHint ?? '这把私钥带密码，请输入后继续。'}
           </p>
           <input
@@ -441,8 +441,8 @@ export default function KeyManager({
       )}
 
       {pasteOpen && (
-        <div className="space-y-2 rounded-lg border border-edge bg-zinc-900/40 px-3 py-3">
-          <p className="text-xs leading-relaxed text-zinc-500">
+        <div className="space-y-2 rounded-lg border border-edge bg-surface/40 px-3 py-3">
+          <p className="text-meta leading-relaxed text-fg-tertiary">
             把私钥全文（-----BEGIN … 那一段，含首尾行）贴进来。
           </p>
           <input
@@ -459,8 +459,8 @@ export default function KeyManager({
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
-            className={`w-full resize-y rounded-lg border border-edge bg-zinc-800 px-3 py-2 font-mono text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500 ${
-              touch ? 'text-sm' : 'text-xs'
+            className={`w-full resize-y rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500 ${
+              touch ? 'text-read' : 'text-meta'
             }`}
           />
           <div className="flex justify-end gap-2">
@@ -493,7 +493,7 @@ export default function KeyManager({
       )}
 
       {error && (
-        <p className="rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs leading-relaxed text-red-300">
+        <p className="rounded-lg border border-red-900/50 bg-red-950/30 px-3 py-2 text-meta leading-relaxed text-red-300">
           {error}
         </p>
       )}

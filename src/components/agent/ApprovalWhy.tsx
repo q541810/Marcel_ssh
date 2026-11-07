@@ -40,17 +40,17 @@ export function ApprovalWhy({
     id;
 
   return (
-    <div className="flex items-start gap-2 text-xs">
+    <div className="flex items-start gap-2 text-meta">
       <TriangleAlert className="mt-[3px] h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden />
       <div className="min-w-0 flex-1 space-y-1.5">
         {hasReasons &&
           reasons.map((r, i) => (
-            <p key={i} className="leading-relaxed break-words whitespace-pre-wrap text-zinc-200">
+            <p key={i} className="leading-relaxed break-words whitespace-pre-wrap text-fg">
               {r}
             </p>
           ))}
         {hasRules && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-zinc-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-fg-tertiary">
             {ruleIds.map((id) => {
               const title = titleOf(id) || '自定义规则';
               return onOpenRule ? (
@@ -60,7 +60,7 @@ export function ApprovalWhy({
                   onClick={() => onOpenRule(id)}
                   title="在设置里调整这条规则"
                   aria-label={`调整规则：${title}`}
-                  className={`group inline-flex max-w-full items-center gap-1 rounded-md text-zinc-400 transition-colors hover:text-zinc-100 active:text-zinc-100 ${
+                  className={`group inline-flex max-w-full items-center gap-1 rounded-md text-fg-secondary transition-colors hover:text-fg active:text-fg ${
                     compact ? 'py-1.5' : 'py-0.5'
                   }`}
                 >

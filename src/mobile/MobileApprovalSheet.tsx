@@ -104,9 +104,9 @@ export default function MobileApprovalSheet({
   // 放在正文上方，用户才知道自己批的是什么。
   const shownExtras = omitShownHost(cleanedCmd?.extras ?? {}, targetHost);
   const toolNameLine = (
-    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs">
-      <span className="shrink-0 font-mono text-zinc-400">{toolCall.name}</span>
-      {diffTool && path && <span className="break-all font-mono text-zinc-300">{path}</span>}
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-meta">
+      <span className="shrink-0 font-mono text-fg-secondary">{toolCall.name}</span>
+      {diffTool && path && <span className="break-all font-mono text-fg-secondary">{path}</span>}
     </div>
   );
 
@@ -122,20 +122,20 @@ export default function MobileApprovalSheet({
             {/* 普通「请求审批」是这个面板的默认含义，不必再标一遍；只有不寻常的档位
                 （强制审批）才值得一枚标签。 */}
             {toolCall.disposition !== 'Approval' && (
-              <span className="text-xs font-medium text-amber-300">
+              <span className="text-meta font-medium text-amber-300">
                 {DISPOSITION_LABELS[toolCall.disposition]}
               </span>
             )}
           </span>
           <div className="flex items-center gap-2">
             {queueLength > 1 && (
-              <span className="text-xs tabular-nums text-zinc-500">1/{queueLength}</span>
+              <span className="text-meta tabular-nums text-fg-tertiary">1/{queueLength}</span>
             )}
             {onMinimize && (
               <button
                 type="button"
                 onClick={onMinimize}
-                className="p-1 rounded-lg text-zinc-400 active:text-zinc-200 active:bg-state-soft"
+                className="p-1 rounded-lg text-fg-secondary active:text-fg active:bg-state-soft"
                 title="收起为浮动条"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -155,7 +155,7 @@ export default function MobileApprovalSheet({
             onChange={(e) => setReason(e.target.value)}
             placeholder="拒绝原因（可选，会告诉 Agent）"
             aria-label="拒绝原因"
-            className="w-full rounded-xl bg-zinc-900 border border-edge-subtle px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-edge-strong"
+            className="w-full rounded-xl bg-surface border border-edge-subtle px-3 py-2.5 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-edge-strong"
           />
           <div className="flex gap-2">
             <ApprovalRejectButton
@@ -169,7 +169,7 @@ export default function MobileApprovalSheet({
             <button
               type="button"
               onClick={onApprove}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500"
             >
               批准
             </button>
@@ -197,7 +197,7 @@ export default function MobileApprovalSheet({
         {diffTool ? (
           <div className="space-y-2">
             {toolNameLine}
-            <div className="overflow-hidden rounded-lg border border-edge bg-zinc-950">
+            <div className="overflow-hidden rounded-lg border border-edge bg-surface-sunken">
               <div className="overflow-x-auto">
                 <FileChangeView
                   toolName={diffTool}
@@ -216,33 +216,33 @@ export default function MobileApprovalSheet({
             {toolNameLine}
             {promptDescription && (
               <div>
-                <div className="mb-1 text-xs text-zinc-500">任务描述</div>
-                <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-200">
+                <div className="mb-1 text-meta text-fg-tertiary">任务描述</div>
+                <p className="text-meta leading-relaxed break-words whitespace-pre-wrap text-fg">
                   {promptDescription}
                 </p>
               </div>
             )}
             {promptModeLabel && (
-              <div className="text-xs text-zinc-500">
-                子 agent 模式：<span className="text-zinc-300">{promptModeLabel}</span>
+              <div className="text-meta text-fg-tertiary">
+                子 agent 模式：<span className="text-fg-secondary">{promptModeLabel}</span>
               </div>
             )}
-            <div className="mb-1 text-xs text-zinc-500">派发给子 agent 的完整指令</div>
-            <pre className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-zinc-950 p-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-200">
+            <div className="mb-1 text-meta text-fg-tertiary">派发给子 agent 的完整指令</div>
+            <pre className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-surface-sunken p-3 font-mono text-meta leading-relaxed break-words whitespace-pre-wrap text-fg">
               {promptText}
             </pre>
           </div>
         ) : isExecuteCommand && cleanedCmd?.main ? (
           <div className="space-y-2">
-            <div className="overflow-hidden rounded-lg border border-edge bg-zinc-950">
+            <div className="overflow-hidden rounded-lg border border-edge bg-surface-sunken">
               <div className="flex items-start gap-2 px-3 py-2">
-                <span className="select-none font-mono text-xs leading-relaxed text-zinc-500">$</span>
-                <code className="min-w-0 flex-1 break-words whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-200">
+                <span className="select-none font-mono text-meta leading-relaxed text-fg-tertiary">$</span>
+                <code className="min-w-0 flex-1 break-words whitespace-pre-wrap font-mono text-meta leading-relaxed text-fg">
                   {cleanedCmd.main}
                 </code>
               </div>
               {Object.keys(shownExtras).length > 0 && (
-                <pre className="max-h-40 overflow-y-auto border-t border-edge/60 px-3 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-400">
+                <pre className="max-h-40 overflow-y-auto border-t border-edge/60 px-3 py-2 font-mono text-caption leading-relaxed break-words whitespace-pre-wrap text-fg-secondary">
                   {JSON.stringify(shownExtras, null, 2)}
                 </pre>
               )}
@@ -251,8 +251,8 @@ export default function MobileApprovalSheet({
                 标注来源是刻意的：它可能把一条危险命令说成「只读检查」，写清这是
                 agent 自述，用户才不会把它当成系统判定。 */}
             {cleanedCmd.description && (
-              <p className="px-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-300">
-                <span className="text-zinc-500">Agent 自述：</span>
+              <p className="px-0.5 text-meta leading-relaxed break-words whitespace-pre-wrap text-fg-secondary">
+                <span className="text-fg-tertiary">Agent 自述：</span>
                 {cleanedCmd.description}
               </p>
             )}
@@ -260,7 +260,7 @@ export default function MobileApprovalSheet({
         ) : (
           <div className="space-y-2">
             {toolNameLine}
-            <pre className="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-300">
+            <pre className="max-h-48 overflow-auto rounded-lg bg-surface-sunken p-2 font-mono text-meta leading-relaxed break-words whitespace-pre-wrap text-fg-secondary">
               {JSON.stringify(toolCall.arguments, null, 2)}
             </pre>
           </div>

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { X } from 'lucide-react';
 import { useFileNavStore } from '@/stores/fileNavStore';
 
 const SHOW_MS = 4500;
@@ -29,20 +30,20 @@ export default function FileNavToast({ mobile = false }: { mobile?: boolean }) {
       <div
         role={notice.tone === 'error' ? 'alert' : 'status'}
         aria-live={notice.tone === 'error' ? 'assertive' : 'polite'}
-        className={`pointer-events-auto flex max-w-[min(32rem,100%)] items-start gap-2 rounded-xl border px-3 py-2 text-sm shadow-lg backdrop-blur-sm ${
+        className={`pointer-events-auto flex max-w-[min(32rem,100%)] items-start gap-2 rounded-xl surface-glass px-3 py-2 text-body ${
           notice.tone === 'error'
-            ? 'border-red-500/30 bg-zinc-900/95 text-red-200'
-            : 'border-edge bg-zinc-800/95 text-zinc-100'
+            ? '!border-red-500/30 text-red-200'
+            : 'text-fg'
         }`}
       >
         <span className="min-w-0 break-words [overflow-wrap:anywhere]">{notice.text}</span>
         <button
           type="button"
           onClick={() => useFileNavStore.getState().clearNotice(notice.seq)}
-          className="flex-shrink-0 text-zinc-500 hover:text-zinc-200"
+          className="pressable focus-ring flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-fg-tertiary hover:text-fg"
           aria-label="关闭提示"
         >
-          ✕
+          <X size={14} strokeWidth={1.5} />
         </button>
       </div>
     </div>

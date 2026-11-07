@@ -168,7 +168,7 @@ export function ModelServiceSection() {
       >
         <div className="flex-1 min-w-0 space-y-2">
           {subagentChoices.length === 0 ? (
-            <p className="text-xs text-zinc-500">
+            <p className="text-meta text-fg-tertiary">
               清单为空：子agent 跟随当前会话的模型。添加候选后，主 agent 会按描述自行选型。
             </p>
           ) : (
@@ -186,12 +186,12 @@ export function ModelServiceSection() {
                   value={choice.description}
                   onChange={(e) => updateSubagentChoice(i, { description: e.target.value })}
                   placeholder="选型提示，如：小模型，适合搜索等简单任务"
-                  className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="flex-1 min-w-0 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => removeSubagentChoice(i)}
-                  className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-state-mid transition-colors flex-shrink-0"
+                  className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors flex-shrink-0"
                   title="移除该候选"
                 >
                   移除
@@ -205,12 +205,12 @@ export function ModelServiceSection() {
                 + 添加候选
               </Button>
             ) : (
-              <p className="text-xs text-zinc-600">全部可用模型都已在清单里。</p>
+              <p className="text-meta text-fg-disabled">全部可用模型都已在清单里。</p>
             )
           ) : registry.models.length > 0 ? (
-            <p className="text-xs text-zinc-600">所有渠道均已禁用，启用后才能配置候选。</p>
+            <p className="text-meta text-fg-disabled">所有渠道均已禁用，启用后才能配置候选。</p>
           ) : (
-            <p className="text-xs text-zinc-600">先在下方添加渠道与模型，才能配置候选。</p>
+            <p className="text-meta text-fg-disabled">先在下方添加渠道与模型，才能配置候选。</p>
           )}
         </div>
       </SettingItem>
@@ -249,7 +249,7 @@ export function ModelServiceSection() {
       >
         <div className="flex-1 min-w-0 space-y-4">
           <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-zinc-400 flex-shrink-0">最大重试次数</span>
+            <span className="text-meta text-fg-secondary flex-shrink-0">最大重试次数</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -260,13 +260,13 @@ export function ModelServiceSection() {
                 onChange={(e) => updateNetPolicy({ maxRetries: Number(e.target.value) })}
                 className="w-40 h-2 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.maxRetries} 次
               </span>
             </div>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-zinc-400 flex-shrink-0">重试间隔</span>
+            <span className="text-meta text-fg-secondary flex-shrink-0">重试间隔</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -277,13 +277,13 @@ export function ModelServiceSection() {
                 onChange={(e) => updateNetPolicy({ retryDelaySecs: Number(e.target.value) })}
                 className="w-40 h-2 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.retryDelaySecs}s
               </span>
             </div>
           </div>
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">重试条件（状态码/范围）</label>
+            <label className="block text-meta text-fg-secondary mb-1">重试条件（状态码/范围）</label>
             <ValidatedInput
               type="text"
               value={netPolicy.retryHttpStatuses}
@@ -300,7 +300,7 @@ export function ModelServiceSection() {
             />
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-zinc-400 flex-shrink-0">首字超时（秒）</span>
+            <span className="text-meta text-fg-secondary flex-shrink-0">首字超时（秒）</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -311,13 +311,13 @@ export function ModelServiceSection() {
                 onChange={(e) => updateNetPolicy({ firstByteTimeoutSecs: Number(e.target.value) })}
                 className="w-40 h-2 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.firstByteTimeoutSecs}s
               </span>
             </div>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-400">超时自动重试</span>
+            <span className="text-meta text-fg-secondary">超时自动重试</span>
             <Toggle
               checked={netPolicy.retryOnTimeout}
               onChange={(v) => updateNetPolicy({ retryOnTimeout: v })}
@@ -331,8 +331,8 @@ export function ModelServiceSection() {
       <div className="px-6 py-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm font-medium text-zinc-200">渠道</div>
-            <div className="text-xs text-zinc-500 mt-0.5">
+            <div className="text-body font-medium text-fg">渠道</div>
+            <div className="text-meta text-fg-tertiary mt-1">
               OpenAI 兼容接入点（OpenRouter / DeepSeek / 硅基流动 / Ollama / OpenAI 官方等）
             </div>
           </div>
@@ -343,8 +343,8 @@ export function ModelServiceSection() {
 
         {registry.channels.length === 0 ? (
           <div className="rounded-xl border border-dashed border-edge-subtle py-8 text-center">
-            <p className="text-sm text-zinc-500">还没有渠道。点击「添加渠道」接入第一个模型服务。</p>
-            <p className="text-xs text-zinc-600 mt-1">API Key 加密保存在系统密钥链，不会落盘。</p>
+            <p className="text-body text-fg-tertiary">还没有渠道。点击「添加渠道」接入第一个模型服务。</p>
+            <p className="text-meta text-fg-disabled mt-1">API Key 加密保存在系统密钥链，不会落盘。</p>
           </div>
         ) : (
           <ul className="divide-y divide-edge-subtle overflow-hidden rounded-xl border border-edge-subtle">
@@ -354,7 +354,7 @@ export function ModelServiceSection() {
               const isFirst = idx === 0;
               const isLast = idx === registry.channels.length - 1;
               return (
-                <li key={ch.id} className="flex items-center gap-3 px-4 py-3 bg-zinc-900/40">
+                <li key={ch.id} className="flex items-center gap-3 px-4 py-3 bg-surface/40">
                   {/* 手动排序：数组顺序即展示顺序（设置页 + 模型选择器分组都读它） */}
                   <div className="flex flex-col flex-shrink-0 -my-1">
                     <button
@@ -363,7 +363,7 @@ export function ModelServiceSection() {
                       disabled={isFirst}
                       title="上移渠道"
                       aria-label={`上移 ${ch.name}`}
-                      className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-state-mid disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-colors"
+                      className="p-1 rounded text-fg-secondary hover:text-fg hover:bg-state-mid disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-secondary transition-colors"
                     >
                       <ChevronUp className="w-4 h-4" />
                     </button>
@@ -373,31 +373,31 @@ export function ModelServiceSection() {
                       disabled={isLast}
                       title="下移渠道"
                       aria-label={`下移 ${ch.name}`}
-                      className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-state-mid disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 transition-colors"
+                      className="p-1 rounded text-fg-secondary hover:text-fg hover:bg-state-mid disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-secondary transition-colors"
                     >
                       <ChevronDown className="w-4 h-4" />
                     </button>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-zinc-200 truncate">{ch.name}</span>
+                      <span className="text-body font-medium text-fg truncate">{ch.name}</span>
                       {!ch.enabled && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400">
+                        <span className="text-caption px-2 py-0.5 rounded bg-zinc-700 text-fg-secondary">
                           已禁用
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-zinc-500 font-mono truncate mt-0.5">
+                    <div className="text-meta text-fg-tertiary font-mono truncate mt-1">
                       {ch.baseUrl || <span className="text-amber-500/80">未填写 Base URL</span>}
                     </div>
-                    <div className="text-[11px] text-zinc-600 mt-0.5">
+                    <div className="text-caption text-fg-disabled mt-1">
                       {models.length} 个模型 · {hasKey ? '已配置密钥' : '未配置密钥'}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setChannelEditor({ open: true, channel: ch })}
-                    className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-state-mid transition-colors flex-shrink-0"
+                    className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors flex-shrink-0"
                   >
                     编辑
                   </button>

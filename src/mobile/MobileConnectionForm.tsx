@@ -32,9 +32,9 @@ interface MobileConnectionFormProps {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 const inputErrorClass =
-  'w-full rounded-lg border border-red-500 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-red-400';
+  'w-full rounded-lg border border-red-500 bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-red-400';
 
 function Field({
   label,
@@ -47,9 +47,9 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs text-zinc-400">{label}</label>
+      <label className="mb-1 block text-meta text-fg-secondary">{label}</label>
       {children}
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1 text-meta text-red-400">{error}</p>}
     </div>
   );
 }
@@ -336,7 +336,7 @@ export default function MobileConnectionForm({
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+            className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
           >
             取消
           </button>
@@ -344,7 +344,7 @@ export default function MobileConnectionForm({
             type="button"
             onClick={() => void handleSave()}
             disabled={saving}
-            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
           >
             {saving ? '保存中…' : '保存'}
           </button>
@@ -463,12 +463,12 @@ export default function MobileConnectionForm({
                 <button
                   type="button"
                   onClick={() => setKeyManagerTarget('main')}
-                  className="shrink-0 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+                  className="shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
                 >
                   选择 / 导入…
                 </button>
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+              <p className="mt-1 text-caption leading-relaxed text-fg-tertiary">
                 {selectedKey
                   ? `${describeAlgorithm(selectedKey.algorithm)} · ${shortFingerprint(selectedKey.fingerprint)}`
                   : '从手机里挑一个密钥文件，或直接粘贴私钥内容。'}
@@ -495,12 +495,12 @@ export default function MobileConnectionForm({
         {hasSecret && !secretDirty && !secret ? (
           <Field label={authMethod === 'Password' ? '密码' : '密钥密码'}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm text-zinc-400">已保存在本设备</span>
+              <span className="text-body text-fg-secondary">已保存在本设备</span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setSecretDirty(true)}
-                  className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-200 active:bg-state-mid"
+                  className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
                 >
                   修改
                 </button>
@@ -523,7 +523,7 @@ export default function MobileConnectionForm({
                       }
                     })()
                   }
-                  className="rounded-lg px-3 py-2 text-xs text-red-400/80 active:bg-state-soft"
+                  className="rounded-lg min-h-11 px-3 py-2 text-body text-red-400/80 active:bg-state-soft"
                 >
                   清除
                 </button>
@@ -543,7 +543,7 @@ export default function MobileConnectionForm({
               autoComplete="new-password"
               className={inputClass}
             />
-            <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+            <p className="mt-1 text-caption leading-relaxed text-fg-disabled">
               填写后加密保存到本设备，连接时自动使用。
             </p>
           </Field>
@@ -554,12 +554,12 @@ export default function MobileConnectionForm({
           (hasLoginPassword && !loginPasswordDirty && !loginPassword ? (
             <Field label="登录密码">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-zinc-400">已保存在本设备</span>
+                <span className="text-body text-fg-secondary">已保存在本设备</span>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setLoginPasswordDirty(true)}
-                    className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-200 active:bg-state-mid"
+                    className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
                   >
                     修改
                   </button>
@@ -578,7 +578,7 @@ export default function MobileConnectionForm({
                         }
                       })()
                     }
-                    className="rounded-lg px-3 py-2 text-xs text-red-400/80 active:bg-state-soft"
+                    className="rounded-lg min-h-11 px-3 py-2 text-body text-red-400/80 active:bg-state-soft"
                   >
                     清除
                   </button>
@@ -598,7 +598,7 @@ export default function MobileConnectionForm({
                 autoComplete="new-password"
                 className={inputClass}
               />
-              <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+              <p className="mt-1 text-caption leading-relaxed text-fg-disabled">
                 本连接用私钥登录，用不到它。填了之后 agent 执行 sudo
                 时会自动填给远端。
               </p>
@@ -616,11 +616,11 @@ export default function MobileConnectionForm({
         </Field>
 
         {/* Jump host (ProxyJump) */}
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/40">
+        <div className="rounded-xl border border-edge-subtle bg-surface/40">
           <button
             type="button"
             onClick={() => setUseJump((v) => !v)}
-            className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm text-zinc-300 active:bg-state-soft/50"
+            className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-body text-fg-secondary active:bg-state-soft/50"
           >
             <span className="font-medium">跳板机（可选）</span>
             <span
@@ -760,13 +760,13 @@ export default function MobileConnectionForm({
                       <button
                         type="button"
                         onClick={() => setKeyManagerTarget('jump')}
-                        className="shrink-0 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+                        className="shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
                       >
                         选择 / 导入…
                       </button>
                     </div>
                     {selectedJumpKey && (
-                      <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                      <p className="mt-1 text-caption leading-relaxed text-fg-tertiary">
                         {describeAlgorithm(selectedJumpKey.algorithm)} ·{' '}
                         {shortFingerprint(selectedJumpKey.fingerprint)}
                       </p>

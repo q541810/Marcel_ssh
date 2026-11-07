@@ -31,7 +31,7 @@ export function TerminalZoomHint() {
   return (
     <div
       aria-hidden
-      className={`pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full bg-zinc-800/90 px-3 py-1 text-xs font-medium tabular-nums text-zinc-100 shadow-lg ring-1 ring-white/10 backdrop-blur transition-opacity duration-200 ${
+      className={`pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full bg-surface-raised/90 px-3 py-1 text-meta font-medium tabular-nums text-fg shadow-lg ring-1 ring-white/10 backdrop-blur transition-opacity duration-200 ${
         shown ? 'opacity-100' : 'opacity-0'
       }`}
     >

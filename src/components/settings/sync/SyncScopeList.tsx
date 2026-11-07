@@ -46,22 +46,22 @@ function EstimateBox({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-edge-subtle bg-zinc-900/60 px-3 py-2.5">
-      <div className="text-xs text-zinc-500">{title}</div>
-      <div className="mt-1 text-sm leading-relaxed text-zinc-200" aria-live="polite">
+    <div className="rounded-xl border border-edge-subtle bg-surface/60 px-3 py-3">
+      <div className="text-meta text-fg-tertiary">{title}</div>
+      <div className="mt-1 text-body leading-relaxed text-fg" aria-live="polite">
         {loading ? (
-          <span className="text-zinc-400">正在统计…</span>
+          <span className="text-fg-secondary">正在统计…</span>
         ) : error ? (
-          <span className="text-zinc-400">暂时统计不出来，不影响继续。</span>
+          <span className="text-fg-secondary">暂时统计不出来，不影响继续。</span>
         ) : empty ? (
-          <span className="text-zinc-300">这台设备上暂时没有要上传的内容。</span>
+          <span className="text-fg-secondary">这台设备上暂时没有要上传的内容。</span>
         ) : (
           children
         )}
       </div>
       {error && !loading && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-zinc-400" role="alert">
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-meta">
+          <span className="text-fg-secondary" role="alert">
             {error}
           </span>
           <button
@@ -137,16 +137,16 @@ function TierExplainDialog({
     >
       {isConversation && (
         <>
-          <ol className="space-y-2.5 text-sm leading-relaxed text-zinc-300">
+          <ol className="space-y-3 text-body leading-relaxed text-fg-secondary">
             {[
               '对话里可能有服务器的输出和命令结果，同步到别的设备之前请自己想清楚。',
               '内容是端到端加密的：在你自己的设备上加密之后才上传，存储服务商看不到。',
               '打开后会先把这台设备上已有的对话整份传上去，再追上其它设备的进度。',
             ].map((line, index) => (
-              <li key={line} className="flex items-start gap-2.5">
+              <li key={line} className="flex items-start gap-3">
                 <span
                   aria-hidden
-                  className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-state-soft text-[11px] font-medium text-zinc-300"
+                  className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-state-soft text-caption font-medium text-fg-secondary"
                 >
                   {index + 1}
                 </span>
@@ -163,8 +163,8 @@ function TierExplainDialog({
           >
             {estimate && (
               <>
-                约 <span className="font-medium text-zinc-100">{estimate.conversations}</span> 段对话、
-                <span className="font-medium text-zinc-100">{estimate.images}</span> 张图片，共{' '}
+                约 <span className="font-medium text-fg">{estimate.conversations}</span> 段对话、
+                <span className="font-medium text-fg">{estimate.images}</span> 张图片，共{' '}
                 {formatSize(estimate.totalBytes)}
               </>
             )}
@@ -174,7 +174,7 @@ function TierExplainDialog({
 
       {kind === 'secret' && (
         <>
-          <p className="text-sm leading-relaxed text-zinc-300">
+          <p className="text-body leading-relaxed text-fg-secondary">
             打开后，下面这些机密会用同一把钥匙加密后同步到你的其它设备。这里只列类别和数量，
             同步记录里也只写改的是哪个 Key，不会出现值。
           </p>
@@ -186,15 +186,15 @@ function TierExplainDialog({
             onRetry={onRetry}
           >
             {estimate && (
-              <ul className="space-y-1.5">
+              <ul className="space-y-2">
                 {estimate.secretGroups
                   .filter((group) => group.count > 0)
                   .map((group) => (
                     <li key={group.label}>
-                      <span className="font-medium text-zinc-100">{group.label}</span>
-                      <span className="text-zinc-400"> · {group.count} 个</span>
+                      <span className="font-medium text-fg">{group.label}</span>
+                      <span className="text-fg-secondary"> · {group.count} 个</span>
                       {group.names.length > 0 && (
-                        <span className="mt-0.5 block break-words text-xs text-zinc-500">
+                        <span className="mt-1 block break-words text-meta text-fg-tertiary">
                           {group.names.join('、')}
                         </span>
                       )}
@@ -212,11 +212,11 @@ function TierExplainDialog({
 
       {isSecretOff && (
         <>
-          <p className="text-sm leading-relaxed text-zinc-300">
+          <p className="text-body leading-relaxed text-fg-secondary">
             关闭后，这台设备不再上传或接收新的机密。
-            <span className="font-medium text-zinc-100">已经同步到其它设备的机密不会被收回。</span>
+            <span className="font-medium text-fg">已经同步到其它设备的机密不会被收回。</span>
           </p>
-          <p className="text-sm leading-relaxed text-zinc-400">
+          <p className="text-body leading-relaxed text-fg-secondary">
             想让它从某台设备上消失，需要在那台设备上自己删掉；云端的历史密文也仍然在，
             直到你停止同步并删除云端数据。
           </p>
@@ -329,16 +329,16 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
             <li key={item.key} data-tier={item.key}>
               <div className={`flex items-center justify-between gap-3 ${checked ? '' : 'opacity-70'}`}>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-sm text-zinc-200">
+                  <div className="flex items-center gap-2 text-body text-fg">
                     {item.key === 'conversation' && (
-                      <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 text-zinc-500" aria-hidden />
+                      <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" aria-hidden />
                     )}
                     {item.key === 'secret' && (
-                      <KeyRound className="h-3.5 w-3.5 flex-shrink-0 text-zinc-500" aria-hidden />
+                      <KeyRound className="h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" aria-hidden />
                     )}
                     <span className="truncate">{item.title}</span>
                   </div>
-                  <div className="text-xs leading-relaxed text-zinc-500">
+                  <div className="text-meta leading-relaxed text-fg-tertiary">
                     {item.desc} · {note}
                   </div>
                 </div>
@@ -354,22 +354,22 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
                 />
               </div>
               {itemError && (
-                <p className="mt-1.5 text-xs text-red-400" role="alert">
+                <p className="mt-2 text-meta text-red-400" role="alert">
                   {itemError}
                 </p>
               )}
               {item.key === 'conversation' && conversationOffNotice && (
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-2 text-meta leading-relaxed text-fg-tertiary">
                   已关闭。已经同步到其它设备的对话不会被删除。
                 </p>
               )}
               {item.key === 'conversation' && showProgress && progress && (
                 <div className="mt-2 space-y-1" aria-live="polite">
-                  <div className="flex items-center justify-between gap-2 text-xs text-indigo-300">
+                  <div className="flex items-center justify-between gap-2 text-meta text-indigo-300">
                     <span className="min-w-0 truncate">
                       {progress.label || '正在同步对话'} {progress.done} / {progress.total}
                     </span>
-                    <span className="flex-shrink-0 tabular-nums text-zinc-500">{percent}%</span>
+                    <span className="flex-shrink-0 tabular-nums text-fg-tertiary">{percent}%</span>
                   </div>
                   <div className="h-1 overflow-hidden rounded-full bg-state-mid">
                     <div

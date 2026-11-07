@@ -11,6 +11,8 @@ import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { asHostKeyMismatch, getErrorMessage, parseAppError } from '@/lib/errors';
 import { isPasswordRejected } from '@/lib/privateKey';
 import { formatConnLabel } from '@/lib/privacy';
+import StatusDot from '@/components/connection/StatusDot';
+import { RefreshCw, X } from 'lucide-react';
 import RemotePlatformBadge from '@/components/connection/RemotePlatformBadge';
 import type { SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
@@ -143,7 +145,7 @@ export default function TabBar() {
       {reconnectNotice && (
         <div
           role="alert"
-          className="flex items-start justify-between gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-1.5 text-xs leading-relaxed text-red-300"
+          className="flex items-start justify-between gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-1.5 text-meta leading-relaxed text-red-300"
         >
           <span>{reconnectNotice}</span>
           <button
@@ -156,8 +158,8 @@ export default function TabBar() {
           </button>
         </div>
       )}
-      <div className="flex items-center bg-zinc-900 border-b border-edge-subtle overflow-x-auto">
-        <div className="flex items-center">
+      <div className="flex items-end bg-surface-sunken overflow-x-auto pt-1 px-1">
+        <div className="flex items-end gap-0.5">
           {sessionList.map((session) => {
             const isActive = session.id === activeSessionId;
             const base = baseLabelOf(session);
@@ -173,29 +175,18 @@ export default function TabBar() {
                 key={session.id}
                 onClick={() => setActiveSession(session.id)}
                 className={`
-                  group flex items-center gap-2 px-3 py-2 text-xs cursor-pointer
-                  border-r border-edge-subtle min-w-0 max-w-[180px]
+                  group flex h-7 items-center gap-2 px-3 text-body cursor-pointer
+                  rounded-t-lg min-w-0 max-w-[180px]
                   transition-colors
                   ${
                     isActive
-                      ? 'bg-state-selected text-zinc-100'
-                      : 'text-zinc-400 hover:bg-state-soft/50 hover:text-zinc-200'
+                      ? 'bg-surface text-fg'
+                      : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
                   }
                 `}
               >
                 {/* Status dot */}
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    session.status === 'connected'
-                      ? 'bg-emerald-500'
-                      : session.status === 'connecting'
-                        ? 'bg-amber-500 animate-pulse'
-                        : session.status === 'error'
-                          ? 'bg-red-500'
-                          : 'bg-zinc-600'
-                  }`}
-                />
-
+                <StatusDot status={session.status} />
                 {/* Label */}
                 <span className="truncate flex-1">{label}</span>
 
@@ -231,12 +222,12 @@ export default function TabBar() {
                     }}
                     disabled={!canReconnect || session.status === 'connecting'}
                     className={`
-                      p-0.5 rounded flex-shrink-0
-                      transition-colors
+                      h-5 w-5 inline-flex items-center justify-center rounded-md flex-shrink-0
+                      transition-colors pressable focus-ring
                       ${
                         canReconnect
-                          ? 'text-zinc-400 hover:bg-state-mid hover:text-emerald-400'
-                          : 'text-zinc-600 cursor-not-allowed'
+                          ? 'text-fg-secondary hover:bg-state-mid hover:text-emerald-400'
+                          : 'text-fg-disabled cursor-not-allowed'
                       }
                     `}
                     title={
@@ -245,14 +236,7 @@ export default function TabBar() {
                         : '临时连接无法自动重连，请去侧边栏重新连接'
                     }
                   >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
+                    <RefreshCw size={14} strokeWidth={1.5} />
                   </button>
                 )}
 
@@ -270,15 +254,13 @@ export default function TabBar() {
                     });
                   }}
                   className="
-                    opacity-0 group-hover:opacity-100
-                    p-0.5 rounded hover:bg-state-mid text-zinc-500 hover:text-zinc-200
-                    transition-opacity flex-shrink-0
+                    opacity-0 group-hover:opacity-100 focus-visible:opacity-100
+                    h-5 w-5 inline-flex items-center justify-center rounded-md hover:bg-state-mid text-fg-tertiary hover:text-fg
+                    transition-opacity flex-shrink-0 pressable focus-ring
                   "
                   title="关闭会话"
                 >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <X size={14} strokeWidth={1.5} />
                 </button>
               </div>
             );

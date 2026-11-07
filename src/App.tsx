@@ -804,7 +804,7 @@ export default function App() {
       />
 
       <div
-        className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden pt-8"
+        className="flex flex-col h-screen bg-surface text-fg overflow-hidden pt-8"
         data-window-resizing={isWindowResizing ? 'true' : undefined}
       >
         <div
@@ -822,7 +822,7 @@ export default function App() {
           <aside
             ref={sidebarAsideRef}
             data-region="sidebar"
-            className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-edge-subtle overflow-hidden"
+            className="layout-contained flex-shrink-0 bg-surface border-edge-subtle overflow-hidden"
             style={{
               width: effectiveSidebarOpen ? `${sidebarWidth}px` : '0rem',
               borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
@@ -875,11 +875,11 @@ export default function App() {
             className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative"
           >
             {isExclusive ? (
-              <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
+              <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-surface animate-settings-workspace-enter">
                 {centerProvider && centerProvider.pluginId !== 'builtin' ? (
                   <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
                 ) : (
-                  <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
+                  <Suspense fallback={<div className="flex-1 bg-surface" />}>
                     {CenterView && <CenterView />}
                   </Suspense>
                 )}
@@ -892,7 +892,7 @@ export default function App() {
                       没有边界的话，chunk 加载窗口内任何一个同步更新（启动时
                       settings/作业/会话事件齐发）都会致命——「A component
                       suspended while responding to synchronous input」。 */}
-                  <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>{agentPane}</Suspense>
+                  <Suspense fallback={<div className="flex-1 bg-surface" />}>{agentPane}</Suspense>
                 </main>
               </>
             ) : (
@@ -935,7 +935,7 @@ export default function App() {
                   {agentPrimary ? terminalBody : (
                     /* 默认布局的 dock 同样渲染 lazy 的 agentPane：靠 ResizeObserver
                        时序躲过了同步更新窗口，那是运气不是保证，边界必须显式给。 */
-                    <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>{agentPane}</Suspense>
+                    <Suspense fallback={<div className="flex-1 bg-surface" />}>{agentPane}</Suspense>
                   )}
                 </aside>
               </>

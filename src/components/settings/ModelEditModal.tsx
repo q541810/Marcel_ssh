@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ChevronRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
@@ -120,13 +121,13 @@ export default function ModelEditModal({
   };
 
   const inputClass =
-    'flex-1 rounded-lg bg-zinc-900 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500';
+    'flex-1 rounded-lg bg-surface border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
 
   return (
     <Modal open={open} onClose={onClose} title={initial ? '编辑模型' : '添加模型'} size="md">
       <div className="px-4 py-4 space-y-4">
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">API 模型名 *</label>
+          <label className="block text-meta text-fg-secondary mb-1">API 模型名 *</label>
           <input
             type="text"
             value={modelName}
@@ -148,7 +149,7 @@ export default function ModelEditModal({
         </div>
 
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">展示名（可选）</label>
+          <label className="block text-meta text-fg-secondary mb-1">展示名（可选）</label>
           <input
             type="text"
             value={displayName}
@@ -156,15 +157,15 @@ export default function ModelEditModal({
             placeholder="DeepSeek V3"
             className={`${inputClass} w-full`}
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-caption text-fg-tertiary mt-1">
             不填则用 API 模型名展示。
           </p>
         </div>
 
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-sm text-zinc-200">Temperature</div>
-            <div className="text-[11px] text-zinc-500">采样温度（0-2）</div>
+            <div className="text-body text-fg">Temperature</div>
+            <div className="text-caption text-fg-tertiary">采样温度（0-2）</div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <input
@@ -174,22 +175,22 @@ export default function ModelEditModal({
               step={0.1}
               value={temperature}
               onChange={(e) => setTemperature(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
-              className="w-20 rounded-lg bg-zinc-900 border border-edge px-2 py-1.5 text-sm font-mono text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="w-20 rounded-lg bg-surface border border-edge px-2 py-2 text-body font-mono text-fg focus:outline-none focus:border-indigo-500"
             />
           </div>
         </div>
 
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-sm text-zinc-200">视觉 / 支持图片</div>
-            <div className="text-[11px] text-zinc-500">模型支持多模态图片输入时开启</div>
+            <div className="text-body text-fg">视觉 / 支持图片</div>
+            <div className="text-caption text-fg-tertiary">模型支持多模态图片输入时开启</div>
           </div>
           <Toggle checked={vision} onChange={setVision} label="" />
         </div>
 
         <div>
-          <label className="block text-xs text-zinc-400 mb-1">
-            模型上下文窗口 (tokens) <span className="text-zinc-600">（0 = 跟随全局设置）</span>
+          <label className="block text-meta text-fg-secondary mb-1">
+            模型上下文窗口 (tokens) <span className="text-fg-disabled">（0 = 跟随全局设置）</span>
           </label>
           <input
             type="number"
@@ -207,25 +208,15 @@ export default function ModelEditModal({
           <button
             type="button"
             onClick={() => setMoreOpen((o) => !o)}
-            className="flex items-center gap-2 w-full text-sm font-medium text-zinc-200 hover:text-zinc-100 transition-colors"
+            className="flex items-center gap-2 w-full text-body font-medium text-fg hover:text-fg transition-colors"
             aria-expanded={moreOpen}
           >
-            <svg
-              className={`w-3.5 h-3.5 transition-transform ${moreOpen ? 'rotate-90' : ''}`}
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M6 4l4 4-4 4" />
-            </svg>
+            <ChevronRight size={14} strokeWidth={1.5} className={`transition-transform ${moreOpen ? 'rotate-90' : ''}`} />
             <span>更多</span>
             {(extraBodyText.trim() !== '' ||
               effortsText.trim() !== '' ||
               demoteNonLeadingSystem) && (
-              <span className="text-[11px] text-zinc-500 font-normal">
+              <span className="text-caption text-fg-tertiary font-normal">
                 已设置高级参数
               </span>
             )}
@@ -233,8 +224,8 @@ export default function ModelEditModal({
           {moreOpen && (
             <div className="mt-3 space-y-4">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  思考强度档位 <span className="text-zinc-600">（从低到高，每行一个；留空不启用）</span>
+                <label className="block text-meta text-fg-secondary mb-1">
+                  思考强度档位 <span className="text-fg-disabled">（从低到高，每行一个；留空不启用）</span>
                 </label>
                 <textarea
                   value={effortsText}
@@ -242,17 +233,17 @@ export default function ModelEditModal({
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
-                  className="w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y"
+                  className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta font-mono text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 resize-y"
                 />
-                <p className="text-[11px] text-zinc-500 mt-1">
+                <p className="text-caption text-fg-tertiary mt-1">
                   填写该模型支持的推理档位（如 OpenAI o 系 low/medium/high、DeepSeek low/high/max）。填了之后，
                   会话输入条模型名旁会出现强度选择器，所选档位原样作为请求体顶层{' '}
-                  <code className="text-zinc-400">reasoning_effort</code> 透传。留空则该模型不参与强度选择。
+                  <code className="text-fg-secondary">reasoning_effort</code> 透传。留空则该模型不参与强度选择。
                 </p>
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
+                <label className="block text-meta text-fg-secondary mb-1">
                   高级：自定义请求参数（可选）
                 </label>
                 <textarea
@@ -264,22 +255,22 @@ export default function ModelEditModal({
                   placeholder={EXTRA_BODY_PLACEHOLDER}
                   spellCheck={false}
                   rows={5}
-                  className={`w-full rounded-lg px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y ${
+                  className={`w-full rounded-lg px-3 py-2 text-meta font-mono text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 resize-y ${
                     extraBodyError
                       ? 'bg-red-900/20 border border-red-500/50'
-                      : 'bg-zinc-900 border border-edge'
+                      : 'bg-surface border border-edge'
                   }`}
                 />
-                {extraBodyError && <p className="text-xs text-red-400 mt-1">{extraBodyError}</p>}
-                <p className="text-[11px] text-zinc-500 mt-1">
+                {extraBodyError && <p className="text-meta text-red-400 mt-1">{extraBodyError}</p>}
+                <p className="text-caption text-fg-tertiary mt-1">
                   以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
                 </p>
               </div>
 
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="text-sm text-zinc-200">非首位系统消息转为普通消息</div>
-                  <div className="text-[11px] text-zinc-500">
+                  <div className="text-body text-fg">非首位系统消息转为普通消息</div>
+                  <div className="text-caption text-fg-tertiary">
                     严格模板后端兼容：对话中后段的系统消息（如当前计划状态）会以普通消息身份发送，
                     并在开头注明「系统消息，非用户发言」；开启后每条多一行声明的开销
                   </div>
@@ -294,7 +285,7 @@ export default function ModelEditModal({
           )}
         </div>
 
-        {localError && <p className="text-sm text-red-400">{localError}</p>}
+        {localError && <p className="text-body text-red-400">{localError}</p>}
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>取消</Button>

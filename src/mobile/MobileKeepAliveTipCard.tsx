@@ -19,18 +19,18 @@ export default function MobileKeepAliveTipCard({
   onNeverShow,
 }: MobileKeepAliveTipCardProps) {
   return (
-    <div className="flex-shrink-0 border-t border-edge-subtle bg-zinc-900 px-3 py-3">
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900/80 p-3">
+    <div className="flex-shrink-0 border-t border-edge-subtle bg-surface px-3 py-3">
+      <div className="rounded-xl border border-edge-subtle bg-surface/80 p-3">
         {/* 头部：图标 + 标题 + 关闭 */}
         <div className="flex items-start gap-2.5">
-          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800">
-            <ShieldCheck className="h-3.5 w-3.5 text-zinc-400" />
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-surface-raised">
+            <ShieldCheck className="h-3.5 w-3.5 text-fg-secondary" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-none text-zinc-100">
+            <div className="text-body font-medium leading-none text-fg">
               后台保活未开启
             </div>
-            <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+            <p className="mt-1.5 text-meta leading-relaxed text-fg-secondary">
               检测到后台保活功能未开启，应用在后台运行时可能被系统回收，导致 SSH
               连接中断、Agent 任务暂停。建议前往设置开启后台保活，以保持会话稳定运行。
             </p>
@@ -39,7 +39,7 @@ export default function MobileKeepAliveTipCard({
             type="button"
             onClick={onIgnore}
             aria-label="忽略"
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-state-soft active:text-zinc-300"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-fg-tertiary active:bg-state-soft active:text-fg-secondary"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -50,14 +50,14 @@ export default function MobileKeepAliveTipCard({
           <button
             type="button"
             onClick={onJump}
-            className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white active:scale-[0.98] active:bg-indigo-500"
+            className="pressable flex-1 rounded-lg min-h-11 bg-indigo-600 px-3 py-2 text-body font-medium text-white active:bg-indigo-500"
           >
             去开启
           </button>
           <button
             type="button"
             onClick={onIgnore}
-            className="flex-1 rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-xs font-medium text-zinc-300 active:scale-[0.98] active:bg-state-mid"
+            className="pressable flex-1 rounded-lg min-h-11 border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg-secondary active:bg-state-mid"
           >
             忽略
           </button>
@@ -65,7 +65,7 @@ export default function MobileKeepAliveTipCard({
         <button
           type="button"
           onClick={onNeverShow}
-          className="mt-2 w-full py-1 text-center text-[11px] text-zinc-500 active:text-zinc-300"
+          className="mt-2 w-full py-1 text-center text-caption text-fg-tertiary active:text-fg-secondary"
         >
           不再显示
         </button>

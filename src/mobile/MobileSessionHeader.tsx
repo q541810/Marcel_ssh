@@ -41,16 +41,16 @@ export default function MobileSessionHeader({
         ? 'text-amber-400'
         : session.status === 'error'
           ? 'text-red-400'
-          : 'text-zinc-400';
+          : 'text-fg-secondary';
 
   return (
     <header
-      className="relative flex flex-shrink-0 items-center gap-2 border-b border-edge-subtle bg-zinc-950 px-3 py-2"
+      className="relative flex flex-shrink-0 items-center gap-2 border-b border-edge-subtle bg-surface-sunken px-3 py-2"
       style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate text-sm font-medium text-zinc-100">
+          <span className="truncate text-body font-medium text-fg">
             {displayName}
           </span>
           <AgentStatusIndicator
@@ -62,9 +62,9 @@ export default function MobileSessionHeader({
             size="xs"
           />
         </div>
-        <div className={`truncate text-[11px] ${statusColor}`}>
+        <div className={`truncate text-meta ${statusColor}`}>
           {sessionStatusLabel(session.status)}
-          <span className="text-zinc-600"> · {session.connectionId}</span>
+          <span className="text-fg-disabled"> · {session.connectionId}</span>
           {session.errorMessage ? ` · ${session.errorMessage}` : ''}
         </div>
       </div>
@@ -73,10 +73,10 @@ export default function MobileSessionHeader({
         <button
           type="button"
           onClick={() => setForwardOpen(true)}
-          className="rounded-lg bg-zinc-800 p-2 text-zinc-300 transition-transform duration-100 active:scale-95 active:bg-state-mid"
+          className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
           aria-label="端口转发"
         >
-          <ArrowLeftRight className="h-4 w-4" />
+          <ArrowLeftRight size={16} strokeWidth={1.5} />
         </button>
       )}
 
@@ -84,20 +84,20 @@ export default function MobileSessionHeader({
         <button
           type="button"
           onClick={() => onReconnect(session.id)}
-          className="rounded-lg bg-zinc-800 p-2 text-zinc-300 transition-transform duration-100 active:scale-95 active:bg-state-mid"
+          className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
           aria-label="重连"
         >
-          <RefreshCw className="h-4 w-4" />
+          <RefreshCw size={16} strokeWidth={1.5} />
         </button>
       )}
 
       <button
         type="button"
         onClick={() => onDisconnect(session.id)}
-        className="rounded-lg bg-zinc-800 p-2 text-zinc-300 transition-transform duration-100 active:scale-95 active:bg-state-mid"
+        className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
         aria-label="断开"
       >
-        <X className="h-4 w-4" />
+        <X size={16} strokeWidth={1.5} />
       </button>
       <MobileSheet
         open={forwardOpen}

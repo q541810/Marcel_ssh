@@ -26,7 +26,7 @@ export function TurnFoldControl({ segment, open, onToggle }: {
     <button
       type="button"
       onClick={onToggle}
-      className="group -mx-1 flex min-h-8 min-w-0 max-w-full items-center gap-1 rounded-md px-1 text-left text-xs text-zinc-400 transition-colors hover:bg-white/[0.03] hover:text-zinc-200 active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 [@media(pointer:coarse)]:min-h-11"
+      className="group -mx-1 flex min-h-8 min-w-0 max-w-full items-center gap-1 rounded-md px-1 text-left text-meta text-fg-secondary transition-colors hover:bg-white/[0.03] hover:text-fg active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 [@media(pointer:coarse)]:min-h-11"
       aria-expanded={open}
       aria-label={`${open ? "收起过程" : "展开过程"}：${turnFoldLabel(segment)}`}
       title={`${open ? "收起过程" : "展开过程"}：${turnFoldLabel(segment)}`}

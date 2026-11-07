@@ -1,15 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Globe,
-  RefreshCw,
-  Search,
-  Send,
-  Store,
-  X,
-  AlertCircle,
-  Check,
-  Shield,
-} from 'lucide-react';
+import { AlertCircle, Check, Globe, RefreshCw, Search, Send, Shield, Store, X } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { useMarketStore } from '@/stores/marketStore';
@@ -48,7 +38,7 @@ function CardIcon({ plugin }: { plugin: MarketPlugin }) {
 
   if (fallback || !plugin.icon) {
     return (
-      <div className="w-14 h-14 rounded-xl bg-zinc-800/80 flex items-center justify-center text-zinc-500 flex-shrink-0 border border-edge/40">
+      <div className="w-14 h-14 rounded-xl bg-surface-raised/80 flex items-center justify-center text-fg-tertiary flex-shrink-0 border border-edge/40">
         <Store className="w-7 h-7" />
       </div>
     );
@@ -58,15 +48,15 @@ function CardIcon({ plugin }: { plugin: MarketPlugin }) {
       <img
         src={plugin.icon.value}
         alt=""
-        className="w-14 h-14 rounded-xl object-cover bg-zinc-800 flex-shrink-0 border border-edge/40"
+        className="w-14 h-14 rounded-xl object-cover bg-surface-raised flex-shrink-0 border border-edge/40"
         loading="lazy"
         onError={() => setFallback(true)}
       />
     );
   }
   return (
-    <div className="w-14 h-14 rounded-xl bg-zinc-800/80 flex items-center justify-center flex-shrink-0 border border-edge/40">
-      <span className="text-2xl">{plugin.icon.value}</span>
+    <div className="w-14 h-14 rounded-xl bg-surface-raised/80 flex items-center justify-center flex-shrink-0 border border-edge/40">
+      <span className="text-headline">{plugin.icon.value}</span>
     </div>
   );
 }
@@ -75,13 +65,13 @@ function CardIcon({ plugin }: { plugin: MarketPlugin }) {
 function SkeletonCard({ index }: { index: number }) {
   return (
     <div
-      className="rounded-xl border border-edge-subtle bg-zinc-900/40 px-4 py-3 flex items-center gap-3"
+      className="rounded-xl border border-edge-subtle bg-surface/40 px-4 py-3 flex items-center gap-3"
       style={{ animationDelay: `${index * 60}ms` }}
     >
-      <div className="w-14 h-14 rounded-xl bg-zinc-800 animate-pulse flex-shrink-0" />
+      <div className="w-14 h-14 rounded-xl bg-surface-raised animate-pulse flex-shrink-0" />
       <div className="flex-1 space-y-2">
-        <div className="h-3.5 bg-zinc-800 rounded animate-pulse w-2/5" />
-        <div className="h-2.5 bg-zinc-800/70 rounded animate-pulse w-3/4" />
+        <div className="h-3.5 bg-surface-raised rounded animate-pulse w-2/5" />
+        <div className="h-2.5 bg-surface-raised/70 rounded animate-pulse w-3/4" />
       </div>
     </div>
   );
@@ -102,19 +92,19 @@ function StatusBadges({
   return (
     <>
       {installed && (
-        <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-full border border-emerald-500/20">
+        <span className="inline-flex items-center gap-1 text-caption text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/20">
           <Check className="w-2.5 h-2.5" />
           已安装
         </span>
       )}
       {incompatible && minRequired && (
-        <span className="text-[10px] text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+        <span className="text-caption text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/20">
           需 v{minRequired}
         </span>
       )}
       {highRisk > 0 && !incompatible && (
         <span
-          className="inline-flex items-center gap-0.5 text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/15"
+          className="inline-flex items-center gap-1 text-caption text-amber-400/80 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/15"
           title={`${highRisk} 个高风险权限`}
         >
           <Shield className="w-2.5 h-2.5" />
@@ -218,17 +208,17 @@ export function MarketSection() {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* ─── 顶部工具栏（吸顶，半透明材质） ─── */}
-      <div className="flex-shrink-0 border-b border-edge-subtle bg-zinc-900/80 backdrop-blur-xl">
-        <div className="py-3 space-y-2.5" style={{ paddingLeft: padX, paddingRight: padX }}>
+      <div className="flex-shrink-0 border-b border-edge-subtle bg-surface/80 backdrop-blur-xl">
+        <div className="py-3 space-y-3" style={{ paddingLeft: padX, paddingRight: padX }}>
           {/* 标题行 */}
           <div className="flex items-center gap-3">
             <h1
-              className="text-lg font-semibold text-zinc-100"
+              className="text-title text-fg"
               style={{ letterSpacing: '-0.01em' }}
             >
               插件市场
             </h1>
-            <span className="text-xs text-zinc-600">{plugins.length} 个插件</span>
+            <span className="text-meta text-fg-disabled">{plugins.length} 个插件</span>
             <div className="flex-1" />
             <Button
               variant="secondary"
@@ -265,7 +255,7 @@ export function MarketSection() {
           {/* 搜索 + 分类 */}
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 min-w-[200px] max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-fg-tertiary pointer-events-none" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -276,7 +266,7 @@ export function MarketSection() {
                 <button
                   type="button"
                   onClick={() => setQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-fg-tertiary hover:text-fg-secondary transition-colors"
                   aria-label="清除搜索"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -285,7 +275,7 @@ export function MarketSection() {
             </div>
 
             {categories.length > 1 && (
-              <div className="flex items-center gap-1.5 overflow-x-auto">
+              <div className="flex items-center gap-2 overflow-x-auto">
                 {categories.map((c) => {
                   const active = category === c;
                   const count = categoryCounts[c] ?? 0;
@@ -294,16 +284,15 @@ export function MarketSection() {
                       key={c}
                       type="button"
                       onClick={() => setCategory(c)}
-                      className={`text-[11px] px-2.5 py-1 rounded-full transition-all duration-200 flex-shrink-0 inline-flex items-center gap-1.5 ${
+                      className={`text-caption px-3 py-1 rounded-full transition duration-200 flex-shrink-0 inline-flex items-center gap-2 ${
                         active
                           ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
-                          : 'text-zinc-500 hover:text-zinc-300 hover:bg-state-soft/60 border border-transparent'
+                          : 'text-fg-tertiary hover:text-fg-secondary hover:bg-state-soft/60 border border-transparent'
                       }`}
-                      style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
                     >
                       {c === 'all' ? '全部' : c}
                       {count > 0 && (
-                        <span className={`text-[10px] ${active ? 'text-indigo-400/70' : 'text-zinc-600'}`}>
+                        <span className={`text-caption ${active ? 'text-indigo-400/70' : 'text-fg-disabled'}`}>
                           {count}
                         </span>
                       )}
@@ -316,24 +305,24 @@ export function MarketSection() {
 
           {/* 源设置折叠区 */}
           {sourceOpen && (
-            <div className="rounded-lg border border-edge-subtle bg-zinc-900/60 p-3 space-y-2">
-              <p className="text-[11px] text-zinc-500 leading-relaxed">
+            <div className="rounded-lg border border-edge-subtle bg-surface/60 p-3 space-y-2">
+              <p className="text-caption text-fg-tertiary leading-relaxed">
                 填写 GitHub 加速镜像前缀（如 https://ghfast.top），市场列表、详情、图片与插件下载统一走该镜像。留空使用内置默认（jsDelivr 拉取列表 + 内置镜像下载 + GitHub 直连兜底）。
               </p>
-              <p className="text-[11px] text-zinc-600 leading-relaxed">
+              <p className="text-caption text-fg-disabled leading-relaxed">
                 注意：旧版填写的完整 index.json 地址仍可用，但仅市场列表走该地址，详情与插件下载会直连 GitHub。
               </p>
               <Input
                 value={sourceDraft}
                 onChange={(e) => setSourceDraft(e.target.value)}
                 placeholder="https://ghfast.top（留空 = 内置默认镜像）"
-                className="text-xs font-mono"
+                className="text-meta font-mono"
               />
               <div className="flex justify-between items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setSourceDraft('')}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="text-caption text-fg-tertiary hover:text-fg-secondary transition-colors"
                 >
                   恢复默认源
                 </button>
@@ -354,17 +343,17 @@ export function MarketSection() {
       {/* ─── 错误条 ─── */}
       {error && (
         <div
-          className="flex-shrink-0 py-2.5 border-b border-edge-subtle bg-red-500/5 flex items-center gap-2"
+          className="flex-shrink-0 py-3 border-b border-edge-subtle bg-red-500/5 flex items-center gap-2"
           style={{ paddingLeft: padX, paddingRight: padX }}
         >
           <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-          <p className="text-xs text-red-400 flex-1 truncate" title={error}>
+          <p className="text-meta text-red-400 flex-1 truncate" title={error}>
             {error}
           </p>
           <button
             type="button"
             onClick={() => fetchMarket()}
-            className="text-[11px] text-red-400 hover:text-red-300 underline flex-shrink-0"
+            className="text-caption text-red-400 hover:text-red-300 underline flex-shrink-0"
           >
             重试
           </button>
@@ -384,8 +373,8 @@ export function MarketSection() {
           {/* 空态 */}
           {!loading && !error && filtered.length === 0 && (
             <div className="py-20 text-center col-span-full">
-              <Store className="w-12 h-12 text-zinc-700 mx-auto mb-3" />
-              <p className="text-sm text-zinc-500">
+              <Store size={24} strokeWidth={1.5} className="text-fg-tertiary mx-auto mb-3" />
+              <p className="text-body text-fg-secondary">
                 {query || category !== 'all' ? '没有匹配的插件' : '插件市场暂无插件'}
               </p>
               {(query || category !== 'all') && (
@@ -395,7 +384,7 @@ export function MarketSection() {
                     setQuery('');
                     setCategory('all');
                   }}
-                  className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  className="mt-2 text-meta text-indigo-400 hover:text-indigo-300 transition-colors"
                 >
                   清除筛选
                 </button>
@@ -416,21 +405,20 @@ export function MarketSection() {
                 key={p.id}
                 type="button"
                 onClick={() => setSelected(p)}
-                className="group w-full text-left rounded-xl border border-edge-subtle bg-zinc-900/40 hover:border-edge hover:bg-state-soft/40 px-4 py-3 transition-all duration-200 active:scale-[0.99]"
-                style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
+                className="group w-full text-left rounded-xl border border-edge-subtle bg-surface-raised hover:border-edge px-4 py-4 transition-colors duration-120 pressable focus-ring"
               >
                 <div className="flex items-start gap-3 min-w-0">
                   <CardIcon plugin={p} />
                   <div className="flex-1 min-w-0">
                     {/* 主信息行 */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span
-                        className="text-sm font-semibold text-zinc-100 truncate"
+                        className="text-body font-semibold text-fg truncate"
                         style={{ letterSpacing: '-0.01em' }}
                       >
                         {p.name}
                       </span>
-                      <span className="text-[10px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded font-mono flex-shrink-0 tracking-wide">
+                      <span className="text-caption text-fg-tertiary bg-surface-raised px-2 py-0.5 rounded font-mono flex-shrink-0 tracking-wide">
                         v{p.version}
                       </span>
                       <StatusBadges
@@ -441,11 +429,11 @@ export function MarketSection() {
                       />
                     </div>
                     {/* 描述 */}
-                    <p className="text-xs text-zinc-500 line-clamp-1 leading-relaxed mt-0.5">
+                    <p className="text-meta text-fg-tertiary line-clamp-1 leading-relaxed mt-1">
                       {p.description || p.id}
                     </p>
                     {/* 元信息 */}
-                    <div className="flex items-center gap-2 mt-1 text-[10px] text-zinc-600">
+                    <div className="flex items-center gap-2 mt-1 text-caption text-fg-disabled">
                       {p.publisher && <span className="truncate">{p.publisher}</span>}
                       {p.updatedAt && (
                         <>

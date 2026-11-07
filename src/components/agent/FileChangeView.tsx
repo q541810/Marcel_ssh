@@ -164,7 +164,7 @@ function changedRegionStarts(rows: DiffRow[]): number[] {
 
 function TruncatedNote() {
   return (
-    <div className="px-3 py-1 text-[10px] text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
+    <div className="px-3 py-1 text-caption text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
       内容较大，仅显示开头部分
     </div>
   );
@@ -185,8 +185,8 @@ function DiffRowView({
 
   const leftBg = isChanged && leftHasContent ? 'bg-red-950/30' : '';
   const rightBg = isChanged && rightHasContent ? 'bg-emerald-950/40' : '';
-  const leftText = isChanged && leftHasContent ? 'text-red-300' : 'text-zinc-400';
-  const rightText = isChanged && rightHasContent ? 'text-emerald-200' : 'text-zinc-300';
+  const leftText = isChanged && leftHasContent ? 'text-red-300' : 'text-fg-secondary';
+  const rightText = isChanged && rightHasContent ? 'text-emerald-200' : 'text-fg-secondary';
 
   let marker: string;
   if (row.left !== null && row.right !== null) marker = '~';
@@ -195,7 +195,7 @@ function DiffRowView({
 
   return (
     <div className="flex min-w-max" data-line={dataLine} data-match={dataMatch}>
-      <span className="flex-shrink-0 w-10 text-right pr-2 select-none border-r border-edge/50 font-mono text-xs">
+      <span className="flex-shrink-0 w-10 text-right pr-2 select-none border-r border-edge/50 font-mono text-meta">
         {row.left !== null ? (
           <span className="text-red-400">{marker}</span>
         ) : (
@@ -204,14 +204,14 @@ function DiffRowView({
       </span>
       <div className={`flex-1 border-r border-edge/50 ${leftBg}`}>
         {row.left !== null ? (
-          <span className={`whitespace-pre block px-2 font-mono text-xs ${leftText}`}>{row.left}</span>
+          <span className={`whitespace-pre block px-2 font-mono text-meta ${leftText}`}>{row.left}</span>
         ) : (
           <span className="block px-2">&nbsp;</span>
         )}
       </div>
       <div className={`flex-1 ${rightBg}`}>
         {row.right !== null ? (
-          <span className={`whitespace-pre block px-2 font-mono text-xs ${rightText}`}>{row.right}</span>
+          <span className={`whitespace-pre block px-2 font-mono text-meta ${rightText}`}>{row.right}</span>
         ) : (
           <span className="block px-2">&nbsp;</span>
         )}
@@ -236,17 +236,17 @@ function MatchNavBar({
   const label = labels?.[activeIndex];
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1 border-b border-edge/50 bg-zinc-900/80">
+    <div className="flex items-center gap-2 px-3 py-1 border-b border-edge/50 bg-surface/80">
       <button
         type="button"
         disabled={activeIndex <= 0}
         onClick={() => onGo(activeIndex - 1)}
-        className="px-1.5 py-0.5 rounded text-[11px] text-zinc-300 bg-zinc-800 hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
+        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-surface-raised hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="上一处"
       >
         ‹
       </button>
-      <span className="text-[11px] font-mono text-zinc-400 tabular-nums min-w-[4.5rem] text-center">
+      <span className="text-caption font-mono text-fg-secondary tabular-nums min-w-[4.5rem] text-center">
         {activeIndex + 1} / {count}
         {label ? ` · ${label}` : ''}
       </span>
@@ -254,7 +254,7 @@ function MatchNavBar({
         type="button"
         disabled={activeIndex >= count - 1}
         onClick={() => onGo(activeIndex + 1)}
-        className="px-1.5 py-0.5 rounded text-[11px] text-zinc-300 bg-zinc-800 hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
+        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-surface-raised hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="下一处"
       >
         ›
@@ -266,10 +266,10 @@ function MatchNavBar({
               key={i}
               type="button"
               onClick={() => onGo(i)}
-              className={`min-w-[1.25rem] h-5 px-1 rounded text-[10px] font-mono transition-colors ${
+              className={`min-w-[1.25rem] h-5 px-1 rounded text-caption font-mono transition-colors ${
                 i === activeIndex
                   ? 'bg-indigo-600 text-white'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-state-mid hover:text-zinc-200'
+                  : 'bg-surface-raised text-fg-secondary hover:bg-state-mid hover:text-fg'
               }`}
             >
               {i + 1}
@@ -291,16 +291,16 @@ function FileChangeView({ toolName, arguments: args, metadata }: Props) {
 
     return (
       <div className="border-t border-edge/50">
-        <div className="overflow-auto max-h-64 font-mono text-xs leading-relaxed">
+        <div className="overflow-auto max-h-64 font-mono text-meta leading-relaxed">
           {lines.map((line, i) => (
             <div key={i} className="flex hover:bg-state-soft/50">
               <span
-                className="flex-shrink-0 text-right text-zinc-600 select-none px-2 border-r border-edge/50"
+                className="flex-shrink-0 text-right text-fg-disabled select-none px-2 border-r border-edge/50"
                 style={{ minWidth: `${lineNumWidth + 1.5}ch` }}
               >
                 {i + 1}
               </span>
-              <span className="text-zinc-300 whitespace-pre px-2">{line}</span>
+              <span className="text-fg-secondary whitespace-pre px-2">{line}</span>
             </div>
           ))}
         </div>
@@ -426,7 +426,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
       <div className="border-t border-edge/50">
         {truncated && <TruncatedNote />}
         {bannerText && (
-          <div className="px-3 py-1 text-[10px] text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
+          <div className="px-3 py-1 text-caption text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
             {bannerText}
           </div>
         )}
@@ -436,7 +436,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
           labels={navLabels}
           onGo={scrollToMatch}
         />
-        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-xs leading-relaxed">
+        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-meta leading-relaxed">
           {fullDiffRows.map((row, i) => {
             const matchIdx = matchStartSet.has(i) ? regionStarts.indexOf(i) : undefined;
             const dataLine = row.left !== null ? leftLine : rightLine;
@@ -462,7 +462,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
       <div className="border-t border-edge/50">
         {truncated && <TruncatedNote />}
         {bannerText && (
-          <div className="px-3 py-1 text-[10px] text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
+          <div className="px-3 py-1 text-caption text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
             {bannerText}
           </div>
         )}
@@ -472,7 +472,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
           labels={navLabels}
           onGo={scrollToMatch}
         />
-        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-xs leading-relaxed">
+        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-meta leading-relaxed">
           {hunks.map((hunk, hi) => {
             const rows = buildDiffRows(hunk.before, hunk.after);
             return (
@@ -482,7 +482,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
                 data-match={hi}
                 className={hi > 0 ? 'border-t border-edge-strong/40 mt-1 pt-1' : ''}
               >
-                <div className="px-2 py-0.5 text-[10px] font-mono text-zinc-500">
+                <div className="px-2 py-0.5 text-caption font-mono text-fg-tertiary">
                   第 {hi + 1}/{hunks.length} 处 · L{hunk.startLine}
                 </div>
                 {rows.map((row, ri) => (
@@ -513,18 +513,18 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
     return (
       <div className="border-t border-edge/50">
         {replaceAll && (
-          <div className="px-3 py-1 text-[10px] text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
+          <div className="px-3 py-1 text-caption text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
             替换全部
             {occurrences > 1 ? ` · ${occurrences} 处` : ''}
           </div>
         )}
-        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-xs leading-relaxed">
+        <div ref={containerRef} className="overflow-auto max-h-64 w-full text-meta leading-relaxed">
           {preLines.map((line, i) => (
             <div key={`pre-${i}`} data-line={preStartLine + i} className="flex hover:bg-state-soft/30">
-              <span className="flex-shrink-0 w-10 text-right pr-2 text-zinc-600 select-none border-r border-edge/50 font-mono">
+              <span className="flex-shrink-0 w-10 text-right pr-2 text-fg-disabled select-none border-r border-edge/50 font-mono">
                 {preStartLine + i}
               </span>
-              <span className="text-zinc-400 whitespace-pre block px-2 font-mono">{line}</span>
+              <span className="text-fg-secondary whitespace-pre block px-2 font-mono">{line}</span>
             </div>
           ))}
           {preLines.length > 0 && <div className="border-t border-edge-strong/30 my-0.5" />}
@@ -534,10 +534,10 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
           {postLines.length > 0 && <div className="border-t border-edge-strong/30 my-0.5" />}
           {postLines.map((line, i) => (
             <div key={`post-${i}`} data-line={postStartLine + i} className="flex hover:bg-state-soft/30">
-              <span className="flex-shrink-0 w-10 text-right pr-2 text-zinc-600 select-none border-r border-edge/50 font-mono">
+              <span className="flex-shrink-0 w-10 text-right pr-2 text-fg-disabled select-none border-r border-edge/50 font-mono">
                 {postStartLine + i}
               </span>
-              <span className="text-zinc-400 whitespace-pre block px-2 font-mono">{line}</span>
+              <span className="text-fg-secondary whitespace-pre block px-2 font-mono">{line}</span>
             </div>
           ))}
         </div>
@@ -552,7 +552,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
   return (
     <div className="border-t border-edge/50">
       {replaceAll && (
-        <div className="px-3 py-1 text-[10px] text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
+        <div className="px-3 py-1 text-caption text-amber-400 font-mono border-b border-edge/50 bg-amber-950/20">
           替换全部 &mdash;{' '}
           <code className="text-amber-300">
             {oldContent.slice(0, 50)}
@@ -561,7 +561,7 @@ function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | '
           共 {oldContent.split('\n').filter((l) => l).length} 行
         </div>
       )}
-      <div className="overflow-auto max-h-64 w-full font-mono text-xs leading-relaxed">
+      <div className="overflow-auto max-h-64 w-full font-mono text-meta leading-relaxed">
         {rows.map((row, i) => (
           <DiffRowView key={i} row={row} />
         ))}

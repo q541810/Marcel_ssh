@@ -56,7 +56,7 @@ function MobileHtmlVisualization({ message }: Props) {
   if (notice) {
     return (
       <div
-        className={`my-1 text-xs ${notice.tone === "error" ? "text-red-400" : "text-zinc-500"}`}
+        className={`my-1 text-meta ${notice.tone === "error" ? "text-red-400" : "text-fg-tertiary"}`}
       >
         {notice.text}
       </div>
@@ -73,8 +73,8 @@ function MobileHtmlVisualization({ message }: Props) {
 
   return (
     <div ref={setHost} className="my-2 min-w-0 w-full bg-transparent">
-      <div className="mb-1.5 flex min-w-0 items-center gap-2 whitespace-nowrap text-xs text-zinc-500">
-        <span className="min-w-0 truncate font-medium text-zinc-300">
+      <div className="mb-1.5 flex min-w-0 items-center gap-2 whitespace-nowrap text-meta text-fg-tertiary">
+        <span className="min-w-0 truncate font-medium text-fg-secondary">
           {title}
         </span>
         {message.isExecuting && <span className="shrink-0">正在构建…</span>}
@@ -88,7 +88,7 @@ function MobileHtmlVisualization({ message }: Props) {
           <button
             type="button"
             onClick={() => setViewerOpen(true)}
-            className="-my-3.5 -mr-2 ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-400 transition-colors duration-100 active:bg-white/10 active:text-zinc-200"
+            className="-my-3.5 -mr-2 ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-fg-secondary transition-colors duration-100 active:bg-white/10 active:text-fg"
             aria-label="全屏查看"
           >
             <Maximize2 aria-hidden="true" className="h-4 w-4" />
@@ -128,7 +128,7 @@ function MobileHtmlVisualization({ message }: Props) {
               <button
                 type="button"
                 onClick={() => setViewerOpen(true)}
-                className="absolute bottom-2 left-1/2 flex min-h-11 -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/10 bg-zinc-800/90 px-4 text-sm text-zinc-100 shadow-lg backdrop-blur transition-transform duration-100 active:scale-95"
+                className="absolute bottom-2 left-1/2 flex min-h-11 -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/10 bg-surface-raised/90 px-4 text-read text-fg shadow-raised backdrop-blur pressable"
               >
                 <Maximize2 aria-hidden="true" className="h-4 w-4" />
                 全屏查看

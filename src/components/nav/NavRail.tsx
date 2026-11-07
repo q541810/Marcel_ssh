@@ -51,11 +51,11 @@ function NavButton({
       title={title}
       aria-label={title}
       className={`
-        relative flex items-center justify-center w-12 h-12 rounded-lg transition-colors
+        relative flex items-center justify-center w-12 h-12 rounded-lg pressable focus-ring
         ${
           active
             ? 'bg-state-selected text-indigo-400'
-            : 'text-zinc-500 hover:text-zinc-200 hover:bg-state-soft/60'
+            : 'text-fg-tertiary hover:text-fg hover:bg-state-soft'
         }
       `}
     >
@@ -66,7 +66,7 @@ function NavButton({
       {badge !== undefined && badge > 0 && (
         <span
           key={badge}
-          className={`badge-pop-in absolute bottom-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-white text-center ${
+          className={`badge-pop-in absolute bottom-1 right-1 min-w-4 h-4 px-1 rounded-full text-caption leading-4 text-white text-center ${
             badgeTone === 'red' ? 'bg-red-500' : 'bg-indigo-500'
           }`}
         >
@@ -99,7 +99,7 @@ export default function NavRail({ activeId, onChange }: Props) {
   }, []);
 
   return (
-    <nav className="flex flex-col items-center justify-between w-14 flex-shrink-0 bg-zinc-950 border-r border-edge-subtle py-2">
+    <nav className="flex flex-col items-center justify-between w-14 flex-shrink-0 bg-surface-sunken border-r border-edge-subtle py-2">
       <div className="flex flex-col gap-1">
         {topItems.map((p) => (
           <NavButton

@@ -48,7 +48,7 @@ export default function PasswordPrompt({
     <Modal open={open} onClose={onCancel} title={title}>
       <form onSubmit={handleSubmit} className="p-4 space-y-4">
         {description && (
-          <p className="text-sm text-zinc-400">{description}</p>
+          <p className="text-read text-fg-secondary">{description}</p>
         )}
         <input
           ref={inputRef}
@@ -56,7 +56,7 @@ export default function PasswordPrompt({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
-          className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           placeholder="密码"
         />
         <div className="flex justify-end gap-2 pt-2">

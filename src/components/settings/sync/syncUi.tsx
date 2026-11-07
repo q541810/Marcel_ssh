@@ -57,7 +57,7 @@ type ButtonKind = 'primary' | 'secondary' | 'danger' | 'ghost';
 
 const MOBILE_BUTTON: Record<ButtonKind, string> = {
   primary: 'bg-indigo-600 text-white active:bg-indigo-500',
-  secondary: 'bg-zinc-700 text-zinc-100 active:bg-state-strong',
+  secondary: 'bg-zinc-700 text-fg active:bg-state-strong',
   danger: 'bg-red-600 text-white active:bg-red-500',
   ghost: 'bg-transparent text-indigo-300 active:bg-state-soft',
 };
@@ -87,7 +87,7 @@ export function SyncButton({
     <button
       type="button"
       disabled={disabled || loading}
-      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50 ${MOBILE_BUTTON[kind]} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-body font-medium transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50 ${MOBILE_BUTTON[kind]} ${className}`}
       {...rest}
     >
       {loading ? (
@@ -154,7 +154,7 @@ export function CopyButton({
         {state === 'copied' ? '已复制' : label}
       </SyncButton>
       {state === 'failed' && (
-        <span className="text-xs text-red-400" role="alert">
+        <span className="text-meta text-red-400" role="alert">
           复制失败：{failMessage}，请手动选中后复制
         </span>
       )}
@@ -215,14 +215,14 @@ export function Callout({
   children: ReactNode;
 }) {
   const styles = {
-    info: 'border-edge bg-zinc-800/60 text-zinc-300',
+    info: 'border-edge bg-surface-raised/60 text-fg-secondary',
     warn: 'border-amber-500/25 bg-amber-500/10 text-amber-100/90',
     error: 'border-red-500/30 bg-red-500/10 text-red-200',
   } as const;
   return (
     <div
       role={tone === 'error' ? 'alert' : undefined}
-      className={`rounded-xl border px-3 py-2.5 text-xs leading-relaxed ${styles[tone]}`}
+      className={`rounded-xl border px-3 py-3 text-meta leading-relaxed ${styles[tone]}`}
     >
       {children}
     </div>
@@ -281,8 +281,8 @@ export function SyncCheckbox({
 }) {
   return (
     <label
-      className={`flex cursor-pointer items-start gap-2.5 text-sm text-zinc-300 ${
-        variant === 'mobile' ? 'min-h-11 py-1.5' : ''
+      className={`flex cursor-pointer items-start gap-3 text-body text-fg-secondary ${
+        variant === 'mobile' ? 'min-h-11 py-2' : ''
       } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
     >
       <input
@@ -290,7 +290,7 @@ export function SyncCheckbox({
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className={`mt-0.5 flex-shrink-0 ${variant === 'mobile' ? 'h-5 w-5' : 'h-4 w-4'} ${
+        className={`mt-1 flex-shrink-0 ${variant === 'mobile' ? 'h-5 w-5' : 'h-4 w-4'} ${
           tone === 'danger' ? 'accent-red-500' : 'accent-indigo-500'
         }`}
       />
@@ -317,14 +317,14 @@ export function SyncBlock({
   children: ReactNode;
 }) {
   const wrapper =
-    variant === 'desktop' ? 'px-6 py-4' : 'rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3';
+    variant === 'desktop' ? 'px-6 py-4' : 'rounded-xl border border-edge-subtle bg-surface px-3 py-3';
   return (
     <div className={wrapper}>
       {(title || action) && (
         <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            {title && <div className="text-sm font-medium text-zinc-200">{title}</div>}
-            {description && <div className="mt-0.5 text-xs leading-relaxed text-zinc-500">{description}</div>}
+            {title && <div className="text-body font-medium text-fg">{title}</div>}
+            {description && <div className="mt-1 text-meta leading-relaxed text-fg-tertiary">{description}</div>}
           </div>
           {action ? <div className="flex-shrink-0">{action}</div> : null}
         </div>

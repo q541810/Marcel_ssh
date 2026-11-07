@@ -1,3 +1,4 @@
+import { ChevronRight, X } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import type { AgentTask, JobInfo } from '@/lib/types';
 import { useTaskStore } from '@/stores/taskStore';
@@ -99,53 +100,51 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
       {/* Drawer Panel */}
       <div
         onAnimationEnd={presence.onAnimationEnd}
-        className={`absolute top-0 right-0 h-full w-88 max-w-[90vw] bg-zinc-950/95 backdrop-blur-xl border-l border-edge-subtle z-50 flex flex-col shadow-2xl ${
+        className={`absolute top-0 right-0 h-full w-88 max-w-[90vw] surface-glass border-y-0 border-r-0 z-50 flex flex-col shadow-overlay ${
           presence.phase === 'exit' ? 'animate-slideOutRight' : 'animate-slideInRight'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-edge-subtle/80 bg-zinc-900/40">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-edge-subtle/80 bg-surface/40">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-zinc-100">任务与作业中心</span>
+            <span className="text-read font-semibold text-fg">任务与作业中心</span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-state-soft transition-colors"
+            className="p-1 rounded-lg text-fg-secondary hover:text-fg hover:bg-state-soft transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <X className="w-4 h-4" strokeWidth={1.5} />
           </button>
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex border-b border-edge-subtle/80 bg-zinc-900/20 px-3 pt-2 gap-2">
+        <div className="flex border-b border-edge-subtle/80 bg-surface/20 px-3 pt-2 gap-2">
           <button
             type="button"
             onClick={() => setActiveTab('agents')}
-            className={`pb-2 px-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2 px-2 text-meta font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
               activeTab === 'agents'
                 ? 'border-indigo-500 text-indigo-400 font-semibold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-secondary hover:text-fg'
             }`}
           >
             <span>Agent 任务</span>
-            <span className="px-1.5 py-0.2 text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full">
+            <span className="px-1.5 py-0.2 text-caption bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full">
               {runningTasks.length}
             </span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('jobs')}
-            className={`pb-2 px-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2 px-2 text-meta font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
               activeTab === 'jobs'
                 ? 'border-sky-500 text-sky-400 font-semibold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                : 'border-transparent text-fg-secondary hover:text-fg'
             }`}
           >
             <span>后台作业 (Jobs)</span>
-            <span className="px-1.5 py-0.2 text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
+            <span className="px-1.5 py-0.2 text-caption bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
               {runningJobs.length}
             </span>
           </button>
@@ -155,11 +154,11 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
         <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
           {activeTab === 'agents' ? (
             runningTasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-center text-zinc-500">
+              <div className="flex flex-col items-center justify-center h-48 text-center text-fg-tertiary">
                 <svg className="w-8 h-8 mb-2 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <p className="text-xs">暂无运行中的 Agent 任务</p>
+                <p className="text-meta">暂无运行中的 Agent 任务</p>
               </div>
             ) : (
               runningTasks.map((task) => {
@@ -173,24 +172,24 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                   <div
                     key={task.id}
                     onClick={() => void handleJumpToTask(task)}
-                    className={`group relative flex flex-col p-3 rounded-xl border transition-all cursor-pointer ${
+                    className={`group relative flex flex-col p-3 rounded-xl border transition-colors cursor-pointer ${
                       isCurrent
-                        ? 'bg-zinc-800/90 border-indigo-500/40 shadow-sm shadow-indigo-500/5'
-                        : 'bg-zinc-900/60 border-edge-subtle/80 hover:bg-state-soft/70 hover:border-edge/80'
+                        ? 'bg-surface-raised/90 border-indigo-500/40 shadow-sm shadow-indigo-500/5'
+                        : 'bg-surface/60 border-edge-subtle/80 hover:bg-state-soft/70 hover:border-edge/80'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-1.5 min-w-0">
                         {isSubTask ? (
-                          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded flex-shrink-0">
+                          <span className="px-1.5 py-0.5 text-caption font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded flex-shrink-0">
                             子任务 · 调研
                           </span>
                         ) : (
-                          <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded flex-shrink-0">
+                          <span className="px-1.5 py-0.5 text-caption font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded flex-shrink-0">
                             主任务
                           </span>
                         )}
-                        <span className="text-xs font-medium text-zinc-300 truncate" title={sessionLabel}>
+                        <span className="text-meta font-medium text-fg truncate" title={sessionLabel}>
                           {sessionLabel}
                         </span>
                       </div>
@@ -199,28 +198,26 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                         {(() => {
                           const badge = taskStatusBadge(task);
                           return badge && (
-                            <span className={`text-[10px] font-medium ${badge.tone === 'amber' ? 'text-amber-400' : 'text-zinc-500'}`}>{badge.text}</span>
+                            <span className={`text-caption font-medium ${badge.tone === 'amber' ? 'text-amber-400' : 'text-fg-tertiary'}`}>{badge.text}</span>
                           );
                         })()}
                       </div>
                     </div>
-                    <div className="text-xs font-semibold text-zinc-100 truncate mb-1">
+                    <div className="text-meta font-semibold text-fg truncate mb-1">
                       {convTitle}
                     </div>
                     {task.prompt && (
-                      <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+                      <p className="text-caption text-fg-secondary line-clamp-2 leading-relaxed">
                         {task.prompt}
                       </p>
                     )}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-edge-subtle/50 text-[10px] text-zinc-500">
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-edge-subtle/50 text-caption text-fg-tertiary">
                       <span>
                         {task.createdAt ? new Date(task.createdAt).toLocaleTimeString() : ''}
                       </span>
                       <span className="text-indigo-400 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
                         点击查看
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
+                        <ChevronRight className="w-3 h-3" strokeWidth={1.5} />
                       </span>
                     </div>
                   </div>
@@ -229,11 +226,11 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
             )
           ) : (
             jobList.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-center text-zinc-500">
+              <div className="flex flex-col items-center justify-center h-48 text-center text-fg-tertiary">
                 <svg className="w-8 h-8 mb-2 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
-                <p className="text-xs">暂无后台作业</p>
+                <p className="text-meta">暂无后台作业</p>
               </div>
             ) : (
               jobList.map((job: JobInfo) => {
@@ -246,45 +243,45 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                 return (
                   <div
                     key={job.jobId}
-                    className={`flex flex-col p-3 rounded-xl border transition-all ${
+                    className={`flex flex-col p-3 rounded-xl border transition-colors ${
                       isRunning
                         ? 'bg-sky-950/20 border-sky-800/50'
-                        : 'bg-zinc-900/60 border-edge-subtle/80'
+                        : 'bg-surface/60 border-edge-subtle/80'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded flex-shrink-0">
+                        <span className="px-1.5 py-0.5 text-caption font-mono font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded flex-shrink-0">
                           {job.jobId}
                         </span>
-                        <span className="text-xs font-medium text-zinc-300 truncate" title={sessionLabel}>
+                        <span className="text-meta font-medium text-fg truncate" title={sessionLabel}>
                           {sessionLabel}
                         </span>
                       </div>
-                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      <span className={`text-caption font-medium px-1.5 py-0.5 rounded ${
                         isRunning
                           ? 'text-sky-400 bg-sky-950/60 border border-sky-800/50'
                           : job.status === 'completed'
                           ? 'text-emerald-400 bg-emerald-950/40 border border-emerald-800/40'
                           : isInterrupted
                           ? 'text-amber-400 bg-amber-950/40 border border-amber-800/40'
-                          : 'text-zinc-400 bg-zinc-800'
+                          : 'text-fg-secondary bg-surface-raised'
                       }`}>
                         {job.status}
                       </span>
                     </div>
-                    <div className="text-xs font-medium text-zinc-200 truncate mb-1">
+                    <div className="text-meta font-medium text-fg truncate mb-1">
                       {job.description || job.command}
                     </div>
-                    <div className="bg-black/40 rounded p-1.5 font-mono text-[11px] text-zinc-400 truncate mb-2">
+                    <div className="bg-black/40 rounded p-1.5 font-mono text-caption text-fg-secondary truncate mb-2">
                       $ {job.command}
                     </div>
                     {isInterrupted && (
-                      <p className="text-[10px] text-amber-400/80 leading-relaxed mb-2">
+                      <p className="text-caption text-amber-400/80 leading-relaxed mb-2">
                         上一次应用运行留下的作业：应用退出时通道就关闭了，之后的输出看不到；远端进程是否还在运行，要在服务器上确认。
                       </p>
                     )}
-                    <div className="flex items-center justify-between pt-2 border-t border-edge-subtle/50 text-[10px] text-zinc-500">
+                    <div className="flex items-center justify-between pt-2 border-t border-edge-subtle/50 text-caption text-fg-tertiary">
                       <span>
                         输出: {job.totalOutputBytes} 字节
                         {job.detail ? ` · ${job.detail}` : ''}
@@ -293,7 +290,7 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                         <button
                           type="button"
                           onClick={() => void killJob(job.jobId)}
-                          className="px-2 py-0.5 text-[11px] font-medium text-red-400 bg-red-950/40 border border-red-800/50 rounded hover:bg-red-900/50 active:scale-95 transition-all"
+                          className="px-2 py-0.5 text-caption font-medium text-red-400 bg-red-950/40 border border-red-800/50 rounded hover:bg-red-900/50 pressable transition-colors"
                         >
                           终止
                         </button>

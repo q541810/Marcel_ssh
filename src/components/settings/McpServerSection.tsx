@@ -115,14 +115,14 @@ export function McpServerSection() {
           ]}
         >
           <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+            <div className="flex items-center gap-2 text-meta text-fg-tertiary">
               <Terminal className="w-3.5 h-3.5" />
               粘贴到客户端的 MCP 配置里
             </div>
             {config?.stdio ? (
               <CodeBlock code={config.stdio} />
             ) : (
-              <div className="text-xs text-zinc-600">正在读取配置…</div>
+              <div className="text-meta text-fg-disabled">正在读取配置…</div>
             )}
           </div>
         </SettingItem>
@@ -135,8 +135,8 @@ export function McpServerSection() {
           keywords={['安全', '权限', '审批', '风险', 'trust', 'security']}
         >
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-            <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-            <p className="text-xs leading-5 text-amber-200/90">
+            <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0 mt-1" />
+            <p className="text-meta leading-5 text-amber-200/90">
               这是刻意的设计——「是你把这个 Agent 接进来的」。所以
               <span className="font-medium">只接你信任的 Agent</span>
               ，并且不要把它暴露给不可信的人。
@@ -187,22 +187,22 @@ export function McpServerSection() {
                 aria-label="监听地址"
                 placeholder="127.0.0.1"
                 spellCheck={false}
-                className="w-40 rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm text-zinc-100 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-40 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
               />
-              <span className="text-zinc-600 text-sm">:</span>
+              <span className="text-fg-disabled text-body">:</span>
               <input
                 value={String(port)}
                 onChange={(e) => setPort(sanitizePortInput(e.target.value))}
                 disabled={running || busy}
                 inputMode="numeric"
                 aria-label="端口"
-                className="w-24 rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm text-zinc-100 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-24 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
               />
             </div>
             {exposureWarning && (
-              <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">
-                <ShieldAlert className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                <p className="text-[11px] leading-5 text-red-200/90">
+              <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+                <ShieldAlert className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-1" />
+                <p className="text-caption leading-5 text-red-200/90">
                   <span className="font-medium">{bind}</span> 不是本机地址：局域网内任何能访问
                   这个端口的程序，都能在你已保存的服务器上执行<span className="font-medium">无审批</span>
                   命令。真要用，请走 SSH 隧道或 Tailscale 之类的私有网络，不要直接暴露。
@@ -231,7 +231,7 @@ export function McpServerSection() {
               aria-label="访问令牌"
               onChange={(e) => setPendingToken(e.target.value)}
               placeholder="启动时自动生成"
-              className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-xs text-zinc-300 font-mono focus:outline-none focus:border-indigo-500 read-only:opacity-70"
+              className="flex-1 min-w-0 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-meta text-fg-secondary font-mono focus:outline-none focus:border-indigo-500 read-only:opacity-70"
             />
             {shownToken && <CopyButton text={shownToken} />}
             {!running && (
@@ -252,7 +252,7 @@ export function McpServerSection() {
             keywords={['http 配置', 'url', '端点', 'endpoint']}
           >
             <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+              <div className="flex items-center gap-2 text-meta text-fg-tertiary">
                 <Globe className="w-3.5 h-3.5" />
                 {status!.url}
               </div>
@@ -268,7 +268,7 @@ export function McpServerSection() {
             sectionId="settings-mcp-server"
             keywords={['错误', 'error']}
           >
-            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs leading-5 text-red-200/90">
+            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-meta leading-5 text-red-200/90">
               {error}
             </div>
           </SettingItem>

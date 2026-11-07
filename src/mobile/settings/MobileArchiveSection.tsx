@@ -55,16 +55,16 @@ export function MobileArchiveSection() {
                 e.currentTarget.blur();
               }
             }}
-            className="w-24 rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+            className="w-24 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-fg outline-none focus:border-indigo-500"
             aria-label="归档保留天数"
           />
-          <span className="text-sm text-zinc-400">天</span>
+          <span className="text-body text-fg-secondary">天</span>
           {days === 0 && (
-            <span className="text-xs text-amber-400/90">已关闭自动清理</span>
+            <span className="text-meta text-amber-400/90">已关闭自动清理</span>
           )}
         </div>
       </MobileSettingRow>
-      <p className="px-1 text-xs leading-relaxed text-zinc-500">
+      <p className="px-1 text-meta leading-relaxed text-fg-tertiary">
         归档的会话不进入默认列表，也不参与全局搜索与记忆召回；归档本身可随时在「已归档」里恢复。
       </p>
     </div>

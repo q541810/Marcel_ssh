@@ -52,7 +52,7 @@ interface MobileFullscreenPageProps {
 export default function MobileFullscreenPage({
   children,
   region,
-  className = 'bg-zinc-950',
+  className = 'bg-surface-sunken',
   backgroundColor,
   closing = false,
   onExitAnimationEnd,

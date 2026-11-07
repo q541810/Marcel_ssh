@@ -39,7 +39,7 @@ export interface ChannelDraft {
 }
 
 const inputClass =
-  'w-full rounded-lg bg-zinc-900 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500';
+  'w-full rounded-lg bg-surface border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
 
 export default function ChannelEditModal({
   open,
@@ -224,7 +224,7 @@ export default function ChannelEditModal({
         {/* ── 基本信息 ── */}
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">渠道名称 *</label>
+            <label className="block text-meta text-fg-secondary mb-1">渠道名称 *</label>
             <input
               type="text"
               value={draft.name}
@@ -234,7 +234,7 @@ export default function ChannelEditModal({
             />
           </div>
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">Base URL</label>
+            <label className="block text-meta text-fg-secondary mb-1">Base URL</label>
             <input
               type="text"
               value={draft.baseUrl}
@@ -244,7 +244,7 @@ export default function ChannelEditModal({
             />
           </div>
           <div>
-            <label className="block text-xs text-zinc-400 mb-1">API Key</label>
+            <label className="block text-meta text-fg-secondary mb-1">API Key</label>
             <div className="flex gap-2">
               <input
                 type={showKey ? 'text' : 'password'}
@@ -259,21 +259,21 @@ export default function ChannelEditModal({
               <button
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
-                className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-state-mid transition-colors flex-shrink-0"
+                className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors flex-shrink-0"
               >
                 {showKey ? '隐藏' : '显示'}
               </button>
             </div>
             {channelHasKey && !apiKeyInput && (
-              <p className="text-[11px] text-zinc-500 mt-1">
+              <p className="text-caption text-fg-tertiary mt-1">
                 已保存密钥（掩码显示）。留空不修改，清空需输入新值覆盖。
               </p>
             )}
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm text-zinc-200">启用渠道</div>
-              <div className="text-[11px] text-zinc-500">禁用后该渠道所有模型不可用</div>
+              <div className="text-body text-fg">启用渠道</div>
+              <div className="text-caption text-fg-tertiary">禁用后该渠道所有模型不可用</div>
             </div>
             <Toggle
               checked={draft.enabled}
@@ -288,8 +288,8 @@ export default function ChannelEditModal({
         {/* ── 模型列表 ── */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-medium text-zinc-200">
-              模型列表 <span className="text-zinc-500">（{models.length}）</span>
+            <div className="text-body font-medium text-fg">
+              模型列表 <span className="text-fg-tertiary">（{models.length}）</span>
             </div>
             <div className="flex gap-2">
               <Button variant="secondary" size="sm" onClick={() => setFetchPicker(true)}>
@@ -302,42 +302,42 @@ export default function ChannelEditModal({
           </div>
 
           {models.length === 0 ? (
-            <p className="text-xs text-zinc-500 py-3 text-center border border-dashed border-edge-subtle rounded-lg">
+            <p className="text-meta text-fg-tertiary py-3 text-center border border-dashed border-edge-subtle rounded-lg">
               还没有模型。点击「获取模型列表」从供应商拉取，或手动添加。
             </p>
           ) : (
             <ul className="divide-y divide-edge-subtle overflow-hidden rounded-xl border border-edge-subtle">
               {models.map((m) => (
-                <li key={m.id} className="flex items-center gap-2 px-3 py-2 bg-zinc-900/40">
+                <li key={m.id} className="flex items-center gap-2 px-3 py-2 bg-surface/40">
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm text-zinc-200 truncate">
+                    <div className="text-body text-fg truncate">
                       {modelLabel(m)}
                       {m.vision && (
-                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300">
+                        <span className="ml-2 text-caption px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-300">
                           视觉
                         </span>
                       )}
                       {(m.reasoningEfforts?.length ?? 0) > 0 && (
-                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-300">
+                        <span className="ml-2 text-caption px-2 py-0.5 rounded bg-amber-600/20 text-amber-300">
                           思考{m.reasoningEfforts!.join('/')}
                         </span>
                       )}
                     </div>
                     {m.displayName && m.displayName !== m.modelName && (
-                      <div className="text-[11px] text-zinc-500 font-mono truncate">{m.modelName}</div>
+                      <div className="text-caption text-fg-tertiary font-mono truncate">{m.modelName}</div>
                     )}
                   </div>
                   <button
                     type="button"
                     onClick={() => setModelEditor({ open: true, initial: m })}
-                    className="px-2 py-1 rounded text-xs text-zinc-300 hover:bg-state-soft transition-colors flex-shrink-0"
+                    className="px-2 py-1 rounded text-meta text-fg-secondary hover:bg-state-soft transition-colors flex-shrink-0"
                   >
                     编辑
                   </button>
                   <button
                     type="button"
                     onClick={() => handleDeleteModel(m)}
-                    className="px-2 py-1 rounded text-xs text-zinc-500 hover:text-red-400 hover:bg-state-soft transition-colors flex-shrink-0"
+                    className="px-2 py-1 rounded text-meta text-fg-tertiary hover:text-red-400 hover:bg-state-soft transition-colors flex-shrink-0"
                   >
                     删除
                   </button>
@@ -347,7 +347,7 @@ export default function ChannelEditModal({
           )}
         </div>
 
-        {localError && <p className="text-sm text-red-400">{localError}</p>}
+        {localError && <p className="text-body text-red-400">{localError}</p>}
 
         {/* ── 底部操作 ── */}
         <div className="flex items-center justify-between pt-2">

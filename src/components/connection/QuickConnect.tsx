@@ -86,10 +86,10 @@ export default function QuickConnect() {
               setError('');
             }}
             placeholder="user@host:port"
-            className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-1.5 text-read font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           />
           {error && (
-            <div className="absolute top-full left-0 mt-1 text-xs text-red-400 z-10 max-w-md truncate">
+            <div className="absolute top-full left-0 mt-1 text-meta text-red-400 z-10 max-w-md truncate">
               {error}
             </div>
           )}
@@ -97,7 +97,7 @@ export default function QuickConnect() {
         <button
           type="submit"
           disabled={!input.trim()}
-          className="px-3 py-1.5 rounded-lg bg-indigo-600 text-sm text-white font-medium hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-1.5 rounded-lg bg-indigo-600 text-read text-white font-medium hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           连接
         </button>

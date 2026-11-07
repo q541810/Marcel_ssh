@@ -45,21 +45,21 @@ export default function SkillImportProgressBar({ progress, onCancel, touch = fal
         .join(' · ');
 
   return (
-    <div className='space-y-2 rounded-lg border border-edge-subtle bg-zinc-900/60 p-3'>
+    <div className='space-y-2 rounded-lg border border-edge-subtle bg-surface/60 p-3'>
       <div className='flex items-center justify-between gap-3'>
         <div className='flex min-w-0 items-baseline gap-2'>
-          <span className='text-[13px] font-medium text-zinc-100' role='status' aria-live='polite'>
+          <span className='text-body font-medium text-fg' role='status' aria-live='polite'>
             {title}
           </span>
           {determinate && (
-            <span className='text-[13px] tabular-nums text-zinc-300'>{pct}%</span>
+            <span className='text-body tabular-nums text-fg-secondary'>{pct}%</span>
           )}
         </div>
         <button
           type='button'
           onClick={onCancel}
           className={
-            'shrink-0 rounded-md border border-edge-strong bg-zinc-800 text-xs font-medium text-zinc-100 ' +
+            'shrink-0 rounded-md border border-edge-strong bg-surface-raised text-meta font-medium text-fg ' +
             'transition-colors hover:bg-state-mid active:bg-state-strong ' +
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ' +
             (touch ? 'min-h-11 px-4' : 'h-7 px-3')
@@ -76,7 +76,7 @@ export default function SkillImportProgressBar({ progress, onCancel, touch = fal
         aria-valuemax={100}
         aria-valuenow={determinate ? pct : undefined}
         aria-valuetext={determinate ? `${pct}%` : title}
-        className={`relative w-full overflow-hidden rounded-full bg-zinc-800 ${touch ? 'h-2.5' : 'h-2'}`}
+        className={`relative w-full overflow-hidden rounded-full bg-surface-raised ${touch ? 'h-2.5' : 'h-2'}`}
       >
         {determinate ? (
           <div
@@ -88,7 +88,7 @@ export default function SkillImportProgressBar({ progress, onCancel, touch = fal
         )}
       </div>
 
-      <p className='text-xs tabular-nums text-zinc-400'>{detail}</p>
+      <p className='text-meta tabular-nums text-fg-secondary'>{detail}</p>
     </div>
   );
 }

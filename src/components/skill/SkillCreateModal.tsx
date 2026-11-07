@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
+import { FilePlus } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import SkillFormFields from './SkillFormFields';
 import * as tauri from '@/lib/tauri';
@@ -232,20 +233,17 @@ export default function SkillCreateModal({ open, onClose }: Props) {
         <div
           onClick={() => fileInputRef.current?.click()}
           className={
-            'rounded-xl border-2 border-dashed cursor-pointer select-none transition-colors p-5 flex flex-col items-center gap-1.5 ' +
+            'rounded-xl border-2 border-dashed cursor-pointer select-none transition-colors p-5 flex flex-col items-center gap-2 ' +
             (isDragging
               ? 'border-indigo-400 bg-indigo-950/30'
               : 'border-edge-strong hover:border-zinc-500 hover:bg-state-mid/40')
           }
         >
-          <svg className='w-7 h-7 text-zinc-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5}
-              d='M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' />
-          </svg>
-          <span className='text-sm text-zinc-300 font-medium'>
+          <FilePlus size={28} strokeWidth={1.5} className="text-fg-tertiary" />
+          <span className='text-body text-fg-secondary font-medium'>
             {isDragging ? '松手导入 skill' : '上传进行智能解析'}
           </span>
-          <span className='text-xs text-zinc-500 text-center leading-relaxed'>
+          <span className='text-meta text-fg-tertiary text-center leading-relaxed'>
             支持 .md 文件或 .zip / .skill 压缩包<br />
             多文件 skill 需包含 SKILL.md 作为入口
           </span>
@@ -259,9 +257,9 @@ export default function SkillCreateModal({ open, onClose }: Props) {
         </div>
 
         {/* GitHub import */}
-        <div className='rounded-xl border border-edge bg-zinc-900/40 p-3 space-y-2'>
+        <div className='rounded-xl border border-edge bg-surface/40 p-3 space-y-2'>
           <div className='flex items-center justify-between'>
-            <div className='text-xs text-zinc-400'>或从 GitHub 导入（仓库 / 目录 / 文件地址）</div>
+            <div className='text-meta text-fg-secondary'>或从 GitHub 导入（仓库 / 目录 / 文件地址）</div>
             <GithubImportGuideButton open={guideOpen} onToggle={() => setGuideOpen((v) => !v)} />
           </div>
           {guideOpen && <GithubImportGuide />}
@@ -275,37 +273,37 @@ export default function SkillCreateModal({ open, onClose }: Props) {
               }}
               placeholder='https://github.com/owner/repo[/tree/main/skills]'
               disabled={ghBusy}
-              className='flex-1 rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500'
+              className='flex-1 rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg placeholder-fg-disabled focus:outline-none focus:border-indigo-500'
             />
             <button
               onClick={() => void handleFetchFromUrl()}
               disabled={ghBusy || !ghUrl.trim()}
-              className='flex-shrink-0 rounded-lg bg-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-state-strong disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+              className='flex-shrink-0 rounded-lg bg-zinc-700 px-3 py-2 text-meta text-fg hover:bg-state-strong disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
             >
               {ghBusy ? '拉取中…' : '拉取'}
             </button>
           </div>
 
-          {ghStatus && <div className='text-xs text-zinc-500'>{ghStatus}</div>}
+          {ghStatus && <div className='text-meta text-fg-tertiary'>{ghStatus}</div>}
           {imp.active && <SkillImportProgressBar progress={imp.progress} onCancel={imp.cancel} />}
 
           {found && (
-            <div className='space-y-1.5'>
+            <div className='space-y-2'>
               <div className='max-h-56 overflow-y-auto space-y-1'>
                 {found.skills.map((s) => (
                   <label
                     key={s.subpath}
-                    className='flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-state-soft/60 cursor-pointer'
+                    className='flex items-start gap-2 rounded-lg px-2 py-2 hover:bg-state-soft/60 cursor-pointer'
                   >
                     <input
                       type='checkbox'
                       checked={selected.has(s.subpath)}
                       onChange={() => toggleSelected(s.subpath)}
-                      className='mt-0.5 accent-indigo-500'
+                      className='mt-1 accent-indigo-500'
                     />
                     <span className='min-w-0 flex-1'>
-                      <span className='block text-xs text-zinc-200 truncate'>{s.name}</span>
-                      <span className='block text-[11px] text-zinc-500 truncate'>
+                      <span className='block text-meta text-fg truncate'>{s.name}</span>
+                      <span className='block text-caption text-fg-tertiary truncate'>
                         {s.subpath}
                         {s.resourceCount > 0 ? ` · ${s.resourceCount} 个资源文件` : ''}
                       </span>
@@ -316,7 +314,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
               <button
                 onClick={() => void handleImportSelected()}
                 disabled={ghBusy || selected.size === 0}
-                className='w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+                className='w-full rounded-lg bg-indigo-600 px-3 py-2 text-meta text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
               >
                 导入选中（{selected.size}）
               </button>
@@ -326,7 +324,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
 
         {/* Error banner */}
         {importError && (
-          <div className='rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400 whitespace-pre-wrap break-words'>
+          <div className='rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-meta text-red-400 whitespace-pre-wrap break-words'>
             {importError}
           </div>
         )}
@@ -336,8 +334,8 @@ export default function SkillCreateModal({ open, onClose }: Props) {
           <div className='absolute inset-0 flex items-center'>
             <div className='w-full border-t border-edge' />
           </div>
-          <div className='relative flex justify-center text-xs'>
-            <span className='bg-zinc-800 px-2 text-zinc-500'>或手动填写</span>
+          <div className='relative flex justify-center text-meta'>
+            <span className='bg-surface-raised px-2 text-fg-tertiary'>或手动填写</span>
           </div>
         </div>
 
@@ -357,14 +355,14 @@ export default function SkillCreateModal({ open, onClose }: Props) {
         <div className='flex justify-end gap-2 pt-2'>
           <button
             onClick={handleClose}
-            className='px-4 py-1.5 text-sm rounded-lg bg-zinc-700 text-zinc-200 hover:bg-state-strong transition-colors'
+            className='px-4 py-2 text-body rounded-lg bg-zinc-700 text-fg hover:bg-state-strong transition-colors'
           >
             取消
           </button>
           <button
             onClick={handleConfirm}
             disabled={!valid || saving}
-            className='px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+            className='px-4 py-2 text-body rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
           >
             {saving ? '保存中...' : '确认'}
           </button>

@@ -114,7 +114,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
   };
 
   const SortIcon = ({ active, dir }: { active: boolean; dir: SortDir }) => (
-    <span className={`ml-1 inline-block ${active ? 'text-indigo-400' : 'text-zinc-600'}`}>
+    <span className={`ml-1 inline-block ${active ? 'text-indigo-400' : 'text-fg-disabled'}`}>
       {active ? (dir === 'asc' ? '↑' : '↓') : '↕'}
     </span>
   );
@@ -127,13 +127,13 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索进程..."
-          className="flex-1 rounded-md bg-zinc-800 border border-edge px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+          className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
         />
         <button
           type="button"
           onClick={loadProcesses}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-md bg-surface-raised px-2 py-1 text-meta text-fg hover:bg-state-mid disabled:opacity-40"
         >
           {loading && (
             <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -146,43 +146,43 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       </div>
 
       <div className="flex-1 overflow-auto">
-        {error && <div className="px-3 py-2 text-xs text-red-300">{error}</div>}
+        {error && <div className="px-3 py-2 text-meta text-red-300">{error}</div>}
 
-        <table className="w-full text-xs table-fixed">
-          <thead className="sticky top-0 bg-zinc-900 border-b border-edge-subtle">
-            <tr className="text-zinc-500">
+        <table className="w-full text-meta table-fixed">
+          <thead className="sticky top-0 bg-surface border-b border-edge-subtle">
+            <tr className="text-fg-tertiary">
               <th className="px-3 py-2 text-left font-medium w-16 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('pid')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('pid')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   PID <SortIcon active={sortKey === 'pid'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium w-20 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('user')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('user')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   用户 <SortIcon active={sortKey === 'user'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium w-24 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('comm')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('comm')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   命令 <SortIcon active={sortKey === 'comm'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium w-16 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('mem')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('mem')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   内存 <SortIcon active={sortKey === 'mem'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium w-16 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('cpu')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('cpu')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   CPU <SortIcon active={sortKey === 'cpu'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium w-24 whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('etime')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('etime')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   运行时间 <SortIcon active={sortKey === 'etime'} dir={sortDir} />
                 </button>
               </th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('args')} className="flex items-center gap-1 hover:text-zinc-300 transition-colors">
+                <button type="button" onClick={() => toggleSort('args')} className="flex items-center gap-1 hover:text-fg-secondary transition-colors">
                   参数 <SortIcon active={sortKey === 'args'} dir={sortDir} />
                 </button>
               </th>
@@ -192,7 +192,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
             {loading ? (
               <tr>
                 <td colSpan={7} className="py-8 text-center">
-                  <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
+                  <div className="flex items-center justify-center gap-2 text-meta text-fg-secondary">
                     <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -207,20 +207,20 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
                 className="border-b border-edge-subtle/50 hover:bg-state-soft/50 transition-colors cursor-pointer"
                 onContextMenu={(e) => handleContextMenu(e, proc)}
               >
-                <td className="px-3 py-1.5 text-zinc-300 truncate">{proc.pid}</td>
-                <td className="px-3 py-1.5 text-zinc-300 truncate">{proc.user}</td>
-                <td className="px-3 py-1.5 text-zinc-300 truncate max-w-[6rem]">{proc.comm}</td>
-                <td className="px-3 py-1.5 text-zinc-300 truncate">{proc.mem}%</td>
-                <td className="px-3 py-1.5 text-zinc-300 truncate">{proc.cpu}%</td>
-                <td className="px-3 py-1.5 text-zinc-300 truncate">{proc.etime}</td>
-                <td className="px-3 py-1.5 text-zinc-400 truncate">{proc.args}</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.pid}</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.user}</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate max-w-[6rem]">{proc.comm}</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.mem}%</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.cpu}%</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.etime}</td>
+                <td className="px-3 py-1.5 text-fg-secondary truncate">{proc.args}</td>
               </tr>
             ))}
           </tbody>
         </table>
 
         {filteredAndSorted.length === 0 && !loading && !error && (
-          <div className="py-8 text-center text-sm text-zinc-500">
+          <div className="py-8 text-center text-read text-fg-tertiary">
             {search ? '无匹配进程' : '暂无进程数据'}
           </div>
         )}
@@ -229,7 +229,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       {menuProcess && createPortal(
         <div
           ref={menuRef}
-          className="context-menu-enter fixed z-50 w-36 rounded-lg border border-edge bg-zinc-800 p-1 shadow-lg"
+          className="context-menu-enter fixed z-50 w-36 rounded-lg border border-edge bg-surface-raised p-1 shadow-lg"
           style={{
             top: menuPos.y,
             left: menuPos.x,
@@ -238,7 +238,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           <button
             type="button"
             onClick={() => handleCopyInfo(menuProcess)}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+            className="w-full rounded px-2 py-1.5 text-left text-meta text-fg-secondary hover:bg-state-mid"
           >
             复制所有信息
           </button>
@@ -248,7 +248,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
               setKillConfirm(menuProcess);
               setMenuProcess(null);
             }}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
+            className="w-full rounded px-2 py-1.5 text-left text-meta text-red-400 hover:bg-red-950/60"
           >
             终止进程
           </button>
@@ -258,26 +258,26 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
 
       {killConfirm && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-red-300 mb-2">确认终止进程</h3>
-            <p className="text-xs text-zinc-400 mb-1">
-              PID: <span className="text-zinc-200">{killConfirm.pid}</span>
+          <div className="modal-panel-enter w-80 rounded-xl bg-surface-raised border border-edge shadow-2xl p-4">
+            <h3 className="text-read font-semibold text-red-300 mb-2">确认终止进程</h3>
+            <p className="text-meta text-fg-secondary mb-1">
+              PID: <span className="text-fg">{killConfirm.pid}</span>
             </p>
-            <p className="text-xs text-zinc-400 mb-4">
-              命令: <span className="text-zinc-200">{killConfirm.comm}</span>
+            <p className="text-meta text-fg-secondary mb-4">
+              命令: <span className="text-fg">{killConfirm.comm}</span>
             </p>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setKillConfirm(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={() => handleKill(killConfirm)}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
+                className="px-3 py-1.5 rounded-lg text-meta text-white bg-red-600 hover:bg-red-500"
               >
                 确认终止
               </button>

@@ -20,14 +20,13 @@ const sizeStyles: Record<ToggleSize, { track: string; knob: string; checkedLeft:
   md: {
     track: 'h-6 w-11',
     knob: 'h-5 w-5',
-    checkedLeft: 'left-6',
+    checkedLeft: 'left-[1.375rem]',
     uncheckedLeft: 'left-0.5',
   },
 };
 
 export default function Toggle({ checked, onChange, disabled = false, label, ariaLabel, size = 'md' }: ToggleProps) {
   const s = sizeStyles[size];
-  const isMd = size === 'md';
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none">
       <button
@@ -45,25 +44,21 @@ export default function Toggle({ checked, onChange, disabled = false, label, ari
         }}
         className={`
           relative inline-flex ${s.track} flex-shrink-0 items-center rounded-full
-          transition-colors duration-300
-          focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900
+          pressable focus-ring
           disabled:opacity-50 disabled:cursor-not-allowed
-          active:scale-95
-          ${checked ? 'bg-indigo-600' : 'bg-zinc-700'}
+          ${checked ? 'bg-indigo-600' : 'bg-state-strong'}
         `}
-        style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
       >
         <span
           className={`
             pointer-events-none absolute inline-block ${s.knob} rounded-full
             bg-white shadow ring-0
-            ${isMd ? 'left-0.5 ' + (checked ? 'animate-toggle-on' : 'animate-toggle-off') : (checked ? s.checkedLeft + ' transition-all duration-200' : s.uncheckedLeft + ' transition-all duration-200')}
+            ${checked ? s.checkedLeft : s.uncheckedLeft} transition-[left] duration-200 ease-standard
           `}
-          style={isMd ? { animationDuration: '400ms', animationTimingFunction: 'var(--spring-bounce)' } : undefined}
         />
       </button>
       {label && (
-        <span className="text-sm text-zinc-300">{label}</span>
+        <span className="text-body text-fg-secondary">{label}</span>
       )}
     </label>
   );

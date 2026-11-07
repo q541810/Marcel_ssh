@@ -158,13 +158,13 @@ export function MobileMcpServerSection() {
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2">
           <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-400" />
-          <p className="flex-1 text-xs leading-relaxed text-red-300">{error}</p>
+          <p className="flex-1 text-meta leading-relaxed text-red-300">{error}</p>
         </div>
       )}
       {notice && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2">
           <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-          <p className="flex-1 text-xs leading-relaxed text-amber-300/90">{notice}</p>
+          <p className="flex-1 text-meta leading-relaxed text-amber-300/90">{notice}</p>
         </div>
       )}
 
@@ -187,7 +187,7 @@ export function MobileMcpServerSection() {
         label="谁能连"
         description={running ? '运行中不可修改，先关闭服务再改。' : '默认只有这台手机上的程序能连。'}
       >
-        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-zinc-950 p-1">
+        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-surface-sunken p-1">
           <ScopeButton
             active={!lan}
             disabled={running || busy}
@@ -206,7 +206,7 @@ export function MobileMcpServerSection() {
         {lan && (
           <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-2.5">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-red-400" />
-            <p className="text-[11px] leading-5 text-red-200/90">
+            <p className="text-caption leading-5 text-red-200/90">
               同一 Wi-Fi 下任何拿到令牌的设备，都能在你已保存的服务器上执行
               <span className="font-medium">无审批</span>
               命令。只在可信网络里用，或走 Tailscale 之类的私有网络。
@@ -214,14 +214,14 @@ export function MobileMcpServerSection() {
           </div>
         )}
         <div className="mt-3 flex items-center gap-2">
-          <span className="text-xs text-zinc-500">端口</span>
+          <span className="text-meta text-fg-tertiary">端口</span>
           <input
             value={String(port)}
             onChange={(e) => setPort(sanitizePortInput(e.target.value))}
             disabled={running || busy}
             inputMode="numeric"
             aria-label="端口"
-            className="w-28 rounded-lg border border-edge bg-zinc-800 px-3 py-2 font-mono text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+            className="w-28 rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-body text-fg focus:border-indigo-500 focus:outline-none disabled:opacity-50"
           />
         </div>
       </MobileSettingRow>
@@ -242,7 +242,7 @@ export function MobileMcpServerSection() {
             spellCheck={false}
             aria-label="访问令牌"
             placeholder="启动时自动生成"
-            className="min-w-0 flex-1 rounded-lg border border-edge bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300 focus:border-indigo-500 focus:outline-none read-only:opacity-70"
+            className="min-w-0 flex-1 rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-meta text-fg-secondary focus:border-indigo-500 focus:outline-none read-only:opacity-70"
           />
           {shownToken && <CopyButton text={shownToken} size="md" />}
         </div>
@@ -260,7 +260,7 @@ export function MobileMcpServerSection() {
           description="粘到支持 HTTP 的 MCP 客户端里即可。"
         >
           <div className="mt-3 space-y-2">
-            <div className="flex items-center gap-1.5 break-all font-mono text-[11px] text-zinc-500">
+            <div className="flex items-center gap-1.5 break-all font-mono text-caption text-fg-tertiary">
               <Globe className="h-3.5 w-3.5 flex-shrink-0" />
               {status.url}
             </div>
@@ -271,16 +271,16 @@ export function MobileMcpServerSection() {
 
       <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
         <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-        <p className="text-xs leading-5 text-amber-200/90">
+        <p className="text-meta leading-5 text-amber-200/90">
           外部 Agent 可以在你的服务器上执行命令、收发文件，这些命令
           <span className="font-medium">不经过风险评估，也不会弹审批</span>
           。只接你信任的 Agent。
         </p>
       </div>
 
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-3">
-        <div className="mb-2 text-xs font-medium text-zinc-300">在手机上用要知道</div>
-        <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-500">
+      <div className="rounded-xl border border-edge-subtle bg-surface/50 p-3">
+        <div className="mb-2 text-meta font-medium text-fg-secondary">在手机上用要知道</div>
+        <ul className="space-y-1.5 text-meta leading-relaxed text-fg-tertiary">
           <li>· 服务开着时会启用前台服务（状态栏常驻通知），关掉服务后自动恢复。</li>
           <li>· 重启 App 后服务是关闭的，需要再打开；系统在极端情况下仍可能回收进程。</li>
           <li>· 手机上不提供文件上传/下载工具（本地路径指的是手机，Termux 等读不到），传文件请让 Agent 在远端用命令完成。</li>
@@ -309,8 +309,8 @@ function ScopeButton({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-colors duration-100 disabled:opacity-60 ${
-        active ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 active:bg-state-soft'
+      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg text-body font-medium transition-colors duration-100 disabled:opacity-60 ${
+        active ? 'bg-zinc-700 text-fg' : 'text-fg-tertiary active:bg-state-soft'
       }`}
     >
       {icon}

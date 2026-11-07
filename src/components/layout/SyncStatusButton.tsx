@@ -18,11 +18,11 @@ export default function SyncStatusButton() {
     <button
       type="button"
       onClick={openSyncSettings}
-      className={`p-1 rounded-lg hover:bg-state-soft transition-colors ${tone}`}
+      className={`pressable focus-ring flex h-6 w-6 items-center justify-center rounded-md hover:bg-state-soft ${tone}`}
       title={`跨设备同步：${view.title}，点击查看`}
       aria-label={`跨设备同步：${view.title}，点击查看`}
     >
-      <CloudAlert className="w-4 h-4" />
+      <CloudAlert size={16} strokeWidth={1.5} />
     </button>
   );
 }

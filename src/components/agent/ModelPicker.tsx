@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -104,11 +105,11 @@ export function ModelPicker({
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         className={`
-          flex w-full min-w-0 items-center gap-1 rounded-full text-xs font-medium transition-colors
+          flex w-full min-w-0 items-center gap-1 rounded-full text-meta font-medium transition-colors
           ${
             open
-              ? "bg-zinc-700 text-zinc-100"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-state-mid/50"
+              ? "bg-state-mid text-fg"
+              : "text-fg-secondary hover:text-fg hover:bg-state-mid/50"
           }
           ${compact ? "px-1.5 py-1.5" : "px-2 py-1.5"}
           disabled:opacity-40 disabled:cursor-not-allowed
@@ -124,19 +125,7 @@ export function ModelPicker({
         <span className={`truncate min-w-0 ${compact ? "max-w-[5rem]" : "max-w-[9rem]"}`}>
           {compact ? compactLabel : label}
         </span>
-        <svg
-          className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+        <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} strokeWidth={1.5} />
       </button>
 
       {presence.mounted &&
@@ -152,7 +141,7 @@ export function ModelPicker({
               width: pos.width,
               maxHeight: pos.maxHeight,
             }}
-            className={`fixed z-[100] rounded-xl border border-edge bg-zinc-800 shadow-2xl py-1 overflow-y-auto ${
+            className={`fixed z-[100] rounded-xl surface-glass py-1 overflow-y-auto ${
               presence.phase === "exit"
                 ? "mobile-popover-exit"
                 : "mobile-popover-enter"
@@ -166,11 +155,11 @@ export function ModelPicker({
             return (
               <div key={ch.id}>
                 <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 truncate">
+                  <span className="text-caption font-medium uppercase tracking-wide text-fg-tertiary truncate">
                     {ch.name}
                   </span>
                   {channelDisabled && (
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-400 flex-shrink-0">
+                    <span className="text-caption px-1 py-0.5 rounded bg-state-mid text-fg-secondary flex-shrink-0">
                       已禁用
                     </span>
                   )}
@@ -204,12 +193,12 @@ export function ModelPicker({
                       `}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className={`text-sm truncate ${active ? "text-indigo-300" : "text-zinc-200"}`}>
+                        <span className={`text-body truncate ${active ? "text-indigo-300" : "text-fg"}`}>
                           {modelLabel(m)}
                         </span>
-                        {active && <span className="text-xs text-indigo-400 flex-shrink-0">已选</span>}
+                        {active && <span className="text-meta text-indigo-400 flex-shrink-0">已选</span>}
                       </div>
-                      <p className="text-xs text-zinc-400 mt-0.5 font-mono truncate">
+                      <p className="text-meta text-fg-secondary mt-0.5 font-mono truncate">
                         {m.modelName}
                         {m.vision ? " · 视觉" : ""}
                       </p>
@@ -220,7 +209,7 @@ export function ModelPicker({
             );
           })}
           {registry.channels.length === 0 && (
-            <p className="px-3 py-4 text-center text-xs text-zinc-500">
+            <p className="px-3 py-4 text-center text-meta text-fg-tertiary">
               还没有可用模型，请先到「设置 → 模型服务」添加渠道与模型
             </p>
           )}

@@ -92,11 +92,11 @@ export function ConversationArchiveSection() {
                   e.currentTarget.blur();
                 }
               }}
-              className="w-20 rounded-lg border border-edge bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="w-20 rounded-lg border border-edge bg-surface-raised px-2 py-1 text-body text-fg focus:outline-none focus:border-indigo-500"
               aria-label="归档保留天数"
             />
-            <span className="text-sm text-zinc-400">天</span>
-            {days === 0 && <span className="text-xs text-amber-400/90">已关闭自动清理</span>}
+            <span className="text-body text-fg-secondary">天</span>
+            {days === 0 && <span className="text-meta text-amber-400/90">已关闭自动清理</span>}
           </div>
         </SettingItem>
       </Card>

@@ -67,13 +67,13 @@ function stubBrowserApis(sentinelTop: number) {
   );
   vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
   // 几何控制：默认全 0（哨兵恰在容器顶部检测带内）；需要“已顶出”场景时
-  // 让哨兵 wrapper（text-xs 的那层）的 top 远在容器上方。
+  // 让哨兵 wrapper（text-meta 的那层）的 top 远在容器上方。
   Element.prototype.getBoundingClientRect = function getBoundingClientRect(
     this: Element,
   ): DOMRect {
     const el = this as HTMLElement;
     const isSentinelWrapper =
-      el.classList?.contains('text-xs') &&
+      el.classList?.contains('text-meta') &&
       (el.textContent ?? '').includes('加载更早消息');
     const top = isSentinelWrapper ? sentinelTop : 0;
     return {

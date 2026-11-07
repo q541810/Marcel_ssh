@@ -33,7 +33,7 @@ export default function LiveOutputPanel({
       <pre
         ref={ref}
         onScroll={onScroll}
-        className="text-xs text-zinc-400 whitespace-pre max-h-[120px] max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed"
+        className="text-meta text-fg-secondary whitespace-pre max-h-[120px] max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed"
       >
         <LiveToolOutput text={shown.current} />
       </pre>

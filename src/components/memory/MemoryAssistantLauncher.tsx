@@ -51,8 +51,8 @@ export default function MemoryAssistantLauncher({ focus, mobile = false }: Props
               key={s.label}
               type="button"
               onClick={() => start(s.prompt)}
-              className={`rounded-full border border-edge bg-zinc-800/60 text-zinc-300 transition hover:border-indigo-500/50 hover:text-zinc-100 active:scale-[0.97] ${
-                mobile ? 'px-3 py-2 text-xs' : 'px-3 py-1 text-xs'
+              className={`rounded-full border border-edge bg-surface-raised/60 text-fg-secondary transition hover:border-indigo-500/50 hover:text-fg ${
+                mobile ? 'px-3 py-2 text-meta' : 'px-3 py-1 text-meta'
               }`}
             >
               {s.label}
@@ -63,15 +63,15 @@ export default function MemoryAssistantLauncher({ focus, mobile = false }: Props
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`flex items-center justify-center gap-2 self-start rounded-full bg-indigo-600 font-medium text-white transition hover:bg-indigo-500 active:scale-[0.97] ${
-          mobile ? 'min-h-11 px-5 text-sm' : 'px-4 py-1.5 text-xs'
+        className={`flex items-center justify-center gap-2 self-start rounded-full bg-indigo-600 font-medium text-white transition hover:bg-indigo-500 ${
+          mobile ? 'min-h-11 px-5 text-body' : 'px-4 py-2 text-meta'
         }`}
       >
         {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Wand2 className="h-3.5 w-3.5" aria-hidden />}
         {label}
       </button>
       {/* 用哪个模型要写明：整理要读很多记忆和历史会话，花的是真钱。对话框里可以换。 */}
-      <p className="text-xs text-zinc-500">
+      <p className="text-meta text-fg-tertiary">
         {modelLabel ? `将用「${modelLabel}」整理，打开后可以换` : '还没有配置模型，请先到「设置 → 模型」添加'}
       </p>
 

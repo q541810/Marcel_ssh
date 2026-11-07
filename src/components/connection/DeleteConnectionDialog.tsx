@@ -23,11 +23,11 @@ export default function DeleteConnectionDialog({ connection, onClose, onConfirm 
   return (
     <Modal open={!!connection} onClose={onClose} title="删除连接" size="sm">
       <div className="flex flex-col gap-4 px-4 pb-4 pt-4">
-        <p className="text-sm text-zinc-300">
+        <p className="text-read text-fg-secondary">
           确定要删除连接「{connection?.name}」吗？
         </p>
         {memoryCount > 0 && (
-          <label className="flex cursor-pointer items-start gap-2.5 text-sm text-zinc-300">
+          <label className="flex cursor-pointer items-start gap-2.5 text-read text-fg-secondary">
             <input
               type="checkbox"
               checked={deleteMemories}
@@ -36,7 +36,7 @@ export default function DeleteConnectionDialog({ connection, onClose, onConfirm 
             />
             <span>
               同时删除这台机器的 {memoryCount} 条记忆
-              <span className="mt-0.5 block text-xs text-zinc-500">
+              <span className="mt-0.5 block text-meta text-fg-tertiary">
                 不删的话会留在「设置 → 记忆 → 已删除的连接」里
               </span>
             </span>
@@ -46,14 +46,14 @@ export default function DeleteConnectionDialog({ connection, onClose, onConfirm 
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm text-zinc-300 hover:bg-state-mid/60 active:scale-[0.97] transition"
+            className="rounded-lg px-4 py-2 text-read text-fg-secondary hover:bg-state-mid/60 active:scale-[0.97] transition"
           >
             取消
           </button>
           <button
             type="button"
             onClick={() => connection && onConfirm(connection, deleteMemories)}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 active:scale-[0.97] transition"
+            className="rounded-lg bg-red-600 px-4 py-2 text-read font-medium text-white hover:bg-red-500 active:scale-[0.97] transition"
           >
             删除
           </button>

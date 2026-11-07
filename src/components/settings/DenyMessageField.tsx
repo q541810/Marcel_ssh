@@ -3,7 +3,7 @@ import { RotateCcw } from 'lucide-react';
 import type { ReasonVar } from '@/lib/types';
 
 const fieldClass =
-  'w-full resize-y rounded-lg border border-edge bg-zinc-800 text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full resize-y rounded-lg border border-edge bg-surface-raised text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /**
  * 「拒绝说明」输入框：档位是「直接拒绝」时才出现（别的档位没有要回给模型的话）。
@@ -67,14 +67,14 @@ export function DenyMessageField({
     });
   };
 
-  const chip = `inline-flex items-center rounded-md border border-edge bg-zinc-800 px-2 font-mono text-zinc-300 transition-colors hover:border-indigo-500/60 hover:text-zinc-100 active:text-zinc-100 ${
-    compact ? 'min-h-9 text-sm' : 'min-h-7 text-xs'
+  const chip = `inline-flex items-center rounded-md border border-edge bg-surface-raised px-2 font-mono text-fg-secondary transition-colors hover:border-indigo-500/60 hover:text-fg active:text-fg ${
+    compact ? 'min-h-9 text-body' : 'min-h-7 text-meta'
   }`;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <label className="block space-y-1">
-        <span className="text-xs text-zinc-500">
+        <span className="text-meta text-fg-tertiary">
           拒绝说明：命中时回给 Agent 的话，可以直接改
         </span>
         <textarea
@@ -87,14 +87,14 @@ export function DenyMessageField({
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className={`${fieldClass} ${compact ? 'px-3 py-2.5 text-base' : 'px-3 py-2 text-sm'}`}
+          className={`${fieldClass} ${compact ? 'px-3 py-3 text-body' : 'px-3 py-2 text-body'}`}
         />
       </label>
       {(vars.length > 0 || modified) && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
           {vars.length > 0 && (
             <>
-              <span className="text-xs text-zinc-500">插入</span>
+              <span className="text-meta text-fg-tertiary">插入</span>
               {vars.map((v) => (
                 <button
                   key={v.name}
@@ -115,8 +115,8 @@ export function DenyMessageField({
                 setDraft(template);
                 onChange('');
               }}
-              className={`ml-auto inline-flex items-center gap-1 rounded-md px-2 text-zinc-400 transition-colors hover:text-zinc-100 active:text-zinc-100 ${
-                compact ? 'min-h-9 text-sm' : 'min-h-7 text-xs'
+              className={`ml-auto inline-flex items-center gap-1 rounded-md px-2 text-fg-secondary transition-colors hover:text-fg active:text-fg ${
+                compact ? 'min-h-9 text-body' : 'min-h-7 text-meta'
               }`}
             >
               <RotateCcw className="h-3 w-3" />
@@ -126,7 +126,7 @@ export function DenyMessageField({
         </div>
       )}
       {vars.length > 0 && (
-        <p className="text-xs leading-relaxed text-zinc-500">
+        <p className="text-meta leading-relaxed text-fg-tertiary">
           {vars.map((v) => `{${v.name}} ${v.hint}`).join('；')}。命中时换成实际内容。
         </p>
       )}

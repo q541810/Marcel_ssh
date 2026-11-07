@@ -35,8 +35,8 @@ export function MobileBackgroundSection() {
   if (!bridgeAvailable) {
     return (
       <div className="flex flex-col items-center py-8 text-center">
-        <AlertCircle className="w-6 h-6 mb-2 text-zinc-600" />
-        <p className="text-sm text-zinc-500">
+        <AlertCircle className="w-6 h-6 mb-2 text-fg-disabled" />
+        <p className="text-body text-fg-tertiary">
           后台保活仅在 Android 端可用
         </p>
       </div>
@@ -81,7 +81,7 @@ export function MobileBackgroundSection() {
       {error && (
         <div className="rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-          <p className="flex-1 text-xs leading-relaxed text-red-300">{error}</p>
+          <p className="flex-1 text-meta leading-relaxed text-red-300">{error}</p>
         </div>
       )}
 
@@ -98,18 +98,18 @@ export function MobileBackgroundSection() {
       />
 
       {toggling && (
-        <div className="flex items-center justify-center gap-2 py-2 text-xs text-zinc-400">
+        <div className="flex items-center justify-center gap-2 py-2 text-meta text-fg-secondary">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           正在请求权限…
         </div>
       )}
 
-      <div className="mt-2 rounded-xl border border-edge-subtle bg-zinc-900/50 p-3">
+      <div className="mt-2 rounded-xl border border-edge-subtle bg-surface/50 p-3">
         <div className="mb-2 flex items-center gap-2">
-          <Battery className="w-4 h-4 text-zinc-400" />
-          <span className="text-xs font-medium text-zinc-300">工作原理</span>
+          <Battery className="w-4 h-4 text-fg-secondary" />
+          <span className="text-meta font-medium text-fg-secondary">工作原理</span>
         </div>
-        <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-500">
+        <ul className="space-y-1.5 text-meta leading-relaxed text-fg-tertiary">
           <li>· 前台服务持有 WakeLock，防止 CPU 进入深度休眠</li>
           <li>· SSH keepalive（30s）持续发包，维持长连接</li>
           <li>· Agent 任务在 Rust tokio 运行时中持续执行</li>
@@ -120,9 +120,9 @@ export function MobileBackgroundSection() {
       <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-3">
         <div className="mb-1.5 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-amber-400" />
-          <span className="text-xs font-medium text-amber-300">注意事项</span>
+          <span className="text-meta font-medium text-amber-300">注意事项</span>
         </div>
-        <ul className="space-y-1.5 text-xs leading-relaxed text-amber-400/80">
+        <ul className="space-y-1.5 text-meta leading-relaxed text-amber-400/80">
           <li>· 系统仍可能在极端情况下（低内存、电池优化）杀死进程</li>
           <li>· 进程被杀后不会自动重连 SSH，需手动重新打开 App</li>
           <li>· 部分厂商 ROM 需在系统设置中关闭「电池优化」才能稳定保活</li>

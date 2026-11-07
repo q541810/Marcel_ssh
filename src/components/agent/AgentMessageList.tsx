@@ -586,7 +586,7 @@ function MessageList({
         onManualLayout?.();
         captureFoldAnchor(button);
       }}>
-      {canLoad && <div className="flex items-center justify-center py-2 text-xs text-zinc-500">
+      {canLoad && <div className="flex items-center justify-center py-2 text-meta text-fg-tertiary">
         {loadError ? <button type="button" onClick={() => {
           loadErrorRef.current = null;
           setLoadError(null);

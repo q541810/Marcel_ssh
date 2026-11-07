@@ -75,7 +75,7 @@ function ZoneColorField({
 
   return (
     <label
-      className="flex items-center gap-2.5 min-w-0"
+      className="flex items-center gap-3 min-w-0"
       title={zone.hint ?? zone.label}
     >
       <span className="relative h-7 w-7 flex-shrink-0 overflow-hidden rounded-md border border-edge-strong">
@@ -92,9 +92,9 @@ function ZoneColorField({
         />
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-[13px] text-zinc-200">{zone.label}</span>
+        <span className="truncate text-body text-fg">{zone.label}</span>
         {zone.hint && (
-          <span className="truncate text-[11px] text-zinc-500">
+          <span className="truncate text-caption text-fg-tertiary">
             {zone.hint}
           </span>
         )}
@@ -109,7 +109,7 @@ function ZoneColorField({
         onBlur={() => setDraft(value)}
         spellCheck={false}
         autoComplete="off"
-        className="w-[5.5rem] flex-shrink-0 rounded-md border border-edge bg-zinc-900 px-2 py-1 font-mono text-xs text-zinc-300 outline-none focus:border-indigo-500"
+        className="w-[5.5rem] flex-shrink-0 rounded-md border border-edge bg-surface px-2 py-1 font-mono text-meta text-fg-secondary outline-none focus:border-indigo-500"
         placeholder="#000000"
       />
     </label>
@@ -177,10 +177,10 @@ export function UiThemeEditor({
               key={preset.id}
               type="button"
               onClick={() => selectPreset(preset.id)}
-              className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+              className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
                 selected
                   ? "border-indigo-500 bg-indigo-500/10"
-                  : "border-edge-subtle bg-zinc-900 hover:bg-state-soft active:bg-state-soft"
+                  : "border-edge-subtle bg-surface hover:bg-state-soft active:bg-state-soft"
               }`}
             >
               <span
@@ -202,13 +202,13 @@ export function UiThemeEditor({
               </span>
               <span className="min-w-0">
                 <span
-                  className={`block truncate text-sm ${
-                    selected ? "font-medium text-indigo-200" : "text-zinc-200"
+                  className={`block truncate text-body ${
+                    selected ? "font-medium text-indigo-200" : "text-fg"
                   }`}
                 >
                   {preset.name}
                 </span>
-                <span className="block text-[11px] text-zinc-500">
+                <span className="block text-caption text-fg-tertiary">
                   {preset.scheme === "light" ? "浅色" : "深色"}
                 </span>
               </span>
@@ -218,24 +218,24 @@ export function UiThemeEditor({
         <button
           type="button"
           onClick={() => setCustomOpen((v) => !v)}
-          className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+          className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
             isCustom || customOpen
               ? "border-indigo-500 bg-indigo-500/10"
-              : "border-edge-subtle bg-zinc-900 hover:bg-state-soft active:bg-state-soft"
+              : "border-edge-subtle bg-surface hover:bg-state-soft active:bg-state-soft"
           }`}
         >
           <span className="h-8 w-8 flex-shrink-0 rounded-md border border-edge-strong bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
           <span className="min-w-0">
             <span
-              className={`block truncate text-sm ${
+              className={`block truncate text-body ${
                 isCustom || customOpen
                   ? "font-medium text-indigo-200"
-                  : "text-zinc-200"
+                  : "text-fg"
               }`}
             >
               自定义
             </span>
-            <span className="block text-[11px] text-zinc-500">
+            <span className="block text-caption text-fg-tertiary">
               {customOpen ? "收起分区" : "逐分区调整颜色"}
             </span>
           </span>
@@ -245,9 +245,9 @@ export function UiThemeEditor({
       {customOpen && (
         <>
           {/* 分区编辑：中性色，按用途分「填充 / 悬停与按下 / 边框 / 文字」 */}
-          <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-3">
+          <div className="rounded-xl border border-edge-subtle bg-surface/50 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-xs font-medium text-zinc-400">
+              <div className="text-meta font-medium text-fg-secondary">
                 界面中性色
               </div>
               <button
@@ -258,7 +258,7 @@ export function UiThemeEditor({
                     zones: deriveNeutralRamp(value.zones),
                   })
                 }
-                className="rounded-md border border-edge bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-state-mid"
+                className="rounded-md border border-edge bg-surface-raised px-2 py-1 text-caption text-fg-secondary hover:bg-state-mid"
                 title="以当前「外框 / 卡片 / 标题」为锚点，自动生成其余中性色"
               >
                 按三档自动铺满
@@ -267,8 +267,8 @@ export function UiThemeEditor({
             <div className="flex flex-col gap-4">
               {UI_THEME_NEUTRAL_SECTIONS.map((section) => (
                 <div key={section.id}>
-                  <div className="mb-1.5 text-[11px] text-zinc-500">
-                    <span className="font-medium text-zinc-400">
+                  <div className="mb-2 text-caption text-fg-tertiary">
+                    <span className="font-medium text-fg-secondary">
                       {section.label}
                     </span>
                     <span className="ml-2">{section.hint}</span>
@@ -291,10 +291,10 @@ export function UiThemeEditor({
           </div>
 
           {/* 分区编辑：语义色 */}
-          <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-3">
-            <div className="mb-2 text-xs font-medium text-zinc-400">
+          <div className="rounded-xl border border-edge-subtle bg-surface/50 p-3">
+            <div className="mb-2 text-meta font-medium text-fg-secondary">
               语义色
-              <span className="ml-2 font-normal text-zinc-500">
+              <span className="ml-2 font-normal text-fg-tertiary">
                 选一个基准色，整套深浅由它自动生成
               </span>
             </div>
@@ -311,18 +311,18 @@ export function UiThemeEditor({
           </div>
 
           {/* 终端配色：主题的一部分；预设自带，这里给自定义主题微调 */}
-          <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-3">
+          <div className="rounded-xl border border-edge-subtle bg-surface/50 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-xs font-medium text-zinc-400">
+              <div className="text-meta font-medium text-fg-secondary">
                 终端配色
-                <span className="ml-2 font-normal text-zinc-500">
+                <span className="ml-2 font-normal text-fg-tertiary">
                   选预设主题时会随主题一起换
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setTerminal(deriveTerminalColors(value.zones))}
-                className="flex-shrink-0 rounded-md border border-edge bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-state-mid"
+                className="flex-shrink-0 rounded-md border border-edge bg-surface-raised px-2 py-1 text-caption text-fg-secondary hover:bg-state-mid"
                 title="用当前界面的背景、文字与语义色生成一套终端配色"
               >
                 从界面配色生成
@@ -336,10 +336,10 @@ export function UiThemeEditor({
                     key={preset.name}
                     type="button"
                     onClick={() => setTerminal(preset.colors)}
-                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-meta transition-colors ${
                       selected
                         ? "border-indigo-500 bg-indigo-500/10 text-indigo-200"
-                        : "border-edge bg-zinc-800 text-zinc-300 hover:bg-state-mid active:bg-state-mid"
+                        : "border-edge bg-surface-raised text-fg-secondary hover:bg-state-mid active:bg-state-mid"
                     }`}
                   >
                     <span
@@ -364,7 +364,7 @@ export function UiThemeEditor({
               ))}
             </div>
             <div
-              className="mt-3 rounded-lg p-3 font-mono text-xs"
+              className="mt-3 rounded-lg p-3 font-mono text-meta"
               style={{
                 backgroundColor: terminalColors.background,
                 color: terminalColors.foreground,

@@ -24,7 +24,7 @@ import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
 
 /**
  * Agent 页（手机）：安全与审批 → 用户附加指令 → 执行限制，与桌面同序。
@@ -59,11 +59,11 @@ export function MobileAgentPolicySection() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="mb-1 px-1 text-xs font-medium text-zinc-500">
+      <div className="mb-1 px-1 text-meta font-medium text-fg-tertiary">
         安全与审批
       </div>
       {/* 什么时候问你：总览表 + 命令确认方式 + Plan / Auto 开关（与桌面共用） */}
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3">
+      <div className="rounded-xl border border-edge-subtle bg-surface px-3 py-3">
         <ApprovalOverview agent={agent} onChange={updateAgent} compact />
       </div>
 
@@ -81,7 +81,7 @@ export function MobileAgentPolicySection() {
             spellCheck={false}
             className={inputClass}
           />
-          {check.error && <p className="text-xs text-red-400">{check.error}</p>}
+          {check.error && <p className="text-meta text-red-400">{check.error}</p>}
           {check.results && (
             <CommandCheckResultCard
               results={check.results}
@@ -141,20 +141,20 @@ export function MobileAgentPolicySection() {
       <button
         type="button"
         onClick={openPage}
-        className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-left transition-transform duration-100 active:scale-[0.99]"
+        className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-left pressable"
       >
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-zinc-100">内置风险规则</span>
-          <span className="mt-0.5 block text-xs leading-relaxed text-zinc-500">
+          <span className="block text-body font-medium text-fg">内置风险规则</span>
+          <span className="mt-0.5 block text-meta leading-relaxed text-fg-tertiary">
             rm -rf /、pkill、curl | sh 等 {catalog?.rules.length ?? ''} 条
           </span>
         </span>
         {modifiedCount > 0 && (
-          <span className="flex-shrink-0 rounded-full border border-indigo-700/50 bg-indigo-500/10 px-2 py-px text-xs text-indigo-200">
+          <span className="flex-shrink-0 rounded-full border border-indigo-700/50 bg-indigo-500/10 px-2 py-px text-meta text-indigo-200">
             已改 {modifiedCount}
           </span>
         )}
-        <ChevronRight className="h-4 w-4 flex-shrink-0 text-zinc-600" />
+        <ChevronRight className="h-4 w-4 flex-shrink-0 text-fg-disabled" />
       </button>
 
       {/* 执行前模型审批：开关 + 展开后的引擎卡与表单（与桌面共用 ModelApprovalPanel） */}
@@ -180,7 +180,7 @@ export function MobileAgentPolicySection() {
                 <button
                   type="button"
                   onClick={() => setApprovalModelPickerOpen(true)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none active:bg-state-mid"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none active:bg-state-mid"
                 >
                   <span className="truncate">
                     {settings.llmRegistry?.slots?.modelApprovalModelId
@@ -190,7 +190,7 @@ export function MobileAgentPolicySection() {
                         )
                       : '跟随会话模型'}
                   </span>
-                  <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+                  <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
                 </button>
               }
             />
@@ -198,7 +198,7 @@ export function MobileAgentPolicySection() {
         </Reveal>
       </MobileSettingRow>
 
-      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+      <div className="mt-2 mb-1 px-1 text-meta font-medium text-fg-tertiary">
         用户附加指令
       </div>
       {/* User system prompt — appended to the agent system prompt (desktop parity) */}
@@ -214,11 +214,11 @@ export function MobileAgentPolicySection() {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="mt-2 w-full resize-none rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+          className="mt-2 w-full resize-none rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
         />
       </MobileSettingRow>
 
-      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+      <div className="mt-2 mb-1 px-1 text-meta font-medium text-fg-tertiary">
         执行限制
       </div>
       {/* Command timeout */}
@@ -226,7 +226,7 @@ export function MobileAgentPolicySection() {
         label="命令超时时间"
         description="单条命令最长前台等待时间。到点不会被掐断，而是转为后台作业继续运行"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-body text-indigo-300">
             {settings.commandTimeoutSecs ?? 120}s
           </span>
         }
@@ -249,7 +249,7 @@ export function MobileAgentPolicySection() {
         label="最大执行轮数"
         description="单次任务最多执行的工具调用轮数，超限自动停止"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-body text-indigo-300">
             {agent.maxToolRounds ?? 500}
           </span>
         }
@@ -288,11 +288,11 @@ export function MobileAgentPolicySection() {
               });
               setApprovalModelPickerOpen(false);
             }}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm active:bg-state-soft"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-body active:bg-state-soft"
           >
-            <span className="text-zinc-200">跟随会话模型</span>
+            <span className="text-fg">跟随会话模型</span>
             {!settings.llmRegistry?.slots?.modelApprovalModelId && (
-              <span className="text-indigo-400 text-xs">当前</span>
+              <span className="text-indigo-400 text-meta">当前</span>
             )}
           </button>
           {/* 按提供商（渠道）分组 */}
@@ -304,11 +304,11 @@ export function MobileAgentPolicySection() {
             return (
               <div key={ch.id} className="mt-1">
                 <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                  <span className="truncate text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                  <span className="truncate text-caption font-medium uppercase tracking-wide text-fg-tertiary">
                     {ch.name}
                   </span>
                   {channelDisabled && (
-                    <span className="flex-shrink-0 rounded bg-zinc-700 px-1 py-0.5 text-[10px] text-zinc-400">
+                    <span className="flex-shrink-0 rounded bg-zinc-700 px-1 py-0.5 text-caption text-fg-secondary">
                       已禁用
                     </span>
                   )}
@@ -335,10 +335,10 @@ export function MobileAgentPolicySection() {
                           channelDisabled ? "opacity-40" : ""
                         }`}
                       >
-                        <span className="min-w-0 truncate text-sm text-zinc-200">
+                        <span className="min-w-0 truncate text-body text-fg">
                           {modelLabel(m)}
                         </span>
-                        {selected && <span className="flex-shrink-0 text-xs text-indigo-400">当前</span>}
+                        {selected && <span className="flex-shrink-0 text-meta text-indigo-400">当前</span>}
                       </button>
                     );
                   })}
@@ -347,7 +347,7 @@ export function MobileAgentPolicySection() {
             );
           })}
           {(settings.llmRegistry?.models ?? []).length === 0 && (
-            <p className="py-6 text-center text-sm text-zinc-500">
+            <p className="py-6 text-center text-body text-fg-tertiary">
               还没有可用的模型，请先在「模型服务」中添加
             </p>
           )}

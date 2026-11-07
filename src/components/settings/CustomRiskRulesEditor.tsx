@@ -21,7 +21,7 @@ import { LevelSelect } from './RiskLevelSelect';
 import { DenyMessageField } from './DenyMessageField';
 
 const fieldClass =
-  'rounded-lg border border-edge bg-zinc-800 text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'rounded-lg border border-edge bg-surface-raised text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /**
  * 自定义规则（桌面与手机共用）：每条是「命令 + 参数含 + 档位」，例如 `docker` + `prune` → 强制审批。
@@ -95,12 +95,12 @@ export function CustomRiskRulesEditor({
   };
 
   const editingRule = rules.find((r) => r.id === editing) ?? null;
-  const chipHeight = compact ? 'min-h-10 text-sm' : 'min-h-8 text-xs';
+  const chipHeight = compact ? 'min-h-10 text-body' : 'min-h-8 text-meta';
 
   return (
-    <div id={CUSTOM_RULES_DOM_ID} className="space-y-2.5 rounded-lg transition-colors duration-500">
+    <div id={CUSTOM_RULES_DOM_ID} className="space-y-3 rounded-lg transition-colors duration-500">
       {rules.length === 0 && (
-        <p className="text-xs leading-relaxed text-zinc-500">
+        <p className="text-meta leading-relaxed text-fg-tertiary">
           还没有规则。例如：命令 <span className="font-mono">docker</span>、参数含{' '}
           <span className="font-mono">prune</span> → 强制审批。
         </p>
@@ -126,10 +126,10 @@ export function CustomRiskRulesEditor({
               }
               className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-3 font-mono transition-colors ${chipHeight} ${
                 selected
-                  ? 'border-indigo-500 bg-indigo-500/10 text-zinc-100'
+                  ? 'border-indigo-500 bg-indigo-500/10 text-fg'
                   : invalid && rule.enabled
-                    ? 'border-dashed border-amber-700/60 bg-zinc-800 text-zinc-300 hover:bg-state-mid'
-                    : 'border-edge bg-zinc-800 text-zinc-200 hover:bg-state-mid active:bg-state-mid'
+                    ? 'border-dashed border-amber-700/60 bg-surface-raised text-fg-secondary hover:bg-state-mid'
+                    : 'border-edge bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid'
               } ${rule.enabled ? '' : 'opacity-50'}`}
             >
               <span
@@ -146,7 +146,7 @@ export function CustomRiskRulesEditor({
         <button
           type="button"
           onClick={addRule}
-          className={`inline-flex items-center gap-1.5 rounded-lg border border-dashed border-edge-strong px-3 text-zinc-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300 ${chipHeight}`}
+          className={`inline-flex items-center gap-2 rounded-lg border border-dashed border-edge-strong px-3 text-fg-secondary transition-colors hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300 ${chipHeight}`}
         >
           <Plus className="h-3.5 w-3.5" />
           添加规则
@@ -183,13 +183,13 @@ function RuleEditor({
 }) {
   const error = validateCustomRule(rule);
   const input = `${fieldClass} w-full min-w-0 font-mono ${
-    compact ? 'px-3 py-2.5 text-base' : 'px-3 py-2 text-sm'
+    compact ? 'px-3 py-3 text-body' : 'px-3 py-2 text-body'
   }`;
-  const caption = 'text-xs text-zinc-500';
+  const caption = 'text-meta text-fg-tertiary';
 
   return (
-    <div className="space-y-3 rounded-xl border border-edge bg-zinc-950/30 p-3">
-      <div className="grid grid-cols-2 gap-2.5">
+    <div className="space-y-3 rounded-xl border border-edge bg-surface-sunken/30 p-3">
+      <div className="grid grid-cols-2 gap-3">
         <label className="min-w-0 space-y-1">
           <span className={caption}>命令</span>
           <input
@@ -221,7 +221,7 @@ function RuleEditor({
         </label>
       </div>
       {error && rule.command !== '' && (
-        <p className="text-xs text-amber-400/90">{error}，填好之前这条规则不生效。</p>
+        <p className="text-meta text-amber-400/90">{error}，填好之前这条规则不生效。</p>
       )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Toggle
@@ -241,8 +241,8 @@ function RuleEditor({
           <button
             type="button"
             onClick={onRemove}
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-edge text-zinc-300 transition-colors hover:border-red-700/50 hover:bg-red-500/10 hover:text-red-300 active:bg-red-500/10 active:text-red-300 ${
-              compact ? 'min-h-11 px-3.5 text-sm' : 'min-h-9 px-3 text-sm'
+            className={`inline-flex flex-shrink-0 items-center gap-2 rounded-lg border border-edge text-fg-secondary transition-colors hover:border-red-700/50 hover:bg-red-500/10 hover:text-red-300 active:bg-red-500/10 active:text-red-300 ${
+              compact ? 'min-h-11 px-4 text-body' : 'min-h-9 px-3 text-body'
             }`}
             aria-label="删除这条规则"
           >

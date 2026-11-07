@@ -229,7 +229,7 @@ export default function CompressModal({
 
       <div
         onAnimationEnd={onExitAnimationEnd}
-        className={`relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-edge shadow-2xl ${
+        className={`relative w-full max-w-lg mx-4 rounded-2xl bg-surface-raised border border-edge shadow-2xl ${
           closing ? 'modal-panel-exit' : 'modal-panel-enter'
         }`}
       >
@@ -237,7 +237,7 @@ export default function CompressModal({
         <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
           <div className="flex items-center gap-2">
             <svg
-              className="w-4 h-4 text-zinc-400"
+              className="w-4 h-4 text-fg-secondary"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -249,12 +249,12 @@ export default function CompressModal({
                 d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
               />
             </svg>
-            <h2 className="text-sm font-medium text-zinc-200">压缩文件夹</h2>
+            <h2 className="text-read font-medium text-fg">压缩文件夹</h2>
           </div>
           {!isRunning && (
             <button
               onClick={handleClose}
-              className="text-zinc-400 hover:text-zinc-200 text-xl leading-none p-1"
+              className="text-fg-secondary hover:text-fg text-xl leading-none p-1"
               aria-label="关闭"
             >
               &times;
@@ -265,15 +265,15 @@ export default function CompressModal({
         <div className="p-4 space-y-4">
           {/* 源目录 */}
           <div>
-            <label className="block text-xs text-zinc-500 mb-1">源目录</label>
-            <div className="px-3 py-2 rounded-lg bg-zinc-900/60 border border-edge/50 text-xs text-zinc-400 font-mono break-all">
+            <label className="block text-meta text-fg-tertiary mb-1">源目录</label>
+            <div className="px-3 py-2 rounded-lg bg-surface/60 border border-edge/50 text-meta text-fg-secondary font-mono break-all">
               {remoteDir}
             </div>
           </div>
 
           {/* 格式选择 */}
           <div>
-            <label className="block text-xs text-zinc-500 mb-1.5">压缩格式</label>
+            <label className="block text-meta text-fg-tertiary mb-1.5">压缩格式</label>
             <div className="flex gap-2">
               {(['tar.gz', 'zip'] as Format[]).map((f) => (
                 <button
@@ -281,17 +281,17 @@ export default function CompressModal({
                   type="button"
                   disabled={isRunning}
                   onClick={() => handleFormatChange(f)}
-                  className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg text-meta transition-colors ${
                     format === f
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-zinc-700/50 text-zinc-300 hover:bg-state-mid'
+                      : 'bg-zinc-700/50 text-fg-secondary hover:bg-state-mid'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   {f}
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-[10px] text-zinc-600">
+            <p className="mt-1 text-caption text-fg-disabled">
               {format === 'tar.gz'
                 ? 'Linux 通用，gzip 压缩。Windows 用户下载后需用 7-Zip / WSL 解压'
                 : 'Windows 友好，需服务器已安装 zip 命令'}
@@ -300,16 +300,16 @@ export default function CompressModal({
 
           {/* 目标路径 */}
           <div>
-            <label className="block text-xs text-zinc-500 mb-1">目标路径</label>
+            <label className="block text-meta text-fg-tertiary mb-1">目标路径</label>
             <input
               type="text"
               value={targetPath}
               disabled={isRunning}
               onChange={(e) => setTargetPath(e.target.value)}
               placeholder="/path/to/archive.tar.gz"
-              className="w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-xs text-zinc-100 font-mono outline-none focus:border-indigo-500 disabled:opacity-50"
+              className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg font-mono outline-none focus:border-indigo-500 disabled:opacity-50"
             />
-            <p className="mt-1 text-[10px] text-zinc-600">
+            <p className="mt-1 text-caption text-fg-disabled">
               默认压缩到源目录的父目录，避免递归包含
             </p>
           </div>
@@ -323,28 +323,28 @@ export default function CompressModal({
               onChange={(e) => setOverwrite(e.target.checked)}
               className="w-3.5 h-3.5 rounded border-zinc-500 bg-zinc-600 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
             />
-            <span className="text-xs text-zinc-300">覆盖已存在的目标文件</span>
+            <span className="text-meta text-fg-secondary">覆盖已存在的目标文件</span>
           </label>
 
           {/* 错误提示 */}
           {error && (
-            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300 max-h-32 overflow-y-auto">
+            <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-meta text-red-300 max-h-32 overflow-y-auto">
               {error}
             </div>
           )}
 
           {/* 压缩中状态 */}
           {isRunning && (
-            <div className="rounded-lg bg-zinc-900/50 border border-edge/50 p-3 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-zinc-300">
+            <div className="rounded-lg bg-surface/50 border border-edge/50 p-3 space-y-2">
+              <div className="flex items-center justify-between text-meta">
+                <div className="flex items-center gap-2 text-fg-secondary">
                   <svg className="w-3.5 h-3.5 animate-spin text-indigo-400" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
                   正在压缩「{basename}」...
                 </div>
-                <span className="text-zinc-500 tabular-nums">{timeStr}</span>
+                <span className="text-fg-tertiary tabular-nums">{timeStr}</span>
               </div>
 
               {outputChunks.length > 0 && (
@@ -352,12 +352,12 @@ export default function CompressModal({
                   <button
                     type="button"
                     onClick={() => setShowOutput((s) => !s)}
-                    className="text-[10px] text-zinc-500 hover:text-zinc-400"
+                    className="text-caption text-fg-tertiary hover:text-fg-secondary"
                   >
                     {showOutput ? '▼ 隐藏输出' : '▶ 显示输出'}（{outputChunks.length} 行）
                   </button>
                   {showOutput && (
-                    <pre className="mt-1 max-h-32 overflow-auto text-[10px] text-zinc-500 font-mono bg-zinc-950/50 rounded p-2 whitespace-pre-wrap break-all">
+                    <pre className="mt-1 max-h-32 overflow-auto text-caption text-fg-tertiary font-mono bg-surface-sunken/50 rounded p-2 whitespace-pre-wrap break-all">
                       {outputChunks.join('')}
                     </pre>
                   )}
@@ -368,12 +368,12 @@ export default function CompressModal({
 
           {/* 完成状态 */}
           {phase === 'done' && (
-            <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300">
+            <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-meta text-emerald-300">
               ✓ 压缩完成：{targetPath}
             </div>
           )}
           {phase === 'cancelled' && (
-            <div className="px-3 py-2 rounded-lg bg-zinc-500/10 border border-zinc-500/20 text-xs text-zinc-400">
+            <div className="px-3 py-2 rounded-lg bg-zinc-500/10 border border-zinc-500/20 text-meta text-fg-secondary">
               已取消
             </div>
           )}
@@ -385,7 +385,7 @@ export default function CompressModal({
             <button
               type="button"
               onClick={handleCancel}
-              className="px-3 py-1.5 rounded-lg text-xs text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30"
+              className="px-3 py-1.5 rounded-lg text-meta text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30"
             >
               取消压缩
             </button>
@@ -394,7 +394,7 @@ export default function CompressModal({
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
               >
                 {isFinished ? '关闭' : '取消'}
               </button>
@@ -403,7 +403,7 @@ export default function CompressModal({
                   type="button"
                   onClick={handleStart}
                   disabled={!targetPath.trim()}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-lg text-meta text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   开始压缩
                 </button>

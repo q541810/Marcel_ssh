@@ -216,7 +216,7 @@ export default function MobileCompressSheet({
           <button
             type="button"
             onClick={() => void handleCancel()}
-            className="w-full rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 active:bg-red-500/20"
+            className="w-full rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-body text-red-300 active:bg-red-500/20"
           >
             取消压缩
           </button>
@@ -225,7 +225,7 @@ export default function MobileCompressSheet({
             <button
               type="button"
               onClick={handleClose}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               {isFinished ? '关闭' : '取消'}
             </button>
@@ -234,7 +234,7 @@ export default function MobileCompressSheet({
                 type="button"
                 onClick={() => void handleStart()}
                 disabled={!targetPath.trim()}
-                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
               >
                 开始压缩
               </button>
@@ -245,14 +245,14 @@ export default function MobileCompressSheet({
     >
       <div className="flex flex-col gap-3 px-4 pb-3">
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">源目录</label>
-          <div className="break-all rounded-lg border border-edge/50 bg-zinc-900/60 px-3 py-2 font-mono text-xs text-zinc-400">
+          <label className="mb-1 block text-meta text-fg-tertiary">源目录</label>
+          <div className="break-all rounded-lg border border-edge/50 bg-surface/60 px-3 py-2 font-mono text-meta text-fg-secondary">
             {remoteDir}
           </div>
         </div>
 
         <div>
-          <label className="mb-1.5 block text-xs text-zinc-500">压缩格式</label>
+          <label className="mb-1.5 block text-meta text-fg-tertiary">压缩格式</label>
           <div className="flex gap-2">
             {(['tar.gz', 'zip'] as ArchiveFormat[]).map((f) => (
               <button
@@ -260,17 +260,17 @@ export default function MobileCompressSheet({
                 type="button"
                 disabled={isRunning}
                 onClick={() => handleFormatChange(f)}
-                className={`rounded-lg px-3 py-2 text-xs ${
+                className={`rounded-lg px-3 py-2 text-meta ${
                   format === f
                     ? 'bg-indigo-600 text-white'
-                    : 'bg-zinc-800 text-zinc-300 active:bg-state-mid'
+                    : 'bg-surface-raised text-fg-secondary active:bg-state-mid'
                 } disabled:opacity-50`}
               >
                 {f}
               </button>
             ))}
           </div>
-          <p className="mt-1 text-[10px] text-zinc-600">
+          <p className="mt-1 text-caption text-fg-disabled">
             {format === 'tar.gz'
               ? 'Linux 通用，gzip 压缩。Windows 用户下载后需用 7-Zip / WSL 解压'
               : 'Windows 友好，需服务器已安装 zip 命令'}
@@ -278,7 +278,7 @@ export default function MobileCompressSheet({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">目标路径</label>
+          <label className="mb-1 block text-meta text-fg-tertiary">目标路径</label>
           <input
             type="text"
             value={targetPath}
@@ -288,9 +288,9 @@ export default function MobileCompressSheet({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-50"
+            className="w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-meta text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-50"
           />
-          <p className="mt-1 text-[10px] text-zinc-600">
+          <p className="mt-1 text-caption text-fg-disabled">
             默认压缩到源目录的父目录，避免递归包含
           </p>
         </div>
@@ -303,26 +303,26 @@ export default function MobileCompressSheet({
             onChange={(e) => setOverwrite(e.target.checked)}
             className="h-4 w-4 rounded border-zinc-500 bg-zinc-600 text-indigo-500"
           />
-          <span className="text-xs text-zinc-300">覆盖已存在的目标文件</span>
+          <span className="text-meta text-fg-secondary">覆盖已存在的目标文件</span>
         </label>
 
         {error && (
-          <div className="max-h-32 overflow-y-auto rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <div className="max-h-32 overflow-y-auto rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-meta text-red-300">
             {error}
           </div>
         )}
 
         {isRunning && (
-          <div className="flex flex-col gap-2 rounded-lg border border-edge/50 bg-zinc-900/50 p-3">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-zinc-300">
+          <div className="flex flex-col gap-2 rounded-lg border border-edge/50 bg-surface/50 p-3">
+            <div className="flex items-center justify-between text-meta">
+              <div className="flex items-center gap-2 text-fg-secondary">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
                 正在压缩「{basename}」...
               </div>
-              <span className="tabular-nums text-zinc-500">{timeStr}</span>
+              <span className="tabular-nums text-fg-tertiary">{timeStr}</span>
             </div>
             {outputChunks.length > 0 && (
-              <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950/50 p-2 font-mono text-[10px] text-zinc-500">
+              <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-surface-sunken/50 p-2 font-mono text-caption text-fg-tertiary">
                 {outputChunks.join('')}
               </pre>
             )}
@@ -330,12 +330,12 @@ export default function MobileCompressSheet({
         )}
 
         {phase === 'done' && (
-          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-meta text-emerald-300">
             ✓ 压缩完成：{targetPath}
           </div>
         )}
         {phase === 'cancelled' && (
-          <div className="rounded-lg border border-zinc-500/20 bg-zinc-500/10 px-3 py-2 text-xs text-zinc-400">
+          <div className="rounded-lg border border-zinc-500/20 bg-zinc-500/10 px-3 py-2 text-meta text-fg-secondary">
             已取消
           </div>
         )}

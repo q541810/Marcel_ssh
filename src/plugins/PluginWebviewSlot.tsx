@@ -150,22 +150,22 @@ export default function PluginWebviewSlot({ provider }: Props) {
   if (error) {
     const isRuntime = errorPhase === 'runtime';
     return (
-      <div ref={ref} className="w-full h-full flex items-center justify-center bg-zinc-900">
+      <div ref={ref} className="w-full h-full flex items-center justify-center bg-surface">
         <div className="text-center space-y-3 px-4 max-w-md">
-          <div className="text-red-400 text-sm font-medium">
+          <div className="text-red-400 text-read font-medium">
             {isRuntime ? '插件运行时错误' : '插件加载失败'}
           </div>
-          <div className="text-zinc-500 text-xs break-all">{error}</div>
+          <div className="text-fg-tertiary text-meta break-all">{error}</div>
           {isRuntime ? (
             <div className="flex items-center justify-center gap-2">
               <button
                 type="button"
                 onClick={handleDisable}
-                className="px-3 py-1.5 text-xs bg-zinc-700 text-zinc-200 rounded-lg hover:bg-state-strong transition-colors"
+                className="px-3 py-1.5 text-meta bg-zinc-700 text-fg rounded-lg hover:bg-state-strong transition-colors"
               >
                 禁用此插件
               </button>
-              <span className="text-[11px] text-zinc-600">
+              <span className="text-caption text-fg-disabled">
                 请联系插件作者或检查代码
               </span>
             </div>
@@ -173,7 +173,7 @@ export default function PluginWebviewSlot({ provider }: Props) {
             <button
               type="button"
               onClick={handleRetry}
-              className="mt-2 px-3 py-1.5 text-xs bg-zinc-700 text-zinc-200 rounded-lg hover:bg-state-strong transition-colors"
+              className="mt-2 px-3 py-1.5 text-meta bg-zinc-700 text-fg rounded-lg hover:bg-state-strong transition-colors"
             >
               重试
             </button>

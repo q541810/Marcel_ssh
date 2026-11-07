@@ -163,21 +163,21 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
 
     return (
       <div
-        className={`absolute bottom-full left-0 mb-2 w-80 max-w-[min(24rem,calc(100vw-2rem))] z-50 overflow-hidden rounded-xl border border-edge/80 bg-zinc-900/95 backdrop-blur-xl shadow-2xl ${
+        className={`absolute bottom-full left-0 mb-2 w-80 max-w-[min(24rem,calc(100vw-2rem))] z-50 overflow-hidden origin-bottom-left rounded-xl surface-glass ${
           presence.phase === 'exit' ? 'animate-slide-down-out' : 'animate-slide-up'
         }`}
         style={{ transformOrigin: 'bottom left' }}
       >
         <div ref={listRef} role="listbox" className="max-h-72 overflow-y-auto overscroll-contain py-1">
           {entries.length === 0 && (
-            <div className="px-3 py-3 text-xs text-zinc-500">无匹配的指令</div>
+            <div className="px-3 py-3 text-meta text-fg-tertiary">无匹配的指令</div>
           )}
           {entries.map((entry) => {
             if (entry.kind === 'header') {
               return (
                 <div
                   key={`header-${entry.title}`}
-                  className="px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500"
+                  className="px-3 pt-2.5 pb-1 text-caption font-semibold uppercase tracking-wider text-fg-tertiary"
                 >
                   {entry.title}
                 </div>
@@ -201,17 +201,17 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-sm font-semibold ${
-                        active ? 'text-indigo-200' : 'text-zinc-200'
+                      className={`text-read font-semibold ${
+                        active ? 'text-indigo-200' : 'text-fg'
                       }`}
                     >
                       {entry.mode.label}
                     </span>
                     {isCurrent && (
-                      <span className="text-[10px] font-medium text-indigo-400">已选</span>
+                      <span className="text-caption font-medium text-indigo-400">已选</span>
                     )}
                   </div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                  <div className="mt-0.5 text-meta leading-relaxed text-fg-tertiary">
                     {entry.mode.description}
                   </div>
                 </div>
@@ -232,18 +232,18 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-sm font-medium truncate ${
-                        active ? 'text-indigo-200' : 'text-zinc-200'
+                      className={`text-read font-medium truncate ${
+                        active ? 'text-indigo-200' : 'text-fg'
                       }`}
                     >
                       {entry.skill.name}
                     </span>
                     {!entry.skill.enabled && (
-                      <span className="flex-shrink-0 text-[10px] text-zinc-500">未启用</span>
+                      <span className="flex-shrink-0 text-caption text-fg-tertiary">未启用</span>
                     )}
                   </div>
                   {entry.skill.description && (
-                    <div className="mt-0.5 truncate text-xs text-zinc-500">
+                    <div className="mt-0.5 truncate text-meta text-fg-tertiary">
                       {entry.skill.description}
                     </div>
                   )}
@@ -264,14 +264,14 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                 }`}
               >
                 <span
-                  className={`text-sm ${
-                    active ? 'text-indigo-100' : 'text-zinc-200'
+                  className={`text-read ${
+                    active ? 'text-indigo-100' : 'text-fg'
                   }`}
                 >
                   {entry.label}
                 </span>
                 {entry.hint && (
-                  <span className="flex-shrink-0 text-[10px] text-zinc-500">
+                  <span className="flex-shrink-0 text-caption text-fg-tertiary">
                     {entry.hint}
                   </span>
                 )}

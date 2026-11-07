@@ -50,20 +50,20 @@ export function ToolApprovalEditor({
   const groups = addableGroups(levels, available ?? undefined);
   // 正在编辑的工具被别处移掉了（例如配置被外部改了），就当没有打开。
   const editingName = editing !== null && listed.includes(editing) ? editing : null;
-  const chipHeight = compact ? 'min-h-10 text-sm' : 'min-h-8 text-xs';
+  const chipHeight = compact ? 'min-h-10 text-body' : 'min-h-8 text-meta';
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={onOpenCommandRules}
           title="命令要不要问你，由命令确认方式和命令规则决定，点这里去看"
           aria-label={`${COMMAND_TOOL.label}：按命令规则`}
-          className={`inline-flex max-w-full items-center gap-2 rounded-lg border border-edge bg-zinc-800 px-3 text-zinc-300 transition-colors hover:bg-state-mid active:bg-state-mid ${chipHeight}`}
+          className={`inline-flex max-w-full items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 text-fg-secondary transition-colors hover:bg-state-mid active:bg-state-mid ${chipHeight}`}
         >
           {COMMAND_TOOL.label}
-          <ChevronRight className="-mr-1 h-3.5 w-3.5 flex-shrink-0 text-zinc-500" />
+          <ChevronRight className="-mr-1 h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" />
         </button>
         {listed.map((name) => {
           const info = toolInfo(name);
@@ -81,8 +81,8 @@ export function ToolApprovalEditor({
               title={`${info.label}（${name}）：${RULE_LEVEL_LABELS[level]}`}
               className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-3 transition-colors ${chipHeight} ${
                 selected
-                  ? 'border-indigo-500 bg-indigo-500/10 text-zinc-100'
-                  : 'border-edge bg-zinc-800 text-zinc-200 hover:bg-state-mid active:bg-state-mid'
+                  ? 'border-indigo-500 bg-indigo-500/10 text-fg'
+                  : 'border-edge bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid'
               }`}
             >
               <span
@@ -99,17 +99,17 @@ export function ToolApprovalEditor({
             setAdding((v) => !v);
           }}
           aria-expanded={adding}
-          className={`inline-flex items-center gap-1.5 rounded-lg border border-dashed px-3 transition-colors ${chipHeight} ${
+          className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 transition-colors ${chipHeight} ${
             adding
               ? 'border-indigo-500 text-indigo-300'
-              : 'border-edge-strong text-zinc-300 hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300'
+              : 'border-edge-strong text-fg-secondary hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300'
           }`}
         >
           + 添加工具
         </button>
       </div>
 
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-meta leading-relaxed text-fg-tertiary">
         命令确认方式选了「每条都确认」时，自带审批的工具（如编辑文件、上传下载）即使把它从这里移掉，仍会问你。
       </p>
 
@@ -126,20 +126,20 @@ export function ToolApprovalEditor({
       )}
 
       {adding && (
-        <div className="space-y-2 rounded-xl border border-edge bg-zinc-950/30 p-3">
+        <div className="space-y-2 rounded-xl border border-edge bg-surface-sunken/30 p-3">
           {groups.length === 0 && (
-            <p className="text-xs text-zinc-500">没有更多可添加的工具了</p>
+            <p className="text-meta text-fg-tertiary">没有更多可添加的工具了</p>
           )}
           {groups.map((g) => (
             <div key={g.id} className="flex items-start gap-2">
               <span
-                className={`flex-shrink-0 text-xs text-zinc-500 ${
+                className={`flex-shrink-0 text-meta text-fg-tertiary ${
                   compact ? 'w-14 pt-3' : 'w-14 pt-2'
                 }`}
               >
                 {g.label}
               </span>
-              <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+              <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                 {g.tools.map((t) => (
                   <button
                     key={t.name}
@@ -151,8 +151,8 @@ export function ToolApprovalEditor({
                       setEditing(t.name);
                     }}
                     title={t.name}
-                    className={`rounded-lg border border-dashed border-edge-strong px-2.5 text-zinc-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300 ${
-                      compact ? 'min-h-10 text-sm' : 'min-h-7 text-xs'
+                    className={`rounded-lg border border-dashed border-edge-strong px-3 text-fg-secondary transition-colors hover:border-indigo-500 hover:text-indigo-300 active:text-indigo-300 ${
+                      compact ? 'min-h-10 text-body' : 'min-h-7 text-meta'
                     }`}
                   >
                     + {t.label}
@@ -183,16 +183,16 @@ function ToolEditor({
 }) {
   const info = toolInfo(name);
   return (
-    <div className="space-y-2 rounded-xl border border-edge bg-zinc-950/30 p-3">
+    <div className="space-y-2 rounded-xl border border-edge bg-surface-sunken/30 p-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* 手机上控件占的宽度大，标题和控件同一行会把名字挤成省略号：标题独占一行。 */}
         <span
-          className={`truncate text-sm text-zinc-100 ${
+          className={`truncate text-body text-fg ${
             compact ? 'basis-full' : 'min-w-0 flex-1'
           }`}
         >
           {info.label}
-          <span className="ml-1.5 font-mono text-[11px] text-zinc-500">
+          <span className="ml-2 font-mono text-caption text-fg-tertiary">
             {name}
           </span>
         </span>
@@ -217,8 +217,8 @@ function ToolEditor({
               onChange(removeTool(levels, name));
               onRemoved();
             }}
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-edge text-zinc-300 transition-colors hover:border-red-700/50 hover:bg-red-500/10 hover:text-red-300 active:bg-red-500/10 active:text-red-300 ${
-              compact ? 'min-h-11 px-3.5 text-sm' : 'min-h-9 px-3 text-sm'
+            className={`inline-flex flex-shrink-0 items-center gap-2 rounded-lg border border-edge text-fg-secondary transition-colors hover:border-red-700/50 hover:bg-red-500/10 hover:text-red-300 active:bg-red-500/10 active:text-red-300 ${
+              compact ? 'min-h-11 px-4 text-body' : 'min-h-9 px-3 text-body'
             }`}
             aria-label={`${info.label}不再审批`}
             title="这个工具不再额外审批，之后可以从「添加工具」加回来"
@@ -229,7 +229,7 @@ function ToolEditor({
         </span>
       </div>
       {info.alsoLocal && (
-        <p className="text-xs leading-relaxed text-zinc-500">
+        <p className="text-meta leading-relaxed text-fg-tertiary">
           本机子 agent 里的同名工具共用这一条。
         </p>
       )}

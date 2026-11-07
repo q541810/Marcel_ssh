@@ -51,11 +51,11 @@ export function CopyButton({
  */
 export function CodeBlock({ code, touch = false }: { code: string; touch?: boolean }) {
   return (
-    <div className="relative rounded-lg bg-zinc-950 border border-edge-subtle">
+    <div className="relative rounded-lg bg-surface-sunken border border-edge-subtle">
       <div className="absolute top-2 right-2">
         <CopyButton text={code} size={touch ? 'md' : 'sm'} />
       </div>
-      <pre className="overflow-x-auto p-3 pr-24 text-[11px] leading-5 font-mono text-zinc-300">
+      <pre className="overflow-x-auto p-3 pr-24 text-caption leading-5 font-mono text-fg-secondary">
         {code}
       </pre>
     </div>
@@ -65,12 +65,12 @@ export function CodeBlock({ code, touch = false }: { code: string; touch?: boole
 /** 运行状态指示：一眼看出服务在不在跑。 */
 export function StatusPill({ running }: { running: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs">
+    <span className="inline-flex items-center gap-2 text-meta">
       <span
         className={`w-1.5 h-1.5 rounded-full ${running ? 'bg-emerald-400' : 'bg-zinc-600'}`}
         aria-hidden
       />
-      <span className={running ? 'text-emerald-400' : 'text-zinc-500'}>
+      <span className={running ? 'text-emerald-400' : 'text-fg-tertiary'}>
         {running ? '运行中' : '已停止'}
       </span>
     </span>

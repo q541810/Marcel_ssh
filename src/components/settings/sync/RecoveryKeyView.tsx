@@ -12,7 +12,7 @@ export function RecoveryKeyView({ variant, recoveryKey }: { variant: SyncVariant
   return (
     <div className="space-y-3">
       <div
-        className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-edge bg-zinc-900/70 px-4 py-3 text-center font-mono text-lg tracking-wider text-zinc-100 sm:grid-cols-4"
+        className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-edge bg-surface/70 px-4 py-3 text-center font-mono text-title tracking-wider text-fg sm:grid-cols-4"
         aria-label="恢复密钥"
         data-testid="recovery-key"
       >

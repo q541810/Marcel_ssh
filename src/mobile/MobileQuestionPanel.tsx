@@ -52,7 +52,7 @@ export default function MobileQuestionPanel({
 
   return (
     <div
-      className="mobile-panel-enter flex-shrink-0 border-t border-indigo-700/40 bg-zinc-900"
+      className="mobile-panel-enter flex-shrink-0 border-t border-indigo-700/40 bg-surface"
       data-region="mobile-question-panel"
       style={{
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
@@ -61,21 +61,21 @@ export default function MobileQuestionPanel({
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 pb-1 pt-3">
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
+        <span className="min-w-0 flex-1 truncate text-body font-semibold text-fg">
           {current.header}
         </span>
         {current.multiple && (
-          <span className="flex-shrink-0 rounded bg-indigo-600/20 px-1.5 py-0.5 text-[11px] text-indigo-300">
+          <span className="flex-shrink-0 rounded bg-indigo-600/20 px-1.5 py-0.5 text-caption text-indigo-300">
             可多选
           </span>
         )}
         {queueLength > 1 && (
-          <span className="flex-shrink-0 rounded-full border border-indigo-700/50 bg-indigo-900/60 px-1.5 py-0.5 text-[11px] font-medium text-indigo-300">
+          <span className="flex-shrink-0 rounded-full border border-indigo-700/50 bg-indigo-900/60 px-1.5 py-0.5 text-caption font-medium text-indigo-300">
             1/{queueLength}
           </span>
         )}
         {total > 1 && (
-          <span className="flex-shrink-0 text-xs text-zinc-500">
+          <span className="flex-shrink-0 text-meta text-fg-tertiary">
             {index + 1}/{total}
           </span>
         )}
@@ -83,7 +83,7 @@ export default function MobileQuestionPanel({
           <button
             type="button"
             onClick={onMinimize}
-            className="flex-shrink-0 rounded-lg p-1 text-zinc-400 active:bg-state-soft"
+            className="flex-shrink-0 rounded-lg p-1 text-fg-secondary active:bg-state-soft"
             title="收起为浮动条"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -94,7 +94,7 @@ export default function MobileQuestionPanel({
         <button
           type="button"
           onClick={form.skip}
-          className="-mr-2 flex-shrink-0 rounded-lg px-2 py-1 text-xs text-zinc-500 active:bg-state-soft"
+          className="-mr-2 flex-shrink-0 rounded-lg min-h-11 px-2 py-1 text-body text-fg-tertiary active:bg-state-soft"
         >
           跳过
         </button>
@@ -104,16 +104,16 @@ export default function MobileQuestionPanel({
 
       {/* 上下文横条：提问来自哪台机器 / 哪条对话，并给一个去那里的入口 */}
       {(sessionName || conversationTitle) && (
-        <div className="mx-4 mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-edge-subtle bg-zinc-950 p-2">
-          <div className="min-w-0 truncate text-xs text-zinc-300">
-            <span className="font-semibold text-zinc-200">{sessionName || 'SSH 会话'}</span>
-            {conversationTitle && <span className="text-zinc-400"> · {conversationTitle}</span>}
+        <div className="mx-4 mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-edge-subtle bg-surface-sunken p-2">
+          <div className="min-w-0 truncate text-meta text-fg-secondary">
+            <span className="font-semibold text-fg">{sessionName || 'SSH 会话'}</span>
+            {conversationTitle && <span className="text-fg-secondary"> · {conversationTitle}</span>}
           </div>
           {onNavigateToContext && (
             <button
               type="button"
               onClick={onNavigateToContext}
-              className="shrink-0 rounded-lg border border-edge px-2 py-0.5 text-[11px] font-medium text-zinc-300 active:bg-state-soft"
+              className="shrink-0 rounded-lg border border-edge px-2 py-0.5 text-caption font-medium text-fg-secondary active:bg-state-soft"
             >
               跳转
             </button>

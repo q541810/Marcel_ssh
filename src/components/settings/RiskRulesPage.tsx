@@ -39,7 +39,7 @@ export function RiskRulesPage({ compact }: { compact?: boolean }) {
         <button
           type="button"
           onClick={closePage}
-          className="-ml-1 inline-flex items-center gap-0.5 text-sm text-indigo-300 hover:text-indigo-200"
+          className="-ml-1 inline-flex items-center gap-1 text-body text-indigo-300 hover:text-indigo-200"
         >
           <ChevronLeft className="h-4 w-4" />
           命令执行策略
@@ -48,11 +48,11 @@ export function RiskRulesPage({ compact }: { compact?: boolean }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           {!compact && (
-            <h2 className="text-lg font-semibold text-zinc-100">
+            <h2 className="text-title text-fg">
               内置风险规则
             </h2>
           )}
-          <p className="text-xs leading-relaxed text-zinc-500">
+          <p className="text-meta leading-relaxed text-fg-tertiary">
             命令命中任一条就按它的档位处理；同时命中几条，取最严的。
           </p>
         </div>
@@ -67,7 +67,7 @@ export function RiskRulesPage({ compact }: { compact?: boolean }) {
               update({ riskRuleOverrides: {} });
               setConfirmReset(false);
             }}
-            className={`flex-shrink-0 whitespace-nowrap text-xs ${
+            className={`flex-shrink-0 whitespace-nowrap text-meta ${
               confirmReset
                 ? 'text-red-300 hover:text-red-200'
                 : 'text-indigo-300 hover:text-indigo-200 active:text-indigo-200'

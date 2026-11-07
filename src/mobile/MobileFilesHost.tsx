@@ -792,7 +792,7 @@ export default function MobileFilesHost({
   const errorBanner = (edge: 'top' | 'bottom') =>
     error ? (
     <div
-      className={`flex flex-shrink-0 items-center justify-between border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300 ${
+      className={`flex flex-shrink-0 items-center justify-between border-red-500/20 bg-red-500/10 px-3 py-2 text-meta text-red-300 ${
         edge === 'top' ? 'border-b' : 'border-t'
       }`}
     >
@@ -813,7 +813,7 @@ export default function MobileFilesHost({
       EMPTY_STATE_COPY[emptyReason === 'ready' ? 'no-session' : emptyReason];
     return (
       <div
-        className="flex h-full min-h-0 flex-col bg-zinc-950"
+        className="flex h-full min-h-0 flex-col bg-surface-sunken"
         data-region="mobile-files"
       >
         {errorBanner('top')}
@@ -821,10 +821,10 @@ export default function MobileFilesHost({
           className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center"
           style={{ paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' }}
         >
-          <h2 className="text-lg font-semibold text-zinc-100">{copy.title}</h2>
-          <p className="text-sm text-zinc-500">{copy.body}</p>
+          <h2 className="text-title font-semibold text-fg">{copy.title}</h2>
+          <p className="text-body text-fg-tertiary">{copy.body}</p>
           {activeSession && (
-            <p className="text-xs text-zinc-600">
+            <p className="text-meta text-fg-disabled">
               {sessionStatusLabel(activeSession.status)}
             </p>
           )}
@@ -839,27 +839,27 @@ export default function MobileFilesHost({
 
   return (
     <div
-      className="relative flex h-full min-h-0 flex-col bg-zinc-950"
+      className="relative flex h-full min-h-0 flex-col bg-surface-sunken"
       data-region="mobile-files"
     >
       <header
-        className="flex flex-shrink-0 flex-col gap-2 border-b border-edge-subtle bg-zinc-950 px-3 py-2"
+        className="flex flex-shrink-0 flex-col gap-2 border-b border-edge-subtle bg-surface-sunken px-3 py-2"
         style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
       >
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-zinc-100">
+            <div className="truncate text-body font-semibold text-fg">
               {hostLabel}
             </div>
-            <div className="text-[11px] text-emerald-400">已连接 · 文件</div>
+            <div className="text-caption text-emerald-400">已连接 · 文件</div>
           </div>
           <button
             type="button"
             onClick={handleToggleHidden}
-            className={`rounded-lg px-2.5 py-1.5 text-xs active:opacity-80 ${
+            className={`rounded-lg px-2.5 py-1.5 text-meta active:opacity-80 ${
               showHidden
                 ? 'bg-indigo-600/30 text-indigo-200'
-                : 'bg-zinc-800 text-zinc-200 active:bg-state-mid'
+                : 'bg-surface-raised text-fg active:bg-state-mid'
             }`}
             aria-label={showHidden ? '隐藏点文件' : '显示点文件'}
             aria-pressed={showHidden}
@@ -871,7 +871,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 active:bg-state-mid disabled:opacity-50"
+            className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
             aria-label="刷新"
           >
             刷新
@@ -880,14 +880,14 @@ export default function MobileFilesHost({
             type="button"
             onClick={() => void handleUpload()}
             disabled={uploadBusy}
-            className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+            className="rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
           >
             上传
           </button>
           <button
             type="button"
             onClick={() => setShowNewMenu(true)}
-            className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 active:bg-state-mid"
+            className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg active:bg-state-mid"
           >
             新建
           </button>
@@ -897,10 +897,10 @@ export default function MobileFilesHost({
               if (selectMode) exitSelectMode();
               else enterSelectMode();
             }}
-            className={`rounded-lg px-2.5 py-1.5 text-xs active:opacity-80 ${
+            className={`rounded-lg px-2.5 py-1.5 text-meta active:opacity-80 ${
               selectMode
                 ? 'bg-indigo-600/30 text-indigo-200'
-                : 'bg-zinc-800 text-zinc-200 active:bg-state-mid'
+                : 'bg-surface-raised text-fg active:bg-state-mid'
             }`}
             aria-pressed={selectMode}
           >
@@ -913,7 +913,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={handleGoUp}
             disabled={currentPath === '/'}
-            className="flex-shrink-0 rounded-md bg-zinc-800/80 px-2 py-1 text-xs text-zinc-300 active:bg-state-mid disabled:opacity-30"
+            className="flex-shrink-0 rounded-md bg-surface-raised/80 px-2 py-1 text-meta text-fg-secondary active:bg-state-mid disabled:opacity-30"
             aria-label="上级目录"
           >
             ↑
@@ -931,7 +931,7 @@ export default function MobileFilesHost({
       >
         {listLoadingMode === 'empty' ? (
           <div
-            className="flex h-40 flex-col items-center justify-center gap-2 text-sm text-zinc-500"
+            className="flex h-40 flex-col items-center justify-center gap-2 text-body text-fg-tertiary"
             role="status"
             aria-live="polite"
             aria-busy="true"
@@ -940,7 +940,7 @@ export default function MobileFilesHost({
             <span>加载中…</span>
           </div>
         ) : filteredEntries.length === 0 ? (
-          <div className="flex h-32 items-center justify-center text-sm text-zinc-500">
+          <div className="flex h-32 items-center justify-center text-body text-fg-tertiary">
             空目录
           </div>
         ) : (
@@ -971,14 +971,14 @@ export default function MobileFilesHost({
                         enterSelectMode(entry);
                       }
                     }}
-                    className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left active:bg-zinc-900"
+                    className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left active:bg-surface"
                   >
                     {selectMode && (
                       <span
                         className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border ${
                           selected
                             ? 'border-indigo-500 bg-indigo-500 text-white'
-                            : 'border-edge-strong bg-zinc-800 text-transparent'
+                            : 'border-edge-strong bg-surface-raised text-transparent'
                         }`}
                         aria-hidden
                       >
@@ -995,11 +995,11 @@ export default function MobileFilesHost({
                     )}
                     <FileEntryIcon entry={entry} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-zinc-100">
+                      <span className="block truncate text-body text-fg">
                         {entry.name}
                         {entry.is_dir ? '/' : ''}
                       </span>
-                      <span className="block text-[11px] text-zinc-500">
+                      <span className="block text-caption text-fg-tertiary">
                         {entrySubtitle(entry)}
                       </span>
                     </span>
@@ -1011,7 +1011,7 @@ export default function MobileFilesHost({
                         setActionEntry(entry);
                         setActionOpen(true);
                       }}
-                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-state-soft"
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-fg-tertiary active:bg-state-soft"
                       aria-label={`${entry.name} 的更多操作`}
                     >
                       <MoreVertical className="h-4 w-4" />
@@ -1024,12 +1024,12 @@ export default function MobileFilesHost({
         )}
         {listLoadingMode === 'overlay' && (
           <div
-            className="pointer-events-none absolute inset-0 flex items-start justify-center bg-zinc-950/40 pt-10"
+            className="pointer-events-none absolute inset-0 flex items-start justify-center bg-surface-sunken/40 pt-10"
             role="status"
             aria-live="polite"
             aria-busy="true"
           >
-            <div className="flex items-center gap-2 rounded-full border border-edge/80 bg-zinc-900/90 px-3 py-1.5 text-xs text-zinc-300 shadow-lg">
+            <div className="flex items-center gap-2 rounded-full border border-edge/80 bg-surface/90 px-3 py-1.5 text-meta text-fg-secondary shadow-raised">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
               刷新中…
             </div>
@@ -1044,24 +1044,24 @@ export default function MobileFilesHost({
       */}
       {returnTrip && (
         <div
-          className="flex flex-shrink-0 items-center gap-1 border-t border-edge-subtle bg-zinc-900/80 py-1 pl-1.5 pr-1"
+          className="flex flex-shrink-0 items-center gap-1 border-t border-edge-subtle bg-surface/80 py-1 pl-1.5 pr-1"
           role="status"
         >
           <button
             type="button"
             onClick={handleReturnTrip}
-            className="flex flex-shrink-0 items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium text-indigo-300 active:bg-state-soft"
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 px-2.5 py-2 text-body font-medium text-indigo-300 active:bg-state-soft"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
             返回{RETURN_TAB_LABEL[returnTrip.tab]}
           </button>
-          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-500">
+          <span className="min-w-0 flex-1 truncate text-caption text-fg-tertiary">
             已定位到 {returnTrip.name}
           </span>
           <button
             type="button"
             onClick={() => setReturnTrip(null)}
-            className="flex-shrink-0 px-2.5 py-2 text-zinc-500 active:text-zinc-300"
+            className="flex-shrink-0 px-2.5 py-2 text-fg-tertiary active:text-fg-secondary"
             aria-label="关闭"
           >
             ✕
@@ -1071,7 +1071,7 @@ export default function MobileFilesHost({
 
       {opStatus && (
         <div
-          className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300"
+          className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-surface/80 px-3 py-2 text-meta text-fg-secondary"
           role="status"
           aria-live="polite"
         >
@@ -1081,7 +1081,7 @@ export default function MobileFilesHost({
       )}
 
       {clipboard && !opStatus && (
-        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300">
+        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-surface/80 px-3 py-2 text-meta text-fg-secondary">
           <span className="min-w-0 flex-1 truncate">
             {clipboardLabel(clipboard)}
           </span>
@@ -1089,14 +1089,14 @@ export default function MobileFilesHost({
             type="button"
             onClick={() => void handlePaste()}
             disabled={pasteBlocked != null}
-            className="flex-shrink-0 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs text-white active:bg-indigo-500 disabled:opacity-40"
+            className="flex-shrink-0 rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body text-white active:bg-indigo-500 disabled:opacity-40"
           >
             粘贴到此处
           </button>
           <button
             type="button"
             onClick={() => useFileClipboardStore.getState().clear()}
-            className="flex-shrink-0 px-1 text-zinc-500"
+            className="flex-shrink-0 px-1 text-fg-tertiary"
             aria-label="清空剪贴板"
           >
             ✕
@@ -1105,18 +1105,18 @@ export default function MobileFilesHost({
       )}
 
       {pasteBlocked != null && clipboard && (
-        <div className="flex-shrink-0 border-t border-edge-subtle bg-zinc-900/80 px-3 py-1.5 text-[11px] text-amber-300/90">
+        <div className="flex-shrink-0 border-t border-edge-subtle bg-surface/80 px-3 py-1.5 text-caption text-amber-300/90">
           {pasteBlocked}
         </div>
       )}
 
       {pasteNotice && (
-        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2 text-xs text-amber-300">
+        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-surface/80 px-3 py-2 text-meta text-amber-300">
           <span className="min-w-0 flex-1 break-all">{pasteNotice}</span>
           <button
             type="button"
             onClick={() => setPasteNotice(null)}
-            className="flex-shrink-0 px-1 text-zinc-500"
+            className="flex-shrink-0 px-1 text-fg-tertiary"
             aria-label="关闭提示"
           >
             ✕
@@ -1125,7 +1125,7 @@ export default function MobileFilesHost({
       )}
 
       {completion && (
-        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300">
+        <div className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-surface/80 px-3 py-2 text-meta text-fg-secondary">
           <span className="min-w-0 flex-1 break-all">
             {transferCompletionNotice(completion).text}
           </span>
@@ -1136,14 +1136,14 @@ export default function MobileFilesHost({
                 (err) => setError(`复制路径失败：${getErrorMessage(err)}`),
               );
             }}
-            className="flex-shrink-0 rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong"
+            className="flex-shrink-0 rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
           >
             复制路径
           </button>
           <button
             type="button"
             onClick={() => setCompletion(null)}
-            className="flex-shrink-0 px-1 text-zinc-500"
+            className="flex-shrink-0 px-1 text-fg-tertiary"
             aria-label="关闭完成提示"
           >
             ✕
@@ -1156,8 +1156,8 @@ export default function MobileFilesHost({
       <MobileTransferBars />
 
       {selectMode && (
-        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2">
-          <span className="flex-shrink-0 whitespace-nowrap text-xs text-zinc-300">
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-t border-edge-subtle bg-surface/80 px-3 py-2">
+          <span className="flex-shrink-0 whitespace-nowrap text-meta text-fg-secondary">
             已选 {multiSelected.size} 个
           </span>
           <button
@@ -1171,7 +1171,7 @@ export default function MobileFilesHost({
                 );
               }
             }}
-            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong"
+            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
           >
             {multiSelected.size === filteredEntries.length &&
             filteredEntries.length > 0
@@ -1188,7 +1188,7 @@ export default function MobileFilesHost({
                   setRenameValue(soleSelected.name);
                   exitSelectMode();
                 }}
-                className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong"
+                className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
               >
                 重命名
               </button>
@@ -1199,7 +1199,7 @@ export default function MobileFilesHost({
                     setCompressEntry(soleSelected);
                     exitSelectMode();
                   }}
-                  className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong"
+                  className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
                 >
                   压缩
                 </button>
@@ -1215,7 +1215,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
           >
             复制
           </button>
@@ -1228,7 +1228,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
           >
             剪切
           </button>
@@ -1240,7 +1240,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-100 active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
           >
             复制路径
           </button>
@@ -1252,14 +1252,14 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0 || opStatus != null}
-            className="rounded-lg bg-red-900/50 px-2.5 py-1.5 text-xs text-red-300 active:bg-red-900/80 disabled:opacity-40"
+            className="rounded-lg min-h-11 bg-red-900/50 px-2.5 py-1.5 text-body text-red-300 active:bg-red-900/80 disabled:opacity-40"
           >
             删除
           </button>
           <button
             type="button"
             onClick={exitSelectMode}
-            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 active:bg-state-strong"
+            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg-secondary active:bg-state-strong"
           >
             取消
           </button>
@@ -1379,7 +1379,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setActionOpen(false)}
-              className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+              className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
             >
               取消
             </button>
@@ -1396,7 +1396,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setShowNewFolder(false)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1404,7 +1404,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleMkdir()}
               disabled={!newFolderName.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
             >
               创建
             </button>
@@ -1423,7 +1423,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
             autoFocus
           />
         </div>
@@ -1440,21 +1440,21 @@ export default function MobileFilesHost({
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
           {deleteConfirm.length === 1 ? (
-            <p className="break-all pb-1 text-sm text-zinc-400">
+            <p className="break-all pb-1 text-body text-fg-secondary">
               删除 {deleteConfirm[0].is_dir ? '目录' : '文件'}「
               {deleteConfirm[0].name}
               」？此操作不可撤销。
             </p>
           ) : (
-            <div className="max-h-40 overflow-y-auto pb-1 text-sm text-zinc-400">
+            <div className="max-h-40 overflow-y-auto pb-1 text-body text-fg-secondary">
               {deleteConfirm.slice(0, 10).map((e) => (
-                <p key={e.name} className="break-all text-zinc-200">
+                <p key={e.name} className="break-all text-fg">
                   {e.name}
                   {e.is_dir ? '/' : ''}
                 </p>
               ))}
               {deleteConfirm.length > 10 && (
-                <p className="text-zinc-500">
+                <p className="text-fg-tertiary">
                   等 {deleteConfirm.length} 个条目…
                 </p>
               )}
@@ -1464,7 +1464,7 @@ export default function MobileFilesHost({
           <button
             type="button"
             onClick={() => void runDelete(deleteConfirm, false)}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+            className="rounded-xl bg-red-600 px-4 py-3 text-body font-medium text-white active:bg-red-500"
           >
             删除
           </button>
@@ -1472,12 +1472,12 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => void runDelete(deleteConfirm, true)}
-              className="rounded-xl bg-zinc-800 px-4 py-3 text-left active:bg-state-mid"
+              className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
             >
-              <span className="block text-sm font-medium text-red-400">
+              <span className="block text-body font-medium text-red-400">
                 快速删除
               </span>
-              <span className="mt-0.5 block text-xs text-zinc-500">
+              <span className="mt-0.5 block text-meta text-fg-tertiary">
                 打包成一条 rm 命令执行，大目录更快
               </span>
             </button>
@@ -1485,7 +1485,7 @@ export default function MobileFilesHost({
           <button
             type="button"
             onClick={() => setDeleteConfirm([])}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>
@@ -1505,7 +1505,7 @@ export default function MobileFilesHost({
               setNewFolderName('');
               setShowNewFolder(true);
             }}
-            className="rounded-xl bg-zinc-800 px-4 py-3 text-left text-sm text-zinc-100 active:bg-state-mid"
+            className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
           >
             新建文件夹
           </button>
@@ -1516,14 +1516,14 @@ export default function MobileFilesHost({
               setNewFileName('');
               setShowNewFile(true);
             }}
-            className="rounded-xl bg-zinc-800 px-4 py-3 text-left text-sm text-zinc-100 active:bg-state-mid"
+            className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
           >
             新建文件
           </button>
           <button
             type="button"
             onClick={() => setShowNewMenu(false)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>
@@ -1539,7 +1539,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setShowNewFile(false)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1547,7 +1547,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleMkfile()}
               disabled={!newFileName.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
             >
               创建
             </button>
@@ -1566,7 +1566,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
             autoFocus
           />
         </div>
@@ -1578,9 +1578,9 @@ export default function MobileFilesHost({
         title="解压文件"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="break-all pb-1 text-sm text-zinc-400">
+          <p className="break-all pb-1 text-body text-fg-secondary">
             将「{extractEntry?.name}」解压到{' '}
-            <span className="text-zinc-300">{currentPath}</span>
+            <span className="text-fg-secondary">{currentPath}</span>
             ，选择解压位置：
           </p>
           <button
@@ -1593,12 +1593,12 @@ export default function MobileFilesHost({
                 joinRemotePath(currentPath, stem),
               );
             }}
-            className="rounded-xl bg-zinc-800 px-4 py-3 text-left active:bg-state-mid"
+            className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
           >
-            <span className="block text-sm font-medium text-zinc-100">
+            <span className="block text-body font-medium text-fg">
               解压到同名子文件夹
             </span>
-            <span className="mt-0.5 block break-all text-xs text-zinc-500">
+            <span className="mt-0.5 block break-all text-meta text-fg-tertiary">
               在当前目录下创建「
               {extractEntry ? archiveStem(extractEntry.name) : ''}
               」文件夹并解压到其中
@@ -1610,19 +1610,19 @@ export default function MobileFilesHost({
               if (!extractEntry) return;
               void handleExtract(extractEntry, currentPath);
             }}
-            className="rounded-xl bg-zinc-800 px-4 py-3 text-left active:bg-state-mid"
+            className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
           >
-            <span className="block text-sm font-medium text-zinc-100">
+            <span className="block text-body font-medium text-fg">
               解压到当前目录
             </span>
-            <span className="mt-0.5 block text-xs text-zinc-500">
+            <span className="mt-0.5 block text-meta text-fg-tertiary">
               直接解压到当前目录，保留压缩包内部结构
             </span>
           </button>
           <button
             type="button"
             onClick={() => setExtractEntry(null)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>
@@ -1650,7 +1650,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setRenameEntry(null)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
+              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1658,7 +1658,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleRename()}
               disabled={!renameValue.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
             >
               确定
             </button>
@@ -1676,7 +1676,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none focus:border-indigo-500"
             autoFocus
           />
         </div>
@@ -1733,16 +1733,16 @@ function TransferBar({
 }) {
   const pct = transferProgressPercent(written, total);
   return (
-    <div className="flex flex-shrink-0 flex-col gap-1 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2">
+    <div className="flex flex-shrink-0 flex-col gap-1 border-t border-edge-subtle bg-surface/80 px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-zinc-300">
+        <span className="min-w-0 flex-1 truncate text-meta text-fg-secondary">
           {statusText}
         </span>
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
-            className="flex-shrink-0 rounded-md bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300"
+            className="flex-shrink-0 rounded-md bg-zinc-700/60 px-2 py-0.5 text-meta text-fg-secondary"
           >
             取消
           </button>
@@ -1751,7 +1751,7 @@ function TransferBar({
       {total > 0 && (
         <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-700">
           <div
-            className="h-full rounded-full bg-indigo-500 transition-all duration-200"
+            className="h-full rounded-full bg-indigo-500 transition-[width] duration-200"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -1777,8 +1777,8 @@ function SheetAction({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-xl bg-zinc-800 px-4 py-3 text-left text-sm active:bg-state-mid disabled:opacity-40 ${
-        danger ? 'text-red-400' : 'text-zinc-100'
+      className={`rounded-xl bg-surface-raised px-4 py-3 text-left text-body active:bg-state-mid disabled:opacity-40 ${
+        danger ? 'text-red-400' : 'text-fg'
       }`}
     >
       {children}

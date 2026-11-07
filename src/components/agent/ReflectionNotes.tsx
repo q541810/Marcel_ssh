@@ -78,8 +78,8 @@ function NoteLine({ note, mobile }: { note: ReflectionNote; mobile: boolean }) {
     }
   };
 
-  const btn = `rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-state-mid/60 active:scale-[0.96] transition disabled:opacity-40 ${
-    mobile ? 'px-2.5 py-1.5 text-xs' : 'px-1.5 py-0.5 text-[11px]'
+  const btn = `rounded-md text-fg-secondary hover:text-fg hover:bg-state-mid/60 pressable disabled:opacity-40 ${
+    mobile ? 'px-2.5 py-1.5 text-meta' : 'px-1.5 py-0.5 text-caption'
   }`;
 
   return (
@@ -123,7 +123,7 @@ function NoteLine({ note, mobile }: { note: ReflectionNote; mobile: boolean }) {
                   在记忆管理里查看
                 </button>
               </div>
-              {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+              {error && <p className="mt-1 text-meta text-red-400">{error}</p>}
             </div>
           )}
         </ToolCardFrame>
@@ -146,13 +146,13 @@ function OpRow({
   const item = opItem(op);
   if (!item) return null;
   return (
-    <li className="flex min-w-0 items-baseline gap-1.5 text-xs">
-      <span className={`shrink-0 ${op.reverted ? 'text-zinc-600' : 'text-zinc-400'}`}>
+    <li className="flex min-w-0 items-baseline gap-1.5 text-meta">
+      <span className={`shrink-0 ${op.reverted ? 'text-fg-disabled' : 'text-fg-secondary'}`}>
         {op.reverted ? '已撤销' : OP_VERBS[op.op]}
       </span>
-      <span className="shrink-0 text-zinc-600">· {scopeLabel(scopeOf(item), connections)}：</span>
+      <span className="shrink-0 text-fg-disabled">· {scopeLabel(scopeOf(item), connections)}：</span>
       <span
-        className={`min-w-0 flex-1 truncate ${op.reverted ? 'text-zinc-600 line-through' : 'text-zinc-300'}`}
+        className={`min-w-0 flex-1 truncate ${op.reverted ? 'text-fg-disabled line-through' : 'text-fg-secondary'}`}
         title={`${item.title}\n${item.content}`}
       >
         {item.title}
@@ -192,44 +192,44 @@ function IntroCard({ mobile, onDone }: { mobile: boolean; onDone: () => void }) 
   const pad = mobile ? 'px-3.5 py-3' : 'px-4 py-3';
   return (
     <div className={`min-w-0 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] ${pad}`}>
-      <div className="flex items-center gap-1.5 text-[13px] font-medium text-zinc-100">
+      <div className="flex items-center gap-1.5 text-body font-medium text-fg">
         <Sparkles className="h-3.5 w-3.5 text-indigo-300" aria-hidden />
         后台复盘
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+      <p className="mt-1.5 text-meta leading-relaxed text-fg-secondary">
         对话停下来一会儿后，会用{model ? `「${model}」` : '这段对话正在用的模型'}回顾刚才的内容，
         把值得长期记住的习惯、机器上的事实和踩过的坑记下来，下次在这台机器上自动带给 Agent。
         记下的东西会在对话里列出来，每一条都能撤销。
       </p>
-      <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+      <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">
         每次复盘是一次简短的模型调用，花费计入本会话的 token 用量。
         可以在「设置 → 记忆」里换一个便宜的记忆模型，或者关掉它。
       </p>
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1.5 text-meta text-red-400">{error}</p>}
       <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
         {autoReflect ? (
           <button
             type="button"
             disabled={busy}
             onClick={() => void turnOff()}
-            className={`rounded-lg text-zinc-300 hover:bg-state-mid/60 active:scale-[0.97] transition disabled:opacity-40 ${mobile ? 'px-3 py-2 text-xs' : 'px-3 py-1 text-xs'}`}
+            className={`rounded-lg text-fg-secondary hover:bg-state-mid/60 pressable disabled:opacity-40 ${mobile ? 'px-3 py-2 text-meta' : 'px-3 py-1 text-meta'}`}
           >
             {busy ? '正在关闭…' : '关闭后台复盘'}
           </button>
         ) : (
-          <span className="text-xs text-zinc-500">已关闭，可在「设置 → 记忆」重新打开</span>
+          <span className="text-meta text-fg-tertiary">已关闭，可在「设置 → 记忆」重新打开</span>
         )}
         <button
           type="button"
           onClick={() => openMemorySettings()}
-          className={`rounded-lg text-zinc-300 hover:bg-state-mid/60 active:scale-[0.97] transition ${mobile ? 'px-3 py-2 text-xs' : 'px-3 py-1 text-xs'}`}
+          className={`rounded-lg text-fg-secondary hover:bg-state-mid/60 pressable ${mobile ? 'px-3 py-2 text-meta' : 'px-3 py-1 text-meta'}`}
         >
           记忆设置
         </button>
         <button
           type="button"
           onClick={onDone}
-          className={`rounded-lg bg-indigo-600 font-medium text-white hover:bg-indigo-500 active:scale-[0.97] transition ${mobile ? 'px-3.5 py-2 text-xs' : 'px-3 py-1 text-xs'}`}
+          className={`rounded-lg bg-indigo-600 font-medium text-white hover:bg-indigo-500 pressable ${mobile ? 'px-3.5 py-2 text-meta' : 'px-3 py-1 text-meta'}`}
         >
           知道了
         </button>

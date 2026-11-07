@@ -34,8 +34,8 @@ export function MemoryIndicator({
         aria-expanded={open}
         aria-label="这段对话带着的记忆"
         title={offline ? '连接服务器后可查看' : disabled ? '长期记忆已关闭' : `这段对话带着 ${count} 条记忆`}
-        className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-400 disabled:active:scale-100 ${
-          open ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:bg-state-mid hover:text-zinc-100'
+        className={`flex h-7 items-center gap-1 rounded px-1.5 text-meta transition-colors pressable disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-secondary ${
+          open ? 'bg-state-mid text-fg' : 'text-fg-secondary hover:bg-state-mid hover:text-fg'
         } ${!offline && disabled ? 'opacity-50' : ''}`}
       >
         <Bookmark className="h-3.5 w-3.5" aria-hidden />
@@ -44,8 +44,8 @@ export function MemoryIndicator({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(28rem,70vh)] w-72 flex-col overflow-hidden rounded-xl border border-edge bg-zinc-800 p-3 text-xs shadow-2xl animate-fadeIn">
-            <div className="mb-2 shrink-0 border-b border-edge pb-1.5 font-semibold text-zinc-300">记忆</div>
+          <div className="absolute right-0 top-full z-50 mt-2 flex max-h-[min(28rem,70vh)] w-72 flex-col overflow-hidden origin-top-right rounded-xl surface-glass p-3 text-meta animate-fadeIn">
+            <div className="mb-2 shrink-0 border-b border-edge pb-1.5 font-semibold text-fg-secondary">记忆</div>
             <InjectedMemoryList data={data} error={error} focus={focus} onNavigate={() => setOpen(false)} />
           </div>
         </>

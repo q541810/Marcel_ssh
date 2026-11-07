@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { AgentContentBand } from './AgentContentBand';
 
 type RollbackNoticeBarProps = {
@@ -11,9 +12,9 @@ type RollbackNoticeBarProps = {
 export function RollbackNoticeBar({ notice, onDismiss, variant = 'rollback' }: RollbackNoticeBarProps) {
   const isError = variant === 'error';
   return (
-    <AgentContentBand className="flex-shrink-0 border-t border-edge-subtle bg-zinc-900/90 backdrop-blur animate-fadeIn">
+    <AgentContentBand className="flex-shrink-0 border-t border-edge-subtle bg-surface/90 backdrop-blur animate-fadeIn">
       <div
-        className={`flex items-center justify-between gap-2 py-2 text-xs ${
+        className={`flex items-center justify-between gap-2 py-2 text-meta ${
           isError ? 'text-red-200' : 'text-amber-200'
         }`}
       >
@@ -40,22 +41,10 @@ export function RollbackNoticeBar({ notice, onDismiss, variant = 'rollback' }: R
         <button
           type="button"
           onClick={onDismiss}
-          className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-soft transition-colors"
+          className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-soft transition-colors"
           title="关闭"
         >
-          <svg
-            className="w-3.5 h-3.5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+          <X className="w-3.5 h-3.5" strokeWidth={1.5} />
         </button>
       </div>
     </AgentContentBand>

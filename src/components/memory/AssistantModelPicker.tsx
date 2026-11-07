@@ -25,7 +25,7 @@ export default function AssistantModelPicker({ mobile = false }: { mobile?: bool
 
   const hint = choice.source === 'chosen' ? '' : choice.source === 'none' ? '' : '（未单独选）';
   return (
-    <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-edge/70 px-4 py-2 text-xs text-zinc-400">
+    <div className="flex min-w-0 flex-shrink-0 items-center gap-2 border-b border-edge/70 px-4 py-2 text-meta text-fg-secondary">
       <span className="flex-shrink-0">用这个模型整理</span>
       {mobile ? (
         <>
@@ -33,13 +33,13 @@ export default function AssistantModelPicker({ mobile = false }: { mobile?: bool
             type="button"
             disabled={running}
             onClick={() => setSheet(true)}
-            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-zinc-800 px-3 text-left text-sm text-zinc-100 active:bg-state-mid disabled:opacity-50"
+            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 text-left text-body text-fg active:bg-state-mid disabled:opacity-50"
           >
             <span className="truncate">
               {label || '尚未配置模型'}
-              {hint && <span className="text-zinc-500">{hint}</span>}
+              {hint && <span className="text-fg-tertiary">{hint}</span>}
             </span>
-            <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" aria-hidden />
+            <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" aria-hidden />
           </button>
           <MobileModelPickerSheet
             open={sheet}
@@ -53,7 +53,7 @@ export default function AssistantModelPicker({ mobile = false }: { mobile?: bool
           />
         </>
       ) : (
-        <Select value={chosenId} onChange={setModelId} options={options} disabled={running} className="min-w-0 flex-1 [&_button]:py-1 [&_button]:text-xs" />
+        <Select value={chosenId} onChange={setModelId} options={options} disabled={running} className="min-w-0 flex-1 [&_button]:py-1 [&_button]:text-meta" />
       )}
     </div>
   );

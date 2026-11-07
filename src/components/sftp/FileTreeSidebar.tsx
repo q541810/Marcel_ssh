@@ -136,7 +136,7 @@ export default function FileTreeSidebar({
       ref={containerRef}
       role="tree"
       aria-label="目录树"
-      className="h-full overflow-y-auto overflow-x-hidden bg-zinc-900/40 select-none"
+      className="h-full overflow-y-auto overflow-x-hidden bg-surface/40 select-none"
       data-file-tree="true"
       onKeyDown={handleKeyDown}
       onDragOver={(e) => {
@@ -172,14 +172,14 @@ export default function FileTreeSidebar({
               data-row-key={row.key}
               {...{ [TREE_PATH_ATTR]: row.path }}
               tabIndex={tabStopKey === row.key ? 0 : -1}
-              className={`group flex items-center gap-0.5 pr-2 min-h-[28px] cursor-pointer transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-indigo-500/60 ${
+              className={`group flex items-center gap-0.5 pr-2 h-7 cursor-pointer transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-indigo-500/60 ${
                 isDropHover
-                  ? 'bg-indigo-500/25 text-zinc-100 ring-1 ring-inset ring-indigo-400/70'
+                  ? 'bg-indigo-500/25 text-fg ring-1 ring-inset ring-indigo-400/70'
                   : isContext
-                    ? 'bg-state-mid text-zinc-100'
+                    ? 'bg-state-mid text-fg'
                     : isSelected
-                      ? 'bg-indigo-500/10 text-zinc-100'
-                      : 'text-zinc-400 hover:bg-state-soft/50 hover:text-zinc-200'
+                      ? 'bg-indigo-500/10 text-fg'
+                      : 'text-fg-secondary hover:bg-state-soft/50 hover:text-fg'
               }`}
               style={{ paddingLeft: 6 + row.depth * INDENT_PX }}
               onClick={() => {
@@ -198,7 +198,7 @@ export default function FileTreeSidebar({
                 type="button"
                 className={`flex-shrink-0 w-4 h-4 flex items-center justify-center ${
                   showChevron
-                    ? 'text-zinc-600 hover:text-zinc-400'
+                    ? 'text-fg-disabled hover:text-fg-secondary'
                     : 'text-transparent pointer-events-none'
                 }`}
                 onClick={(e) => {
@@ -227,10 +227,10 @@ export default function FileTreeSidebar({
               <svg
                 className={`w-3.5 h-3.5 flex-shrink-0 ${
                   row.isSymlink
-                    ? 'text-zinc-500'
+                    ? 'text-fg-tertiary'
                     : isSelected
-                      ? 'text-zinc-400'
-                      : 'text-zinc-600 group-hover:text-zinc-500'
+                      ? 'text-fg-secondary'
+                      : 'text-fg-disabled group-hover:text-fg-tertiary'
                 }`}
                 fill="none"
                 stroke="currentColor"
@@ -259,14 +259,14 @@ export default function FileTreeSidebar({
                 )}
               </svg>
 
-              <span className="ml-1.5 min-w-0 flex-1 truncate text-xs leading-none">
+              <span className="ml-1.5 min-w-0 flex-1 truncate text-body leading-none">
                 {row.isRoot ? '/' : row.name}
               </span>
 
               {isError && (
                 <button
                   type="button"
-                  className="flex-shrink-0 text-[10px] text-zinc-500 hover:text-red-400 px-1"
+                  className="flex-shrink-0 text-caption text-fg-tertiary hover:text-red-400 px-1"
                   title={entry?.error ?? '加载失败'}
                   tabIndex={-1}
                   onClick={(e) => {

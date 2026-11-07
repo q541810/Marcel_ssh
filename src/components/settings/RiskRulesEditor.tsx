@@ -54,7 +54,7 @@ interface RiskRulesEditorProps {
 }
 
 const fieldClass =
-  'rounded-lg border border-edge bg-zinc-800 text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40';
+  'rounded-lg border border-edge bg-surface-raised text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
 
 /** 一个可编辑名单：条目是可删的小标签，下面一个输入框添加；与默认不同时给「恢复默认」。 */
 function ListEditor({
@@ -80,11 +80,11 @@ function ListEditor({
     setDraft('');
   };
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-zinc-300">
+        <span className="text-meta font-medium text-fg-secondary">
           {info.label}
-          <span className="ml-1.5 font-normal text-zinc-500">
+          <span className="ml-2 font-normal text-fg-tertiary">
             {items.length}
           </span>
         </span>
@@ -92,26 +92,26 @@ function ListEditor({
           <button
             type="button"
             onClick={onReset}
-            className="text-xs text-indigo-300 hover:text-indigo-200 active:text-indigo-200"
+            className="text-meta text-indigo-300 hover:text-indigo-200 active:text-indigo-200"
           >
             恢复默认名单
           </button>
         )}
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {items.length === 0 && (
-          <span className="text-xs italic text-zinc-500">名单为空</span>
+          <span className="text-meta italic text-fg-tertiary">名单为空</span>
         )}
         {items.map((it) => (
           <span
             key={it}
-            className="inline-flex items-center gap-1 rounded-md border border-edge bg-zinc-800 py-0.5 pl-1.5 pr-1 font-mono text-[11px] text-zinc-200"
+            className="inline-flex items-center gap-1 rounded-md border border-edge bg-surface-raised py-0.5 pl-2 pr-1 font-mono text-caption text-fg"
           >
             {it}
             <button
               type="button"
               onClick={() => onChange(items.filter((x) => x !== it))}
-              className={`text-zinc-500 hover:text-red-400 active:text-red-400 ${compact ? 'px-1' : ''}`}
+              className={`text-fg-tertiary hover:text-red-400 active:text-red-400 ${compact ? 'px-1' : ''}`}
               aria-label={`移除 ${it}`}
             >
               ×
@@ -136,15 +136,15 @@ function ListEditor({
           spellCheck={false}
           aria-label={`${info.label}：添加条目`}
           className={`${fieldClass} min-w-0 flex-1 border font-mono ${
-            compact ? 'px-3 py-2.5 text-sm' : 'px-2.5 py-1.5 text-xs'
+            compact ? 'px-3 py-3 text-body' : 'px-3 py-2 text-meta'
           }`}
         />
         <button
           type="button"
           onClick={add}
           disabled={!draft.trim()}
-          className={`flex-shrink-0 rounded-lg bg-zinc-800 text-zinc-200 hover:bg-state-mid active:bg-state-mid disabled:opacity-40 ${
-            compact ? 'px-4 py-2.5 text-sm' : 'px-3 py-1.5 text-xs'
+          className={`flex-shrink-0 rounded-lg bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid disabled:opacity-40 ${
+            compact ? 'px-4 py-3 text-body' : 'px-3 py-2 text-meta'
           }`}
         >
           添加
@@ -199,7 +199,7 @@ function RuleRow({
         />
       )}
       <div
-        className={`flex items-center gap-2 ${compact ? 'px-3 py-2.5' : 'px-4 py-2.5'}`}
+        className={`flex items-center gap-2 ${compact ? 'px-3 py-3' : 'px-4 py-3'}`}
       >
         <button
           type="button"
@@ -208,13 +208,13 @@ function RuleRow({
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <ChevronRight
-            className={`h-3.5 w-3.5 flex-shrink-0 text-zinc-500 transition-transform ${
+            className={`h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary transition-transform ${
               expanded ? 'rotate-90' : ''
             }`}
           />
-          <span className="min-w-0 text-sm text-zinc-100">{rule.title}</span>
+          <span className="min-w-0 text-body text-fg">{rule.title}</span>
           {rule.scope === 'windows' && (
-            <span className="flex-shrink-0 rounded border border-edge px-1 py-px text-[10px] text-zinc-400">
+            <span className="flex-shrink-0 rounded border border-edge px-1 py-px text-caption text-fg-secondary">
               {SCOPE_LABEL[rule.scope]}
             </span>
           )}
@@ -223,7 +223,7 @@ function RuleRow({
           <button
             type="button"
             onClick={() => onChange(resetRule(overrides, rule.id))}
-            className="flex-shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-200 active:text-zinc-200"
+            className="flex-shrink-0 rounded p-1 text-fg-tertiary hover:text-fg active:text-fg"
             aria-label={`${rule.title}：恢复默认`}
             title={`恢复默认（${isExemption ? '开' : RULE_LEVEL_LABELS[rule.defaultLevel]}）`}
           >
@@ -250,17 +250,17 @@ function RuleRow({
 
       {expanded && (
         <div className={`space-y-3 pb-3 ${compact ? 'px-3' : 'pl-10 pr-4'}`}>
-          <p className="text-xs leading-relaxed text-zinc-400">
+          <p className="text-meta leading-relaxed text-fg-secondary">
             {rule.description}
             {!isExemption && level !== rule.defaultLevel && (
-              <span className={loosened ? 'text-red-300' : 'text-zinc-500'}>
+              <span className={loosened ? 'text-red-300' : 'text-fg-tertiary'}>
                 {' '}
                 默认是「{RULE_LEVEL_LABELS[rule.defaultLevel]}」。
               </span>
             )}
           </p>
           {rule.examples.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
               {rule.examples.map((ex) =>
                 onTryExample ? (
                   <button
@@ -268,14 +268,14 @@ function RuleRow({
                     type="button"
                     onClick={() => onTryExample(ex)}
                     title="拿去测试命令里试一下"
-                    className="rounded-md border border-edge bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300 hover:border-indigo-500/60 hover:text-zinc-100 active:text-zinc-100"
+                    className="rounded-md border border-edge bg-surface-raised px-2 py-0.5 font-mono text-caption text-fg-secondary hover:border-indigo-500/60 hover:text-fg active:text-fg"
                   >
                     {ex}
                   </button>
                 ) : (
                   <code
                     key={ex}
-                    className="rounded-md border border-edge bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300"
+                    className="rounded-md border border-edge bg-surface-raised px-2 py-0.5 font-mono text-caption text-fg-secondary"
                   >
                     {ex}
                   </code>
@@ -285,7 +285,7 @@ function RuleRow({
           )}
           {rule.lists.map((l) =>
             MANAGED_ELSEWHERE[l.key] ? (
-              <p key={l.key} className="text-[11px] text-zinc-500">
+              <p key={l.key} className="text-caption text-fg-tertiary">
                 {MANAGED_ELSEWHERE[l.key]}
               </p>
             ) : (
@@ -393,12 +393,12 @@ export function RiskRulesEditor({
 
   if (error) {
     return (
-      <div className="space-y-2 px-4 py-4 text-sm">
+      <div className="space-y-2 px-4 py-4 text-body">
         <p className="text-red-300">读取规则目录失败：{error}</p>
         <button
           type="button"
           onClick={retry}
-          className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-200 hover:bg-state-mid"
+          className="rounded-lg bg-surface-raised px-3 py-2 text-meta text-fg hover:bg-state-mid"
         >
           重试
         </button>
@@ -406,7 +406,7 @@ export function RiskRulesEditor({
     );
   }
   if (!catalog) {
-    return <p className="px-4 py-4 text-sm text-zinc-500">正在读取规则…</p>;
+    return <p className="px-4 py-4 text-body text-fg-tertiary">正在读取规则…</p>;
   }
 
   return (
@@ -422,7 +422,7 @@ export function RiskRulesEditor({
           autoCorrect="off"
           spellCheck={false}
           className={`${fieldClass} min-w-0 flex-1 border ${
-            compact ? 'px-3 py-2.5 text-sm' : 'px-3 py-1.5 text-sm'
+            compact ? 'px-3 py-3 text-body' : 'px-3 py-2 text-body'
           }`}
         />
         {modifiedCount > 0 && (
@@ -434,7 +434,7 @@ export function RiskRulesEditor({
               onlyModified
                 ? 'border-indigo-500 bg-indigo-500/20'
                 : 'border-indigo-700/50 bg-indigo-500/10 hover:bg-indigo-500/15'
-            } ${compact ? 'px-3 py-2 text-sm' : 'px-2.5 py-1 text-xs'}`}
+            } ${compact ? 'px-3 py-2 text-body' : 'px-3 py-1 text-meta'}`}
           >
             已改 {modifiedCount}
           </button>
@@ -442,11 +442,11 @@ export function RiskRulesEditor({
       </div>
 
       {visible.length === 0 ? (
-        <p className="rounded-xl border border-edge-subtle px-4 py-6 text-center text-sm text-zinc-500">
+        <p className="rounded-xl border border-edge-subtle px-4 py-6 text-center text-body text-fg-tertiary">
           没有匹配的规则
         </p>
       ) : (
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 [&>*:first-child]:rounded-t-xl [&>*:last-child]:rounded-b-xl">
+        <div className="rounded-xl border border-edge-subtle bg-surface/50 [&>*:first-child]:rounded-t-xl [&>*:last-child]:rounded-b-xl">
           {visible.map((rule) => (
             <RuleRow
               key={rule.id}

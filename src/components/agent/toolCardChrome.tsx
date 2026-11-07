@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useRef, type ReactNode } from 'react';
 import { toolIconPaths } from '@/lib/toolCatalog';
 
@@ -31,7 +32,7 @@ export function ToolIcon({ toolName }: { toolName: string }) {
 export type ToolChipTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 const CHIP_TONE_CLASS: Record<ToolChipTone, string> = {
-  neutral: 'text-zinc-400',
+  neutral: 'text-fg-secondary',
   info: 'bg-sky-500/10 text-sky-300',
   success: 'bg-emerald-500/10 text-emerald-300',
   warning: 'bg-amber-500/10 text-amber-300',
@@ -57,7 +58,7 @@ export function ToolChip({
 }) {
   return (
     <span
-      className={`${shrinkable ? 'min-w-0' : 'flex-shrink-0'} text-[11px] leading-4 px-1 py-0 rounded font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
+      className={`${shrinkable ? 'min-w-0' : 'flex-shrink-0'} text-caption leading-4 px-1 py-0 rounded font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
       title={title}
     >
       {children}
@@ -69,7 +70,7 @@ export function ToolChip({
 export type ToolCardTone = 'default' | 'warning' | 'danger';
 
 const CONTAINER_TONE_CLASS: Record<ToolCardTone, string> = {
-  default: 'text-zinc-400',
+  default: 'text-fg-secondary',
   warning: 'text-amber-400',
   danger: 'text-red-400',
 };
@@ -126,7 +127,7 @@ export function ToolCardFrame({
         aria-expanded={onToggle && !busy ? expanded : undefined}
         aria-disabled={busy || !onToggle || undefined}
         title={typeof preview === 'string' && preview ? `${label} ${preview}` : label}
-        className="group block w-full min-w-0 rounded-md text-left transition-colors duration-150 hover:bg-state-soft/30 active:bg-state-soft/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 touch-manipulation motion-reduce:transition-none"
+        className="group block w-full min-w-0 rounded-lg text-left transition-colors duration-120 hover:bg-state-soft/30 active:bg-state-soft/50 focus-ring touch-manipulation motion-reduce:transition-none"
       >
         <div
           className={`tool-card-row flex min-h-7 items-center gap-2 px-1 py-1 min-w-0 [@media(pointer:coarse)]:min-h-8${
@@ -137,12 +138,12 @@ export function ToolCardFrame({
             <ToolIcon toolName={toolName} />
           </span>
           <div className="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
-            <span className={`min-w-0 truncate text-[13px] leading-5 font-normal ${preview ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
+            <span className={`min-w-0 truncate text-body leading-5 font-normal ${preview ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
               {composing !== undefined && <span className="compose-prefix" aria-hidden={!composing}>正在撰写&nbsp;</span>}
               {label}
             </span>
             {preview && (
-              <span className="min-w-0 flex-1 truncate text-[13px] leading-5 font-normal text-zinc-400 font-mono">{preview}</span>
+              <span className="min-w-0 flex-1 truncate text-body leading-5 font-normal text-fg-secondary font-mono">{preview}</span>
             )}
           </div>
           <div className="flex min-w-0 max-w-[45%] items-center gap-1 overflow-hidden empty:hidden">{chips}</div>
@@ -154,7 +155,7 @@ export function ToolCardFrame({
               </span>
             ) : busy ? (
               <svg
-                className="animate-spin h-4 w-4 flex-shrink-0 text-zinc-500"
+                className="animate-spin h-4 w-4 flex-shrink-0 text-fg-tertiary"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -174,19 +175,7 @@ export function ToolCardFrame({
                 ></path>
               </svg>
             ) : onToggle ? (
-              <svg
-                className={`w-3 h-3 flex-shrink-0 text-zinc-500 group-hover:text-zinc-300 transition-transform duration-200 motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
+              <ChevronDown className={`w-3 h-3 flex-shrink-0 text-fg-tertiary group-hover:text-fg-secondary transition-transform duration-200 motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`} strokeWidth={1.5} />
             ) : null}
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { PanelLeft, SquareTerminal, Sparkles } from 'lucide-react';
 import { APP_NAME } from '@/lib/constants';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import WindowControls from '@/components/layout/WindowControls';
@@ -22,7 +23,7 @@ export default function AppHeader({ onToggleSidebar, onToggleDock, dockPanel, cl
   }, []);
 
   return (
-    <header className={`flex items-center justify-between bg-zinc-950 border-b border-edge-subtle select-none h-8 ${className ?? ''}`}>
+    <header className={`flex items-center justify-between bg-surface-sunken select-none h-8 ${className ?? ''}`}>
       <div
         className="flex items-center gap-3 px-2 flex-1"
         data-tauri-drag-region
@@ -39,15 +40,12 @@ export default function AppHeader({ onToggleSidebar, onToggleDock, dockPanel, cl
       >
         <button
           onClick={onToggleSidebar}
-          className="p-1 rounded-lg hover:bg-state-soft text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="pressable focus-ring flex h-6 w-6 items-center justify-center rounded-md text-fg-secondary hover:bg-state-soft hover:text-fg"
           title="切换侧边栏"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-          </svg>
+          <PanelLeft size={16} strokeWidth={1.5} />
         </button>
-        <h1 className="text-xs font-bold tracking-wide text-zinc-200" data-tauri-drag-region>
+        <h1 className="text-meta font-medium text-fg-secondary" data-tauri-drag-region>
           {APP_NAME}
         </h1>
         <UpdatePill />
@@ -55,19 +53,13 @@ export default function AppHeader({ onToggleSidebar, onToggleDock, dockPanel, cl
         <SyncStatusButton />
         <button
           onClick={onToggleDock}
-          className="p-1 rounded-lg hover:bg-state-soft text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="pressable focus-ring flex h-6 w-6 items-center justify-center rounded-md text-fg-secondary hover:bg-state-soft hover:text-fg"
           title={dockPanel === 'terminal' ? '切换终端面板' : '切换智能助手面板'}
         >
           {dockPanel === 'terminal' ? (
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-            </svg>
+            <SquareTerminal size={16} strokeWidth={1.5} />
           ) : (
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
-            </svg>
+            <Sparkles size={16} strokeWidth={1.5} />
           )}
         </button>
       </div>

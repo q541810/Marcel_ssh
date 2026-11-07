@@ -1,3 +1,4 @@
+import { ChevronRight, Plus } from 'lucide-react';
 import { useMemo, useState } from "react";
 import { useJobStore } from "@/stores/jobStore";
 import { taskCenterEntry } from "@/stores/agentStatusSelectors";
@@ -48,7 +49,7 @@ export function AgentPanelHeader({
     <div className="flex items-center justify-between px-3 py-2 border-b border-edge-subtle">
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <h2 className="text-sm font-semibold text-zinc-200">智能助手</h2>
+          <h2 className="text-read font-semibold text-fg">智能助手</h2>
           <div className="relative">
             <button
               type="button"
@@ -74,10 +75,10 @@ export function AgentPanelHeader({
                 className="fixed inset-0 z-40"
                 onClick={() => setTokenPopoverOpen(false)}
               />
-              {/* `text-xs` 是这块面板的字号基准：内部尺寸都用 em 相对它算，
-                  移动端那张 sheet 用 text-sm，两端各自贴合各自的字号体系 */}
-              <div className="absolute top-full left-0 mt-2 w-64 text-xs bg-zinc-800 border border-edge rounded-xl shadow-2xl z-50 p-3 animate-fadeIn">
-                <div className="mb-2 border-b border-edge pb-1.5 text-xs font-semibold text-zinc-300">
+              {/* `text-meta` 是这块面板的字号基准：内部尺寸都用 em 相对它算，
+                  移动端那张 sheet 用 text-read，两端各自贴合各自的字号体系 */}
+              <div className="absolute top-full left-0 mt-2 w-64 text-meta origin-top-left surface-glass rounded-xl z-50 p-3 animate-fadeIn">
+                <div className="mb-2 border-b border-edge pb-1.5 text-meta font-semibold text-fg-secondary">
                   Token 用量
                 </div>
                 <TokenUsagePanel
@@ -99,7 +100,7 @@ export function AgentPanelHeader({
             onClick={() => {
               onOpenTaskCenter(taskCenter.initialTab);
             }}
-            className={`flex min-w-0 items-center gap-1.5 whitespace-nowrap px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
+            className={`flex min-w-0 items-center gap-1.5 whitespace-nowrap px-2 py-0.5 pressable border rounded-full text-caption font-medium transition-colors animate-fadeIn ${
               taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
                 ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
                 : taskCenter.runningJobs.length > 0
@@ -136,9 +137,7 @@ export function AgentPanelHeader({
               {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 &&
                 `${taskCenter.attentionJobs.length} 个作业已中断`}
             </span>
-            <svg className="w-2.5 h-2.5 flex-shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
+            <ChevronRight className="w-2.5 h-2.5 flex-shrink-0 opacity-70" strokeWidth={1.5} />
           </button>
         )}
       </div>
@@ -151,27 +150,15 @@ export function AgentPanelHeader({
           type="button"
           onClick={onNewConversation}
           disabled={!canInteract}
-          className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="p-1.5 rounded text-fg-secondary hover:text-fg hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           title="新建会话"
         >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
+          <Plus className="w-4 h-4" strokeWidth={1.5} />
         </button>
         <button
           type="button"
           onClick={onHistoryClick}
-          className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-state-mid transition-colors"
+          className="p-1.5 rounded text-fg-secondary hover:text-fg hover:bg-state-mid transition-colors"
           title="历史会话"
         >
           <svg

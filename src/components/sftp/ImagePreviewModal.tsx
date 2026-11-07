@@ -382,7 +382,7 @@ export default function ImagePreviewModal({
         data-region="image-preview"
         onKeyDown={handleKeyDown}
         onAnimationEnd={onExitAnimationEnd}
-        className={`relative w-full max-w-6xl mx-4 h-[88vh] rounded-2xl bg-zinc-800 border border-edge shadow-2xl flex flex-col overflow-hidden ${
+        className={`relative w-full max-w-6xl mx-4 h-[88vh] rounded-2xl bg-surface-raised border border-edge shadow-2xl flex flex-col overflow-hidden ${
           closing ? 'modal-panel-exit' : 'modal-panel-enter'
         }`}
       >
@@ -390,7 +390,7 @@ export default function ImagePreviewModal({
         <div className="flex items-center justify-between px-4 py-3 border-b border-edge flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <svg
-              className="w-4 h-4 text-zinc-400 flex-shrink-0"
+              className="w-4 h-4 text-fg-secondary flex-shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -404,7 +404,7 @@ export default function ImagePreviewModal({
             </svg>
             <h2
               id={titleId}
-              className="text-sm font-medium text-zinc-200 truncate"
+              className="text-read font-medium text-fg truncate"
               title={source.kind === 'sftp' ? source.filePath : fileName}
             >
               {source.kind === 'sftp' ? source.filePath : fileName}
@@ -414,7 +414,7 @@ export default function ImagePreviewModal({
             ref={closeRef}
             type="button"
             onClick={handleClose}
-            className="text-zinc-400 hover:text-zinc-200 text-xl leading-none p-1"
+            className="text-fg-secondary hover:text-fg text-xl leading-none p-1"
             aria-label="关闭"
           >
             &times;
@@ -422,7 +422,7 @@ export default function ImagePreviewModal({
         </div>
 
         {/* 状态栏 */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-edge/50 bg-zinc-800/50 flex-shrink-0 text-xs text-zinc-400">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-edge/50 bg-surface-raised/50 flex-shrink-0 text-meta text-fg-secondary">
           {hasSize && (
             <span>
               大小: <span>{formatSize(fileSize!)}</span>
@@ -431,22 +431,22 @@ export default function ImagePreviewModal({
           {imgNaturalSize && (
             <span>
               尺寸:{' '}
-              <span className="text-zinc-400">
+              <span className="text-fg-secondary">
                 {imgNaturalSize.w}×{imgNaturalSize.h}
               </span>
             </span>
           )}
           {imageSrc && (
             <span>
-              缩放: <span className="text-zinc-400">{zoomPct}%</span>
+              缩放: <span className="text-fg-secondary">{zoomPct}%</span>
             </span>
           )}
           {view.rotation !== 0 && (
             <span>
-              旋转: <span className="text-zinc-400">{view.rotation}°</span>
+              旋转: <span className="text-fg-secondary">{view.rotation}°</span>
             </span>
           )}
-          <span className="ml-auto text-zinc-400">
+          <span className="ml-auto text-fg-secondary">
             滚轮缩放 · 拖动平移 · R 旋转 · H/V 翻转 · 0 适应 · 1 实际 · Esc 关闭
           </span>
         </div>
@@ -454,7 +454,7 @@ export default function ImagePreviewModal({
         {error && unavailableKind !== 'remote' && (
           <div
             role="alert"
-            className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0"
+            className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-meta text-red-300 flex-shrink-0"
           >
             <span>{error}</span>
           </div>
@@ -467,7 +467,7 @@ export default function ImagePreviewModal({
           role="group"
           aria-label="图片预览"
           aria-busy={imageLoading}
-          className="flex-1 min-h-0 flex items-center justify-center relative bg-zinc-900/60 overflow-hidden"
+          className="flex-1 min-h-0 flex items-center justify-center relative bg-surface/60 overflow-hidden"
           onDoubleClick={
             imageReady
               ? () => (fitMode === 'fit' ? applyActual() : applyFit())
@@ -480,23 +480,23 @@ export default function ImagePreviewModal({
           {imageLoading && (
             <div
               role="status"
-              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-zinc-900"
+              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-surface"
             >
               {/* 克制的骨架：一块低对比占位 + 一行小字，不拿转圈动画占满整屏。 */}
               <div
                 aria-hidden
                 className="h-32 w-48 rounded-lg border border-edge-subtle bg-state-soft motion-safe:animate-pulse"
               />
-              <div className="text-xs text-zinc-500">正在加载图片…</div>
+              <div className="text-meta text-fg-tertiary">正在加载图片…</div>
               {progress && progress.total > 0 && (
                 <div className="w-64 flex flex-col gap-1">
-                  <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200 motion-reduce:transition-none"
+                      className="h-full bg-indigo-500 transition-[width] duration-200 motion-reduce:transition-none"
                       style={{ width: `${progressPct}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-xs text-zinc-500">
+                  <div className="flex justify-between text-meta text-fg-tertiary">
                     <span>
                       {formatSize(progress.written)} /{' '}
                       {formatSize(progress.total)}
@@ -530,7 +530,7 @@ export default function ImagePreviewModal({
           {status === 'unavailable' && (
             <div className="max-w-md px-6 text-center">
               <p
-                className={`text-sm leading-relaxed ${unavailableKind === 'remote' ? 'text-zinc-400' : 'text-red-300'}`}
+                className={`text-read leading-relaxed ${unavailableKind === 'remote' ? 'text-fg-secondary' : 'text-red-300'}`}
               >
                 {unavailableKind === 'remote' ? `${REMOTE_IMAGE_HINT}（${error}）` : error}
               </p>
@@ -538,12 +538,12 @@ export default function ImagePreviewModal({
           )}
 
           {!loading && !imageSrc && !error && (
-            <div className="text-sm text-zinc-500">无预览内容</div>
+            <div className="text-read text-fg-tertiary">无预览内容</div>
           )}
         </div>
 
         {/* 工具栏 */}
-        <div className="flex items-center justify-center gap-1 px-4 py-2.5 border-t border-edge flex-shrink-0 bg-zinc-800/80">
+        <div className="flex items-center justify-center gap-1 px-4 py-2.5 border-t border-edge flex-shrink-0 bg-surface-raised/80">
           <ToolbarButton
             title="左旋转 (Shift+R)"
             onClick={() => rotate(-1)}
@@ -643,7 +643,7 @@ export default function ImagePreviewModal({
           </ToolbarButton>
           <output
             aria-label="图片缩放比例"
-            className="text-xs text-zinc-400 w-12 text-center tabular-nums"
+            className="text-meta text-fg-secondary w-12 text-center tabular-nums"
           >
             {imageReady ? `${zoomPct}%` : '—'}
           </output>
@@ -714,7 +714,7 @@ export default function ImagePreviewModal({
           <button
             type="button"
             onClick={handleClose}
-            className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+            className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
           >
             关闭
           </button>
@@ -753,7 +753,7 @@ function ToolbarButton({
       className={`p-1.5 rounded-lg transition-colors ${
         active
           ? 'bg-indigo-600 text-white'
-          : 'text-zinc-300 bg-zinc-700/50 hover:bg-state-mid'
+          : 'text-fg-secondary bg-zinc-700/50 hover:bg-state-mid'
       } disabled:opacity-30 disabled:cursor-not-allowed`}
     >
       {children}

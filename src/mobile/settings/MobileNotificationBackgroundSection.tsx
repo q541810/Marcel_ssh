@@ -13,13 +13,13 @@ export function MobileNotificationBackgroundSection() {
   return (
     <div className="flex flex-col gap-4">
       <section>
-        <h2 className="mb-2 px-1 text-xs font-medium text-zinc-500">
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">
           Agent 通知
         </h2>
         <MobileNotificationSection />
       </section>
       <section>
-        <h2 className="mb-2 px-1 text-xs font-medium text-zinc-500">
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">
           后台保活
         </h2>
         <MobileBackgroundSection />

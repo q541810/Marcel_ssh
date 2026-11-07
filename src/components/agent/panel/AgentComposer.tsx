@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react';
 import { useDebugStore, DEBUG_REASONING_EFFORTS } from "@/stores/debugStore";
 import { effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import type { AgentConversation, AgentMode, LlmRegistry, SessionStatus, Skill } from "@/lib/types";
@@ -103,7 +104,7 @@ export function AgentComposer({
       {/* 压缩中常驻的原因说明：发送键这时是「取消压缩」，回车也发不出去，
           没有这一行用户只会觉得输入框坏了。配色跟随会话里那张进行中卡。 */}
       {isCompacting && (
-        <div className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-violet-950/50 border border-violet-800/50 text-xs text-violet-200">
+        <div className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-violet-950/50 border border-violet-800/50 text-meta text-violet-200">
           <span className="h-2 w-2 shrink-0 rounded-full bg-violet-400/90" />
           正在压缩上下文，完成后即可发送（可点右下角取消）
         </div>
@@ -115,7 +116,7 @@ export function AgentComposer({
       <DraftSkillChips attachments={attachments} />
       <DraftAttachments attachments={attachments} />
       <div
-        className={`agent-input relative rounded-2xl bg-zinc-800 border transition-colors focus-within:border-indigo-500 ${
+        className={`agent-input relative rounded-xl bg-surface-raised border transition-colors focus-within:border-indigo-500 ${
           dragOver
             ? "border-indigo-400 ring-1 ring-indigo-500/40"
             : "border-edge"
@@ -153,7 +154,7 @@ export function AgentComposer({
                 : "请先连接到服务器..."
           }
           disabled={!canInteract}
-          className="w-full px-4 pt-3 pb-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
+          className="w-full px-4 pt-3 pb-1.5 text-read text-fg placeholder:text-fg-tertiary bg-transparent outline-none disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
         />
 
         {/* Toolbar：+ 附件 / 模式 / 模型 —— 发送按钮右对齐 */}
@@ -163,23 +164,11 @@ export function AgentComposer({
             type="button"
             onClick={() => void handleAttach()}
             disabled={!canInteract}
-            className="flex-shrink-0 p-1.5 -ml-0.5 rounded-full text-zinc-400 hover:text-zinc-100 hover:bg-state-mid/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 active:scale-90"
+            className="flex-shrink-0 p-1.5 -ml-0.5 rounded-full text-fg-secondary hover:text-fg hover:bg-state-mid/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors duration-120 pressable"
             title="添加图片或文本文件"
             aria-label="添加图片或文本文件"
           >
-            <svg
-              className="w-[18px] h-[18px]"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
+            <Plus className="w-[18px] h-[18px]" strokeWidth={1.5} />
           </button>
           {/* Mode selector — 空间不足时可收缩，文案窄时优先让位 */}
           <ModeSelector mode={mode} setMode={setMode} />

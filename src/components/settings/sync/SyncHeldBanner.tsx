@@ -38,11 +38,11 @@ export function SyncHeldBanner({ variant, held }: { variant: SyncVariant; held: 
       }`}
       role="alert"
     >
-      <div className="flex items-start gap-2.5">
-        <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" aria-hidden />
+      <div className="flex items-start gap-3">
+        <TriangleAlert className="mt-1 h-4 w-4 flex-shrink-0 text-amber-400" aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-amber-100">{summary}，确认同步到其它设备？</p>
-          <p className="mt-1 text-xs leading-relaxed text-amber-100/70">
+          <p className="text-body font-medium text-amber-100">{summary}，确认同步到其它设备？</p>
+          <p className="mt-1 text-meta leading-relaxed text-amber-100/70">
             这么多删除通常是误操作，所以先扣下了。「同步删除」会让其它设备也删掉这些内容；
             「撤销删除」会从云端把它们恢复到这台设备。
           </p>
@@ -67,7 +67,7 @@ export function SyncHeldBanner({ variant, held }: { variant: SyncVariant; held: 
             </SyncButton>
           </div>
           {error && (
-            <p className="mt-2 text-xs text-red-300" role="alert">
+            <p className="mt-2 text-meta text-red-300" role="alert">
               {error}
             </p>
           )}

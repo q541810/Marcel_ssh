@@ -190,7 +190,7 @@ export default memo(function AgentTranscript({
           onClick={() => scrollToBottom('smooth')}
           title="回到底部"
           aria-label="回到底部"
-          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-edge-strong bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg backdrop-blur-sm active:bg-state-mid"
+          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-edge-strong bg-surface-raised/95 px-3 py-1.5 text-meta font-medium text-fg shadow-raised backdrop-blur-sm active:bg-state-mid"
         >
           回到底部
         </button>
@@ -207,7 +207,7 @@ export default memo(function AgentTranscript({
                 onClick={() => scrollToBottom('smooth')}
                 title="回到底部"
                 aria-label="回到底部"
-                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-state-mid"
+                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-surface-raised/95 text-fg shadow-raised backdrop-blur-sm transition-colors hover:bg-state-mid"
               >
                 <ArrowDown className="h-4 w-4" />
               </button>

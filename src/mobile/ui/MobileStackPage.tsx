@@ -44,7 +44,7 @@ export default function MobileStackPage({
   underlay,
   backEnabled = true,
   children,
-  className = 'bg-zinc-950',
+  className = 'bg-surface-sunken',
 }: MobileStackPageProps) {
   const presence = useAnimatedPresence(open);
   const rootRef = useRef<HTMLDivElement>(null);

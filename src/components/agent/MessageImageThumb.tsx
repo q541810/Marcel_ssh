@@ -46,7 +46,7 @@ export default function MessageImageThumb({
       <div
         role="img"
         aria-label={`${label}无法显示`}
-        className={`flex items-center justify-center rounded-md bg-zinc-800 text-[10px] text-zinc-500 ${className}`}
+        className={`flex items-center justify-center rounded-md bg-surface-raised text-caption text-fg-tertiary ${className}`}
         title="图片缺失或无法读取"
       >
         图片不可用
@@ -56,7 +56,7 @@ export default function MessageImageThumb({
 
   if (!src) {
     return (
-      <div role="status" aria-label={`${label}正在加载`} className={`rounded-md bg-zinc-800 animate-pulse motion-reduce:animate-none ${className}`} />
+      <div role="status" aria-label={`${label}正在加载`} className={`rounded-md bg-surface-raised animate-pulse motion-reduce:animate-none ${className}`} />
     );
   }
 
@@ -85,7 +85,7 @@ export default function MessageImageThumb({
             e.stopPropagation();
             onRemove?.();
           }}
-          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-edge-strong text-zinc-300 hover:text-white hover:bg-red-600 flex items-center justify-center text-[10px] leading-none"
+          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-surface border border-edge-strong text-fg-secondary hover:text-white hover:bg-red-600 flex items-center justify-center text-caption leading-none"
           title="移除"
         >
           ×

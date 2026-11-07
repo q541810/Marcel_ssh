@@ -16,9 +16,9 @@ export default function ToolFileChips({
   const refs = toolFileRefs(toolName, args);
   if (refs.length === 0) return null;
   return (
-    <div className="ml-3 flex min-w-0 flex-wrap items-center gap-1.5 border-l border-edge/50 py-1 pl-3 pr-1.5 text-xs">
+    <div className="ml-3 flex min-w-0 flex-wrap items-center gap-1.5 border-l border-edge/50 py-1 pl-3 pr-1.5 text-meta">
       {refs.map((ref) => (
-        <FileLinkChip key={`${ref.side}:${ref.path}`} file={ref} className="text-[11px]" />
+        <FileLinkChip key={`${ref.side}:${ref.path}`} file={ref} className="text-caption" />
       ))}
     </div>
   );

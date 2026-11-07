@@ -66,7 +66,7 @@ function ToolCallSummary({ messages }: { messages: readonly AgentMessage[] }) {
         })}
       </span>
       {webSummary.blocked > 0 && (
-        <span className="ml-1 shrink-0 whitespace-nowrap rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-300"
+        <span className="ml-1 shrink-0 whitespace-nowrap rounded-md bg-amber-500/10 px-1.5 py-0.5 text-caption font-medium text-amber-300"
           title={`组内有 ${webSummary.blocked} 次联网调用被网站的人机验证拦下，展开可查看详情`}>
           含网站拦截
         </span>

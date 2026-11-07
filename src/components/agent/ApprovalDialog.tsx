@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useEffect, useCallback, useRef, useState } from 'react';
 import type { ToolCallInfo } from '@/lib/types';
 import { DISPOSITION_LABELS } from '@/lib/constants';
@@ -154,10 +155,10 @@ export default function ApprovalDialog({
   const shownExtras = omitShownHost(cleanedCmd?.extras ?? {}, targetHost);
   const showToolName = !(isExecuteCommand && cleanedCmd?.main);
   const toolNameLine = (
-    <div className="flex min-w-0 items-baseline gap-2 text-xs">
-      <span className="shrink-0 font-mono text-zinc-400">{toolCall.name}</span>
+    <div className="flex min-w-0 items-baseline gap-2 text-meta">
+      <span className="shrink-0 font-mono text-fg-secondary">{toolCall.name}</span>
       {diffTool && path && (
-        <span className="min-w-0 truncate font-mono text-zinc-300" title={path}>
+        <span className="min-w-0 truncate font-mono text-fg-secondary" title={path}>
           {path}
         </span>
       )}
@@ -187,22 +188,22 @@ export default function ApprovalDialog({
           信息顺序：先是「谁发起的、在哪台机器上跑」两行小字，再是**命令 / 改动本身**，
           最后才是「为什么要问你」。用户要判断的就是前两样，别让它们沉在一堆标签下面。 */}
       <div
-        className={`modal-panel-enter relative w-full mx-4 max-h-[85vh] overflow-y-auto rounded-2xl bg-zinc-800 border border-edge shadow-2xl ${
+        className={`modal-panel-enter relative w-full mx-4 max-h-[85vh] overflow-y-auto rounded-2xl surface-glass ${
           diffTool || promptText ? 'max-w-3xl' : 'max-w-md'
         }`}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-edge bg-zinc-800 rounded-t-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-edge bg-surface-raised rounded-t-2xl">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-zinc-100">需要操作批准</h3>
+            <h3 className="text-title text-fg">需要操作批准</h3>
             {/* 普通「请求审批」是这个弹窗的默认含义，不必再标一遍；只有不寻常的档位
                 （强制审批）才值得一句提示。纯文字、不套彩色胶囊 —— 颜色留给真正要紧的信号。 */}
             {toolCall.disposition !== 'Approval' && (
-              <span className="text-xs font-medium text-amber-300">
+              <span className="text-meta font-medium text-amber-300">
                 {DISPOSITION_LABELS[toolCall.disposition]}
               </span>
             )}
             {queueLength > 1 && (
-              <span className="text-xs tabular-nums text-zinc-500">待处理 1/{queueLength}</span>
+              <span className="text-meta tabular-nums text-fg-tertiary">待处理 1/{queueLength}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -214,13 +215,11 @@ export default function ApprovalDialog({
               <button
                 type="button"
                 onClick={onMinimize}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-state-mid transition-colors"
+                className="p-1 rounded-lg text-fg-secondary hover:text-fg hover:bg-state-mid transition-colors"
                 title="收起为浮动药丸，稍后再处理（不算回答）· Esc"
                 aria-label="收起"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
+                <ChevronDown className="w-4 h-4" strokeWidth={1.5} />
               </button>
             )}
           </div>
@@ -245,7 +244,7 @@ export default function ApprovalDialog({
           {diffTool ? (
             <div className="space-y-2">
               {toolNameLine}
-              <div className="rounded-lg border border-edge overflow-hidden bg-zinc-900">
+              <div className="rounded-lg border border-edge overflow-hidden bg-surface">
                 <FileChangeView
                   toolName={diffTool}
                   arguments={toolCall.arguments || {}}
@@ -263,33 +262,33 @@ export default function ApprovalDialog({
               {toolNameLine}
               {promptDescription && (
                 <div>
-                  <span className="text-xs text-zinc-500">任务描述：</span>
-                  <p className="mt-1 text-xs leading-relaxed text-zinc-200 whitespace-pre-wrap break-words">
+                  <span className="text-meta text-fg-tertiary">任务描述：</span>
+                  <p className="mt-1 text-meta leading-relaxed text-fg whitespace-pre-wrap break-words">
                     {promptDescription}
                   </p>
                 </div>
               )}
               {promptModeLabel && (
-                <div className="text-xs text-zinc-500">
-                  子 agent 模式：<span className="text-zinc-300">{promptModeLabel}</span>
+                <div className="text-meta text-fg-tertiary">
+                  子 agent 模式：<span className="text-fg-secondary">{promptModeLabel}</span>
                 </div>
               )}
-              <span className="text-xs text-zinc-500">派发给子 agent 的完整指令：</span>
-              <pre className="mt-1 p-3 rounded-lg bg-zinc-950 border border-edge font-mono text-xs leading-relaxed text-zinc-200 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+              <span className="text-meta text-fg-tertiary">派发给子 agent 的完整指令：</span>
+              <pre className="mt-1 p-3 rounded-lg bg-surface-sunken border border-edge font-mono text-meta leading-relaxed text-fg whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
                 {promptText}
               </pre>
             </div>
           ) : isExecuteCommand && cleanedCmd?.main ? (
             <div className="space-y-2">
-              <div className="rounded-lg bg-zinc-950 border border-edge overflow-hidden">
+              <div className="rounded-lg bg-surface-sunken border border-edge overflow-hidden">
                 <div className="flex items-start gap-2 px-3 py-2">
-                  <span className="text-zinc-500 font-mono text-xs select-none leading-relaxed">$</span>
-                  <code className="flex-1 min-w-0 font-mono text-xs text-zinc-200 whitespace-pre-wrap break-words leading-relaxed">
+                  <span className="text-fg-tertiary font-mono text-meta select-none leading-relaxed">$</span>
+                  <code className="flex-1 min-w-0 font-mono text-meta text-fg whitespace-pre-wrap break-words leading-relaxed">
                     {cleanedCmd.main}
                   </code>
                 </div>
                 {Object.keys(shownExtras).length > 0 && (
-                  <pre className="px-3 py-2 border-t border-edge/60 font-mono text-[11px] text-zinc-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                  <pre className="px-3 py-2 border-t border-edge/60 font-mono text-caption text-fg-secondary whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
                     {JSON.stringify(shownExtras, null, 2)}
                   </pre>
                 )}
@@ -298,8 +297,8 @@ export default function ApprovalDialog({
                   标注来源是刻意的：它可能把一条危险命令说成「只读检查」，写清这是
                   agent 自述，用户才不会把它当成系统判定。 */}
               {cleanedCmd.description && (
-                <p className="px-0.5 text-xs leading-relaxed text-zinc-300 whitespace-pre-wrap break-words">
-                  <span className="text-zinc-500">Agent 自述：</span>
+                <p className="px-0.5 text-meta leading-relaxed text-fg-secondary whitespace-pre-wrap break-words">
+                  <span className="text-fg-tertiary">Agent 自述：</span>
                   {cleanedCmd.description}
                 </p>
               )}
@@ -307,7 +306,7 @@ export default function ApprovalDialog({
           ) : (
             <div className="space-y-2">
               {showToolName && toolNameLine}
-              <pre className="p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40 whitespace-pre-wrap break-words">
+              <pre className="p-2 rounded-lg bg-surface text-meta text-fg-secondary overflow-auto max-h-40 whitespace-pre-wrap break-words">
                 {JSON.stringify(toolCall.arguments, null, 2)}
               </pre>
             </div>
@@ -320,7 +319,7 @@ export default function ApprovalDialog({
           />
         </div>
 
-        <div className="sticky bottom-0 z-10 px-4 py-3 border-t border-edge bg-zinc-800 rounded-b-2xl">
+        <div className="sticky bottom-0 z-10 px-4 py-3 border-t border-edge bg-surface-raised rounded-b-2xl">
           {/* 拒绝理由：可选，但填了模型才有依据调整方向（不然它只会换个写法再来）。
               与两个答案同一行，底栏只占一行。 */}
           <div className="flex items-center gap-2">
@@ -343,7 +342,7 @@ export default function ApprovalDialog({
               }}
               placeholder="拒绝原因（可选，会告诉 Agent）"
               aria-label="拒绝原因"
-              className="min-w-0 flex-1 rounded-lg bg-zinc-900 border border-edge px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-500"
+              className="min-w-0 flex-1 rounded-lg bg-surface border border-edge px-3 py-1.5 text-read text-fg placeholder:text-fg-tertiary focus-ring focus:border-indigo-500"
             />
             <ApprovalRejectButton
               onReject={() => onReject(reason.trim() || undefined)}
@@ -357,7 +356,7 @@ export default function ApprovalDialog({
               onClick={onApprove}
               aria-keyshortcuts="Enter"
               title="批准（Enter）"
-              className="after:content-['⏎'] after:text-[11px] after:opacity-60"
+              className="after:content-['⏎'] after:text-caption after:opacity-60"
             >
               批准
             </Button>

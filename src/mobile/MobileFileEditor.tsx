@@ -212,17 +212,17 @@ export default function MobileFileEditor({
         <button
           type="button"
           onClick={handleClose}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-zinc-300 active:bg-state-soft"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft"
           aria-label="返回"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-zinc-100">
+          <div className="truncate text-body font-medium text-fg">
             {fileName}
             {dirty && <span className="ml-1 text-amber-400">●</span>}
           </div>
-          <div className="text-[11px] text-zinc-500">
+          <div className="text-caption text-fg-tertiary">
             {formatSize(fileSize)}
             {savedIndicator && (
               <span className="ml-2 text-emerald-400">已保存</span>
@@ -235,7 +235,7 @@ export default function MobileFileEditor({
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleUndo}
           disabled={loading || !canUndoNow}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-zinc-300 active:bg-state-soft disabled:opacity-30"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft disabled:opacity-30"
           aria-label="撤销"
         >
           <Undo2 className="h-5 w-5" />
@@ -245,7 +245,7 @@ export default function MobileFileEditor({
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleRedo}
           disabled={loading || !canRedoNow}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-zinc-300 active:bg-state-soft disabled:opacity-30"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-state-soft disabled:opacity-30"
           aria-label="重做"
         >
           <Redo2 className="h-5 w-5" />
@@ -254,14 +254,14 @@ export default function MobileFileEditor({
           type="button"
           onClick={() => void handleSave()}
           disabled={saving || loading || !dirty}
-          className="mr-2 flex-shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+          className="mr-2 flex-shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-40"
         >
           {saving ? '保存中…' : '保存'}
         </button>
       </header>
 
       {error && (
-        <div className="flex flex-shrink-0 items-center justify-between border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-meta text-red-300">
           <span className="min-w-0 flex-1 break-words">{error}</span>
           <button
             type="button"
@@ -277,7 +277,7 @@ export default function MobileFileEditor({
       {/* Body：容器始终在，加载态盖在上面（view 要挂在已存在的容器里） */}
       <div className="relative min-h-0 flex-1">
         {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-zinc-950 text-sm text-zinc-400">
+          <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-surface-sunken text-body text-fg-secondary">
             <Loader2 className="h-4 w-4 animate-spin" />
             正在加载文件…
           </div>
@@ -292,7 +292,7 @@ export default function MobileFileEditor({
         title="未保存的修改"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             文件有未保存的修改，是否在关闭前保存？
           </p>
           <button
@@ -302,7 +302,7 @@ export default function MobileFileEditor({
               const ok = await handleSave();
               if (ok) requestClose();
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500"
           >
             保存并关闭
           </button>
@@ -312,14 +312,14 @@ export default function MobileFileEditor({
               setCloseConfirmOpen(false);
               requestClose();
             }}
-            className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-red-300 active:bg-state-mid"
+            className="rounded-xl bg-surface-raised px-4 py-3 text-body text-red-300 active:bg-state-mid"
           >
             放弃修改
           </button>
           <button
             type="button"
             onClick={() => setCloseConfirmOpen(false)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             继续编辑
           </button>
@@ -333,7 +333,7 @@ export default function MobileFileEditor({
         title="文件已被外部修改"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
-          <p className="pb-1 text-sm text-zinc-400">
+          <p className="pb-1 text-body text-fg-secondary">
             此文件在编辑期间被其他程序修改过。覆盖将丢失外部修改。
           </p>
           <button
@@ -342,14 +342,14 @@ export default function MobileFileEditor({
               setOverwriteConfirmOpen(false);
               await doSave();
             }}
-            className="rounded-xl bg-amber-600 px-4 py-3 text-sm font-medium text-white active:bg-amber-500"
+            className="rounded-xl bg-amber-600 px-4 py-3 text-body font-medium text-white active:bg-amber-500"
           >
             覆盖保存
           </button>
           <button
             type="button"
             onClick={() => setOverwriteConfirmOpen(false)}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>

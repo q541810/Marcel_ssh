@@ -55,7 +55,7 @@ export default function MobileQuickCommandBar({
   if (commands.length === 0) return null;
 
   return (
-    <div className="flex flex-shrink-0 gap-1.5 overflow-x-auto border-t border-edge-subtle bg-zinc-900/80 px-2 py-1.5 [scrollbar-width:none]">
+    <div className="flex flex-shrink-0 gap-1.5 overflow-x-auto border-t border-edge-subtle bg-surface/80 px-2 py-1.5 [scrollbar-width:none]">
       {commands.map((cmd) => {
         const running = executingId === cmd.id;
         return (
@@ -66,16 +66,16 @@ export default function MobileQuickCommandBar({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => handleRun(cmd)}
             disabled={!sessionId || (executingId != null && !running)}
-            className={`flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors duration-100 active:scale-95 disabled:opacity-50 ${
+            className={`flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-meta pressable disabled:opacity-50 ${
               running
                 ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
-                : 'border-edge bg-zinc-800 text-zinc-200 active:bg-state-mid'
+                : 'border-edge bg-surface-raised text-fg active:bg-state-mid'
             }`}
           >
             {running && <Loader2 className="h-3 w-3 animate-spin" />}
             {cmd.label}
             {cmd.lines.length > 1 && (
-              <span className="text-[10px] text-zinc-500">
+              <span className="text-caption text-fg-tertiary">
                 ×{cmd.lines.length}
               </span>
             )}

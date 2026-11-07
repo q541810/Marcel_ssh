@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react';
 import { memo, useState, useEffect } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import ToolCallCard from './ToolCallCard';
@@ -55,17 +56,9 @@ function ExplorationGroup({
           type="button"
           onClick={onToggle ?? (() => setExpanded((v) => !v))}
           aria-expanded={expanded}
-          className="tool-summary-toggle flex max-w-full items-center gap-2 rounded px-1 text-[13px] leading-5 font-normal text-zinc-400 hover:text-zinc-300 transition-colors"
+          className="tool-summary-toggle flex max-w-full items-center gap-2 rounded px-1 text-body leading-5 font-normal text-fg-secondary hover:text-fg-secondary transition-colors"
         >
-          <svg
-            aria-hidden="true"
-            className={`w-3 h-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+          <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} strokeWidth={1.5} aria-hidden="true" />
           <ToolCallSummary messages={messages} />
         </button>
         {expanded && !headerOnly && (

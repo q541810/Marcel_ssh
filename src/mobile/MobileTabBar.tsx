@@ -45,7 +45,7 @@ export default function MobileTabBar({
         : 'idle';
   return (
     <nav
-      className="flex flex-shrink-0 border-t border-edge-subtle bg-zinc-950"
+      className="flex flex-shrink-0 border-t border-edge-subtle bg-surface-sunken"
       style={{
         paddingBottom:
           'max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px))',
@@ -60,8 +60,8 @@ export default function MobileTabBar({
             key={tab.id}
             type="button"
             onClick={() => onTabChange(tab.id)}
-            className={`relative flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] transition-colors ${
-              active ? 'text-indigo-400' : 'text-zinc-500 active:text-zinc-300'
+            className={`relative flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-caption transition-colors focus-ring ${
+              active ? 'text-indigo-400' : 'text-fg-tertiary active:text-fg-secondary'
             }`}
             aria-current={active ? 'page' : undefined}
           >

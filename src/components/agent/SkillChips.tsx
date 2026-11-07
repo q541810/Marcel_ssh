@@ -34,7 +34,7 @@ export default function SkillChips({ skills, mobile = false, onRemove, justify =
             })}
             aria-label={`预览 Skill ${skill.name}`}
             title={`预览 ${skill.name} 的指令`}
-            className={`flex min-w-0 items-center gap-1.5 pl-2.5 text-xs font-medium transition-colors hover:bg-indigo-500/15 active:bg-indigo-500/20 ${onRemove ? 'pr-1' : 'pr-3'} ${mobile ? 'h-9' : 'h-7'}`}
+            className={`flex min-w-0 items-center gap-1.5 pl-2.5 text-meta font-medium transition-colors hover:bg-indigo-500/15 active:bg-indigo-500/20 ${onRemove ? 'pr-1' : 'pr-3'} ${mobile ? 'h-9' : 'h-7'}`}
           >
             <Sparkles aria-hidden className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 truncate">{skill.name}</span>

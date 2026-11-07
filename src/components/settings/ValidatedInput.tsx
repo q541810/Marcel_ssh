@@ -39,7 +39,7 @@ export function getValidatedInputClassName(hasError: boolean): string {
   if (hasError) {
     return 'bg-red-900/20 border border-red-500/50 focus:border-red-400';
   }
-  return 'bg-zinc-800 border border-edge';
+  return 'bg-surface-raised border border-edge';
 }
 
 // ─── 组件 ───
@@ -97,16 +97,16 @@ export function ValidatedInput(props: ValidatedInputProps) {
           onChange={(e) => handleChange(e.target.value)}
           onBlur={handleBlur}
           placeholder={placeholder}
-          className={`rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 ${getValidatedInputClassName(hasError)} ${className ?? ''}`}
+          className={`rounded-lg px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 ${getValidatedInputClassName(hasError)} ${className ?? ''}`}
           {...(type === 'number' ? { min: (props as NumberProps).min, max: (props as NumberProps).max, step: (props as NumberProps).step } : {})}
         />
-        {suffix && <span className="text-xs text-zinc-500">{suffix}</span>}
+        {suffix && <span className="text-meta text-fg-tertiary">{suffix}</span>}
       </div>
       {error && (
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-meta text-red-400">{error}</p>
       )}
       {!error && hint && (
-        <p className="text-xs text-zinc-500">{hint}</p>
+        <p className="text-meta text-fg-tertiary">{hint}</p>
       )}
     </div>
   );

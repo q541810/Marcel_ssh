@@ -31,7 +31,7 @@ const MAX_LISTED = 4;
  * 期间才挂载，明细订阅也就只在那时存在。
  *
  * **版式必须与应用里其他确认框同款**（对照 `HostKeyMismatchModal`）：`Modal` 自带的
- * 标题栏、`p-4 space-y-4` 的正文、`text-sm` 文字、右下「ghost 取消 + danger 确认」。
+ * 标题栏、`p-4 space-y-4` 的正文、`text-body` 文字、右下「ghost 取消 + danger 确认」。
  * 试过圆形图标 + 大标题 + 带分隔线的内嵌清单卡片，结果在一众朴素的弹窗里格外突兀、
  * 被判定为更丑 —— 别再往里加图标、卡片、分隔线之类的装饰；清单就是几行纯文字。
  */
@@ -86,7 +86,7 @@ export default function QuitGuard() {
       <div className="p-4 space-y-4" data-testid="quit-guard">
         <QuitDialogBody drained={drained} />
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-body text-red-400">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
           {/* 默认焦点给「继续使用」：回车 / 误触都落在安全的一侧 */}
@@ -115,7 +115,7 @@ function QuitDialogBody({ drained }: { drained: boolean }) {
   if (isBusy(work)) lastBusy.current = work;
 
   if (drained) {
-    return <p className="text-sm text-zinc-300">刚才的任务已经跑完，现在可以放心退出了。</p>;
+    return <p className="text-body text-fg-secondary">刚才的任务已经跑完，现在可以放心退出了。</p>;
   }
 
   const view = isBusy(work) ? work : lastBusy.current;
@@ -123,24 +123,24 @@ function QuitDialogBody({ drained }: { drained: boolean }) {
   const listed = items.slice(0, MAX_LISTED);
   return (
     <>
-      <p className="text-sm text-zinc-300">现在退出会中断以下任务：</p>
-      <ul className="space-y-1.5" data-testid="quit-guard-items">
+      <p className="text-body text-fg-secondary">现在退出会中断以下任务：</p>
+      <ul className="space-y-2" data-testid="quit-guard-items">
         {listed.map((item) => (
-          <li key={item.key} className="flex items-baseline gap-3 text-sm">
-            <span className="w-8 flex-shrink-0 text-xs text-zinc-500">{item.kind}</span>
-            <span className="min-w-0 flex-1 truncate text-zinc-200" title={item.text}>
+          <li key={item.key} className="flex items-baseline gap-3 text-body">
+            <span className="w-8 flex-shrink-0 text-meta text-fg-tertiary">{item.kind}</span>
+            <span className="min-w-0 flex-1 truncate text-fg" title={item.text}>
               {item.text}
             </span>
-            {item.note && <span className="flex-shrink-0 text-xs text-amber-300">{item.note}</span>}
+            {item.note && <span className="flex-shrink-0 text-meta text-amber-300">{item.note}</span>}
           </li>
         ))}
         {items.length > listed.length && (
-          <li className="pl-11 text-xs text-zinc-500">另有 {items.length - listed.length} 项</li>
+          <li className="pl-11 text-meta text-fg-tertiary">另有 {items.length - listed.length} 项</li>
         )}
       </ul>
       <div className="space-y-1">
         {busyConsequences(view).map((line) => (
-          <p key={line} className="text-sm text-zinc-500">
+          <p key={line} className="text-body text-fg-tertiary">
             {line}
           </p>
         ))}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Pin, Plus, Search } from 'lucide-react';
+import { Brain, Pin, Plus, Search, SearchX } from 'lucide-react';
 import Select from '@/components/ui/Select';
 import Toggle from '@/components/ui/Toggle';
 import MemoryEditDialog from '@/components/memory/MemoryEditDialog';
@@ -115,7 +115,7 @@ function ManageBody({ manager }: { manager: MemoryManager }) {
 
   return (
     <div className="flex min-h-[26rem]">
-      <nav className="w-56 shrink-0 space-y-3 border-r border-edge-subtle p-3 text-sm" aria-label="记忆作用域">
+      <nav className="w-56 shrink-0 space-y-3 border-r border-edge-subtle p-3 text-body" aria-label="记忆作用域">
         <ScopeButton
           label="全部"
           count={directory.total}
@@ -163,19 +163,19 @@ function ManageBody({ manager }: { manager: MemoryManager }) {
 
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-2">
-          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-1.5 focus-within:border-indigo-500 transition-colors">
-            <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
+          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 focus-within:border-indigo-500 transition-colors">
+            <Search className="h-3.5 w-3.5 shrink-0 text-fg-tertiary" aria-hidden />
             <input
               value={manager.query}
               onChange={(e) => manager.setQuery(e.target.value)}
               placeholder="搜索标题或内容"
-              className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-body text-fg placeholder:text-fg-tertiary focus:outline-none"
             />
           </label>
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="flex items-center gap-1 rounded-lg bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-state-mid active:scale-[0.97] transition"
+            className="flex items-center gap-1 rounded-lg bg-surface-raised px-3 py-2 text-body text-fg hover:bg-state-mid transition"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden />
             新增
@@ -185,24 +185,24 @@ function ManageBody({ manager }: { manager: MemoryManager }) {
         <FilterHeader manager={manager} />
 
         {manager.undo && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-zinc-800/80 px-3 py-2 text-xs animate-fadeIn">
-            <span className="min-w-0 truncate text-zinc-300">{manager.undo.text}</span>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-surface-raised/80 px-3 py-2 text-meta animate-fadeIn">
+            <span className="min-w-0 truncate text-fg-secondary">{manager.undo.text}</span>
             <div className="flex shrink-0 items-center gap-1">
               <button type="button" onClick={() => void manager.undoLast()}
                 className="rounded-md px-2 py-0.5 font-medium text-indigo-300 hover:bg-indigo-500/10 transition">
                 撤销
               </button>
               <button type="button" onClick={manager.dismissUndo} aria-label="关闭"
-                className="rounded-md px-1.5 py-0.5 text-zinc-500 hover:text-zinc-300 transition">
+                className="rounded-md px-2 py-0.5 text-fg-tertiary hover:text-fg-secondary transition">
                 ×
               </button>
             </div>
           </div>
         )}
-        {manager.actionError && <p className="text-xs text-red-400">{manager.actionError}</p>}
+        {manager.actionError && <p className="text-meta text-red-400">{manager.actionError}</p>}
 
         {!manager.loaded ? (
-          <p className="py-10 text-center text-sm text-zinc-500">{manager.loadError ?? '读取中…'}</p>
+          <p className="py-10 text-center text-body text-fg-tertiary">{manager.loadError ?? '读取中…'}</p>
         ) : manager.items.length === 0 ? (
           <EmptyList manager={manager} />
         ) : (
@@ -232,8 +232,8 @@ function isScope(filter: MemoryFilter, entry: ScopeEntry) {
 function ScopeGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500">{title}</div>
-      <div className="space-y-0.5">{children}</div>
+      <div className="mb-1 px-2 text-caption font-medium uppercase tracking-wide text-fg-tertiary">{title}</div>
+      <div className="space-y-1">{children}</div>
     </div>
   );
 }
@@ -253,16 +253,16 @@ function ScopeButton({
       type="button"
       onClick={onClick}
       aria-current={active ? 'true' : undefined}
-      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
-        active ? 'bg-indigo-500/15 text-zinc-100' : 'text-zinc-400 hover:bg-state-soft hover:text-zinc-200'
+      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors ${
+        active ? 'bg-indigo-500/15 text-fg' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
       }`}
     >
       <span className="min-w-0 flex-1 truncate" title={label}>
         {label}
-        {hint && <span className="ml-1.5 text-xs text-zinc-600">{hint}</span>}
+        {hint && <span className="ml-2 text-meta text-fg-disabled">{hint}</span>}
       </span>
       {newCount > 0 && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" title={`${newCount} 条新的`} />}
-      <span className="shrink-0 text-xs tabular-nums text-zinc-500">{count || ''}</span>
+      <span className="shrink-0 text-meta tabular-nums text-fg-tertiary">{count || ''}</span>
     </button>
   );
 }
@@ -283,13 +283,13 @@ function FilterHeader({ manager }: { manager: MemoryManager }) {
   }
   if (!text && clearable.length === 0) return null;
   return (
-    <div className="flex items-center justify-between gap-3 text-xs text-zinc-500">
+    <div className="flex items-center justify-between gap-3 text-meta text-fg-tertiary">
       <span className="min-w-0">{text}</span>
       {clearable.length === 1 && (
         <button
           type="button"
           onClick={() => void manager.clearScope(clearable[0])}
-          className="shrink-0 rounded-md px-2 py-0.5 text-zinc-400 hover:bg-red-500/10 hover:text-red-300 transition"
+          className="shrink-0 rounded-md px-2 py-0.5 text-fg-secondary hover:bg-red-500/10 hover:text-red-300 transition"
         >
           清空 {clearable[0].label}
         </button>
@@ -300,10 +300,16 @@ function FilterHeader({ manager }: { manager: MemoryManager }) {
 
 function EmptyList({ manager }: { manager: MemoryManager }) {
   if (manager.query.trim()) {
-    return <p className="py-10 text-center text-sm text-zinc-500">没有匹配「{manager.query.trim()}」的记忆</p>;
+    return (
+      <div className="py-10 text-center">
+        <SearchX size={24} strokeWidth={1.5} className="mx-auto mb-2 text-fg-tertiary" />
+        <p className="text-body text-fg-secondary">没有匹配「{manager.query.trim()}」的记忆</p>
+      </div>
+    );
   }
   return (
-    <div className="py-10 text-center text-sm leading-relaxed text-zinc-500">
+    <div className="py-10 text-center text-body leading-relaxed text-fg-secondary">
+      <Brain size={24} strokeWidth={1.5} className="mx-auto mb-2 text-fg-tertiary" />
       这里还没有记忆。
       <br />
       和 Agent 聊的时候它会记下值得长期记住的东西；也可以点「新增」手动写，或者让上面的整理助手从以前的会话里整理。
@@ -319,17 +325,17 @@ function ItemRow({ item, manager, onEdit }: { item: MemoryItem; manager: MemoryM
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           {item.pinned && <Pin className="h-3 w-3 shrink-0 text-indigo-400" aria-label="置顶" />}
-          <span className="min-w-0 truncate text-sm font-medium text-zinc-100" title={item.title}>{item.title}</span>
-          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-px text-[11px] text-zinc-400">{KIND_LABELS[item.kind]}</span>
-          {item.isNew && <span className="shrink-0 rounded bg-indigo-500/20 px-1.5 py-px text-[11px] text-indigo-300">新</span>}
+          <span className="min-w-0 truncate text-body font-medium text-fg" title={item.title}>{item.title}</span>
+          <span className="shrink-0 rounded bg-surface-raised px-2 py-px text-caption text-fg-secondary">{KIND_LABELS[item.kind]}</span>
+          {item.isNew && <span className="shrink-0 rounded bg-indigo-500/20 px-2 py-px text-caption text-indigo-300">新</span>}
         </div>
-        <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-400">{item.content}</p>
-        <div className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-meta leading-relaxed text-fg-secondary">{item.content}</p>
+        <div className="mt-1 text-caption text-fg-disabled">
           {showScope && <>{scopeLabel(scopeOf(item), connections)} · </>}
           {SOURCE_LABELS[item.source]}记的 · {relativeTime(item.updatedAt)}
         </div>
       </div>
-      <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="flex shrink-0 items-start gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <RowAction onClick={() => void manager.togglePin(item)}>{item.pinned ? '取消置顶' : '置顶'}</RowAction>
         <RowAction onClick={onEdit}>编辑</RowAction>
         <RowAction danger onClick={() => void manager.remove(item)}>删除</RowAction>
@@ -343,8 +349,8 @@ function RowAction({ children, onClick, danger = false }: { children: ReactNode;
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md px-2 py-1 text-xs transition active:scale-[0.96] ${
-        danger ? 'text-zinc-400 hover:bg-red-500/10 hover:text-red-300' : 'text-zinc-400 hover:bg-state-soft hover:text-zinc-100'
+      className={`rounded-md px-2 py-1 text-meta transition ${
+        danger ? 'text-fg-secondary hover:bg-red-500/10 hover:text-red-300' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
       }`}
     >
       {children}

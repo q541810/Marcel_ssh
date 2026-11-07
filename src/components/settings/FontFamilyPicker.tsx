@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Check as LucideCheck } from 'lucide-react';
 import { useThemeSynced } from "@/hooks/useThemeSynced";
 import SweepTransition from "@/components/ui/SweepTransition";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
@@ -60,19 +61,7 @@ function selectedKey(value: string, installed: readonly string[]): string {
 
 function Check() {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
+    <LucideCheck size={14} strokeWidth={1.5} aria-hidden />
   );
 }
 
@@ -102,25 +91,25 @@ function FontRow({
         onPick();
       }}
       onPointerEnter={onHover}
-      className={`flex cursor-pointer items-center gap-3 rounded-lg px-3 transition-colors duration-100 active:scale-[0.99] ${
+      className={`flex cursor-pointer items-center gap-3 rounded-lg px-3 transition-colors duration-100 ${
         roomy ? "py-3" : "py-2"
-      } ${active ? "bg-state-mid" : ""} ${selected ? "text-indigo-400" : "text-zinc-100"}`}
+      } ${active ? "bg-state-mid" : ""} ${selected ? "text-indigo-400" : "text-fg"}`}
     >
       <div className="min-w-0 flex-1">
         <div
-          className={`flex items-center gap-1.5 text-[11px] leading-tight ${
-            selected ? "text-indigo-400" : "text-zinc-500"
+          className={`flex items-center gap-2 text-caption leading-tight ${
+            selected ? "text-indigo-400" : "text-fg-tertiary"
           }`}
         >
           <span className="truncate">{item.label}</span>
           {item.hint && (
-            <span className="flex-shrink-0 rounded bg-state-soft px-1 py-px text-[10px] text-zinc-400">
+            <span className="flex-shrink-0 rounded bg-state-soft px-1 py-px text-caption text-fg-secondary">
               {item.hint}
             </span>
           )}
         </div>
         <div
-          className="mt-1 truncate whitespace-pre text-[15px] leading-snug"
+          className="mt-1 truncate whitespace-pre text-read leading-snug"
           style={{ fontFamily: buildTerminalFontFamily(item.stack) }}
         >
           {ROW_SAMPLE}
@@ -151,7 +140,7 @@ function TerminalPreview({
     <SweepTransition
       value={stack}
       ariaLabel="字体预览"
-      className="rounded-xl border border-edge-subtle px-3.5 py-3 shadow-inner"
+      className="rounded-xl border border-edge-subtle px-4 py-3 shadow-inner"
       style={{
         background: theme.background,
         color: theme.foreground,
@@ -338,11 +327,11 @@ export function FontFamilyPicker({
 
   const hint =
     effective.missing.length > 0 ? (
-      <p className="text-xs leading-relaxed text-amber-400">
+      <p className="text-meta leading-relaxed text-amber-400">
         这台设备上没找到「{effective.missing.join("、")}」，当前实际使用：{actualLabel}
       </p>
     ) : showCustom ? (
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-meta leading-relaxed text-fg-tertiary">
         当前实际使用：{actualLabel}。多个字体用逗号隔开，靠前的优先；回车或点别处生效
       </p>
     ) : null;
@@ -350,9 +339,9 @@ export function FontFamilyPicker({
   // ---- 手机：卡片直接点选 ----
   if (!desktop) {
     return (
-      <div className="mt-2 flex flex-col gap-2.5">
+      <div className="mt-2 flex flex-col gap-3">
         <TerminalPreview stack={value} fontSize={fontSize} colors={terminalColors} />
-        <div role="listbox" className="flex flex-col gap-1 rounded-xl border border-edge-subtle bg-zinc-950 p-1">
+        <div role="listbox" className="flex flex-col gap-1 rounded-xl border border-edge-subtle bg-surface-sunken p-1">
           {items.map((item) => (
             <FontRow
               key={item.key}
@@ -372,7 +361,7 @@ export function FontFamilyPicker({
   // ---- 桌面：触发按钮 + 弹出列表 ----
   const current = items.find((i) => i.key === key);
   return (
-    <div className="flex w-full max-w-md flex-col gap-2.5">
+    <div className="flex w-full max-w-md flex-col gap-3">
       <TerminalPreview stack={value} fontSize={fontSize} colors={terminalColors} />
       <div ref={containerRef} className="relative">
         <button
@@ -380,42 +369,29 @@ export function FontFamilyPicker({
           aria-haspopup="listbox"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className={`flex w-full items-center gap-2 rounded-xl border bg-zinc-800 px-3.5 py-2 text-left transition-[border-color,transform] duration-100 active:scale-[0.99] focus:outline-none ${
+          className={`flex w-full items-center gap-2 rounded-xl border bg-surface-raised px-4 py-2 text-left transition-[border-color,transform] duration-100 focus:outline-none ${
             open ? "border-indigo-500" : "border-edge hover:border-edge-strong focus-visible:border-indigo-500"
           }`}
         >
           <span
-            className="flex-1 truncate text-[15px] text-zinc-100"
+            className="flex-1 truncate text-read text-fg"
             style={{ fontFamily: buildTerminalFontFamily(value) }}
           >
             {current?.label ?? (primaryFontFamily(value) || "未设置")}
           </span>
           {key === CUSTOM_KEY && (
-            <span className="flex-shrink-0 rounded bg-state-soft px-1.5 py-px text-[10px] text-zinc-400">
+            <span className="flex-shrink-0 rounded bg-state-soft px-2 py-px text-caption text-fg-secondary">
               自定义
             </span>
           )}
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`flex-shrink-0 text-zinc-500 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-            aria-hidden
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
+          <ChevronDown size={16} strokeWidth={1.5} className={`flex-shrink-0 text-fg-tertiary transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden />
         </button>
 
         {presence.mounted && (
           <div
             onKeyDown={onListKeyDown}
             onAnimationEnd={presence.onAnimationEnd}
-            className={`absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-edge bg-zinc-800 shadow-2xl ${
+            className={`absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-edge bg-surface-raised shadow-raised ${
               presence.phase === "exit" ? "dropdown-exit pointer-events-none" : "dropdown-enter"
             }`}
           >
@@ -435,7 +411,7 @@ export function FontFamilyPicker({
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                className="w-full rounded-lg bg-zinc-900/60 px-2.5 py-1.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded-lg bg-surface/60 px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus-ring"
               />
             </div>
             <div ref={listRef} role="listbox" className="max-h-80 overflow-auto p-1 !animate-none">
@@ -453,7 +429,7 @@ export function FontFamilyPicker({
                 />
               ))}
               {visible.length === 0 && (
-                <div className="px-3 py-4 text-center text-xs text-zinc-500">
+                <div className="px-3 py-4 text-center text-meta text-fg-tertiary">
                   没有匹配的已安装字体，可在下方选「自定义字体栈」手输
                 </div>
               )}
@@ -467,7 +443,7 @@ export function FontFamilyPicker({
                   setOpen(false);
                   setCustomOpen(true);
                 }}
-                className="cursor-pointer rounded-lg px-3 py-2 text-sm text-zinc-300 transition-colors duration-100 hover:bg-state-mid"
+                className="cursor-pointer rounded-lg px-3 py-2 text-body text-fg-secondary transition-colors duration-100 hover:bg-state-mid"
               >
                 自定义字体栈…
               </div>
@@ -495,7 +471,7 @@ export function FontFamilyPicker({
           autoCorrect="off"
           spellCheck={false}
           aria-label="自定义字体栈"
-          className="w-full rounded-xl border border-edge bg-zinc-800 px-3.5 py-2 font-mono text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-500"
+          className="w-full rounded-xl border border-edge bg-surface-raised px-4 py-2 font-mono text-body text-fg outline-none transition-colors focus:border-indigo-500"
         />
       )}
 

@@ -11,8 +11,8 @@ import { SyncButton, type SyncVariant } from './syncUi';
 const COLLAPSED_COUNT = 8;
 
 function ValueText({ value, empty }: { value: string | null; empty: string }) {
-  if (value === null || value === '') return <span className="italic text-zinc-500">{empty}</span>;
-  return <span className="break-all text-zinc-300">{value}</span>;
+  if (value === null || value === '') return <span className="italic text-fg-tertiary">{empty}</span>;
+  return <span className="break-all text-fg-secondary">{value}</span>;
 }
 
 function HistoryItem({
@@ -36,37 +36,37 @@ function HistoryItem({
 
   return (
     <li
-      className={`py-2.5 first:pt-0 last:pb-0 ${entry.undone ? 'opacity-55' : ''} ${
-        isWarning ? 'rounded-lg bg-amber-500/10 px-2.5 !py-2 my-1.5 border border-amber-500/20' : ''
+      className={`py-3 first:pt-0 last:pb-0 ${entry.undone ? 'opacity-55' : ''} ${
+        isWarning ? 'rounded-lg bg-amber-500/10 px-3 !py-2 my-2 border border-amber-500/20' : ''
       }`}
       data-kind={entry.kind}
     >
       <div className="flex items-start gap-2">
-        {isWarning && <TriangleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-400" aria-hidden />}
+        {isWarning && <TriangleAlert className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-amber-400" aria-hidden />}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 text-sm text-zinc-200">
+          <div className="flex flex-wrap items-baseline gap-x-2 text-body text-fg">
             <span className="font-medium">{view.sourceLabel}</span>
-            <span className="text-zinc-400">{view.fieldLabel === view.sourceLabel ? '' : view.fieldLabel}</span>
+            <span className="text-fg-secondary">{view.fieldLabel === view.sourceLabel ? '' : view.fieldLabel}</span>
             {view.scope && (
-              <span className="rounded bg-zinc-700/70 px-1.5 py-0.5 text-[10px] text-zinc-300">{view.scope}</span>
+              <span className="rounded bg-zinc-700/70 px-2 py-0.5 text-caption text-fg-secondary">{view.scope}</span>
             )}
           </div>
           {isWarning ? (
-            <p className="mt-0.5 text-xs leading-relaxed text-amber-200/90">
+            <p className="mt-1 text-meta leading-relaxed text-amber-200/90">
               {warningText || '这条改动没有应用到本机，请留意。'}
             </p>
           ) : isSecret ? (
-            <p className="mt-0.5 text-xs leading-relaxed text-zinc-400">
+            <p className="mt-1 text-meta leading-relaxed text-fg-secondary">
               {entry.oldValue || entry.newValue ? '已更新（内容不在这里显示）' : '已更新'}
             </p>
           ) : (
-            <p className="mt-0.5 text-xs leading-relaxed">
+            <p className="mt-1 text-meta leading-relaxed">
               <ValueText value={view.oldValue} empty="（无）" />
-              <span className="mx-1.5 text-zinc-500">→</span>
+              <span className="mx-2 text-fg-tertiary">→</span>
               <ValueText value={view.newValue} empty="（已删除）" />
             </p>
           )}
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+          <p className="mt-1 text-caption text-fg-tertiary">
             来自 {entry.deviceName} · {relativeTime(entry.at) || '时间未知'}
             {entry.undone ? ' · 已撤销' : ''}
           </p>
@@ -77,7 +77,7 @@ function HistoryItem({
             kind="ghost"
             loading={busy}
             onClick={() => onUndo(entry)}
-            className={variant === 'desktop' ? '!px-2 !py-1 !text-xs' : '!min-h-9 !px-3'}
+            className={variant === 'desktop' ? '!px-2 !py-1 !text-meta' : '!min-h-9 !px-3'}
             aria-label={`撤销对「${view.sourceLabel} ${view.fieldLabel}」的改动`}
           >
             <Undo2 className="h-3.5 w-3.5" aria-hidden />
@@ -125,14 +125,14 @@ export function HistoryList({
 
   if (error && history.length === 0) {
     return (
-      <p className="text-xs text-red-400" role="alert">
+      <p className="text-meta text-red-400" role="alert">
         读取同步记录失败：{error}
       </p>
     );
   }
   if (history.length === 0) {
     return (
-      <p className="text-xs text-zinc-500">
+      <p className="text-meta text-fg-tertiary">
         {loading ? '正在读取同步记录…' : '还没有来自其它设备的改动。别的设备改了东西之后，会在这里留下记录。'}
       </p>
     );
@@ -142,7 +142,7 @@ export function HistoryList({
   return (
     <div className="space-y-2">
       {undoError && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-meta text-red-400" role="alert">
           撤销失败：{undoError}
         </p>
       )}
@@ -161,7 +161,7 @@ export function HistoryList({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="text-xs text-indigo-400 hover:text-indigo-300 active:text-indigo-300"
+          className="text-meta text-indigo-400 hover:text-indigo-300 active:text-indigo-300"
         >
           {expanded ? '收起' : `查看全部 ${history.length} 条`}
         </button>

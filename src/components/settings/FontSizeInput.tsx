@@ -51,12 +51,12 @@ export function FontSizeInput({
         onChange={(e) => setInputValue(e.target.value)}
         onFocus={() => setShowSlider(true)}
         onBlur={handleBlur}
-        className="w-24 rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-24 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body text-fg focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
       {showSlider && (
         <div 
-          className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-3 bg-zinc-800 border border-edge rounded-xl shadow-xl z-50 w-52 animate-slide-down"
-          style={{ animationDuration: '200ms', animationTimingFunction: 'var(--spring-bounce)' }}
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-3 bg-surface-raised border border-edge rounded-xl shadow-raised z-50 w-52 animate-slide-down"
+          style={{ animationDuration: '200ms' }}
         >
           <input
             type="range"
@@ -73,7 +73,7 @@ export function FontSizeInput({
             }}
             className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
           />
-          <div className="flex justify-between text-xs text-zinc-500 mt-1">
+          <div className="flex justify-between text-meta text-fg-tertiary mt-1">
             <span>{TERMINAL_FONT_SIZE_MIN}</span>
             <span className="text-indigo-400 font-medium">{value}px</span>
             <span>{TERMINAL_FONT_SIZE_MAX}</span>

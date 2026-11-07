@@ -38,9 +38,9 @@ export function ApprovalRejectButton({
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [open]);
 
-  const shape = touch ? 'py-3 text-sm' : 'py-1.5 text-sm';
+  const shape = touch ? 'py-3 text-read' : 'py-1.5 text-read';
   const base =
-    'inline-flex items-center justify-center bg-zinc-700 font-medium text-zinc-200 transition-colors hover:bg-state-strong active:bg-state-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500';
+    'inline-flex items-center justify-center bg-state-mid font-medium text-fg transition-colors hover:bg-state-strong active:bg-state-strong focus-ring';
   const radius = touch ? 'rounded-xl' : 'rounded-lg';
 
   return (
@@ -81,7 +81,7 @@ export function ApprovalRejectButton({
           {open && (
             <div
               role="menu"
-              className="animate-fadeIn absolute bottom-full right-0 z-20 mb-2 min-w-[11rem] rounded-xl border border-edge bg-zinc-800 p-1 shadow-xl"
+              className="animate-fadeIn absolute bottom-full right-0 z-20 mb-2 min-w-[11rem] origin-bottom-right rounded-xl surface-glass p-1"
             >
               <button
                 type="button"
@@ -92,7 +92,7 @@ export function ApprovalRejectButton({
                   onRejectAndStop();
                 }}
                 title="拒绝这次调用，并停止整个任务（Agent 不会再继续尝试）"
-                className={`w-full rounded-lg px-3 text-left text-sm text-red-300 transition-colors hover:bg-state-soft active:bg-state-mid focus:bg-state-soft focus:outline-none ${
+                className={`w-full rounded-lg px-3 text-left text-read text-red-300 transition-colors hover:bg-state-soft active:bg-state-mid focus-ring ${
                   touch ? 'py-3' : 'py-2'
                 }`}
               >

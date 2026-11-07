@@ -11,7 +11,7 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="modal-backdrop-enter absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="modal-panel-enter relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-edge shadow-2xl">
+      <div className="modal-panel-enter relative w-full max-w-lg mx-4 rounded-2xl bg-surface-raised border border-edge shadow-2xl">
         {/* Header with warning */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
           <div className="flex items-center gap-2">
@@ -23,7 +23,7 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
           </div>
           <button
             onClick={onCancel}
-            className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
+            className="text-fg-secondary hover:text-fg text-xl leading-none"
             aria-label="关闭"
           >
             &times;
@@ -32,14 +32,14 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
 
         {/* Warning message */}
         <div className="px-4 pt-3 pb-2">
-          <p className="text-sm text-zinc-200 font-medium">
+          <p className="text-read text-fg font-medium">
             您粘贴的内容中含有回车，可能会意外执行某些命令。
           </p>
         </div>
 
         {/* Content preview */}
         <div className="px-4 pb-3">
-          <pre className="p-3 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-48 whitespace-pre-wrap break-all">
+          <pre className="p-3 rounded-lg bg-surface text-meta text-fg-secondary overflow-auto max-h-48 whitespace-pre-wrap break-all">
             {text}
           </pre>
         </div>
@@ -48,13 +48,13 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
         <div className="flex justify-end gap-2 px-4 pb-4 border-t border-edge pt-3">
           <button
             onClick={onCancel}
-            className="px-4 py-1.5 rounded-lg text-sm text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+            className="px-4 py-1.5 rounded-lg text-read text-fg-secondary bg-zinc-700 hover:bg-state-strong transition-colors"
           >
             取消
           </button>
           <button
             onClick={() => onConfirm(sessionId, text)}
-            className="px-4 py-1.5 rounded-lg text-sm text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-read text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
           >
             确认粘贴
           </button>

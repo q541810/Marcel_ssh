@@ -10,7 +10,7 @@ export default function FileEntryIcon({ entry }: { entry: SftpFileEntry }) {
   return (
     <span
       data-kind={badge.toLowerCase()}
-      className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800"
+      className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-surface-raised"
       aria-hidden
     >
       {badge === 'DIR' ? (
@@ -37,7 +37,7 @@ export default function FileEntryIcon({ entry }: { entry: SftpFileEntry }) {
         </svg>
       ) : (
         <svg
-          className="h-5 w-5 text-zinc-500"
+          className="h-5 w-5 text-fg-tertiary"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

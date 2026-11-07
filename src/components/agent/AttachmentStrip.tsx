@@ -79,11 +79,11 @@ function AttachmentCard({
         : !hasContent
           ? "内容暂不可用"
           : `${item.kind === "image" ? "图片" : "文本"}${hasSize ? ` · ${formatSize(item.size!)}` : ""}`;
-  const actionClass = `inline-flex shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-state-mid hover:text-zinc-100 active:bg-state-mid focus-visible:outline-offset-[-2px] ${mobile ? "h-12 w-12" : "h-9 w-8"}`;
+  const actionClass = `inline-flex shrink-0 items-center justify-center rounded-lg text-fg-secondary transition-colors hover:bg-state-mid hover:text-fg active:bg-state-mid focus-visible:outline-offset-[-2px] ${mobile ? "h-12 w-12" : "h-9 w-8"}`;
 
   return (
     <li
-      className={`flex shrink-0 items-center overflow-hidden rounded-xl border ${item.status === "error" ? "border-red-800/60 bg-red-950/30" : "border-edge bg-zinc-900"} ${item.status === "error" && onRetry ? "w-[18rem]" : mobile ? "w-[15rem]" : "w-[13rem]"} max-w-full`}
+      className={`flex shrink-0 items-center overflow-hidden rounded-xl border ${item.status === "error" ? "border-red-800/60 bg-red-950/30" : "border-edge bg-surface"} ${item.status === "error" && onRetry ? "w-[18rem]" : mobile ? "w-[15rem]" : "w-[13rem]"} max-w-full`}
       data-attachment-id={item.id}
     >
       <button
@@ -98,17 +98,17 @@ function AttachmentCard({
         title={canPreview ? `预览 ${name}` : `${name}：${detail}`}
       >
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${item.status === "error" ? "text-red-300" : "bg-zinc-800 text-zinc-400"}`}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${item.status === "error" ? "text-red-300" : "bg-surface-raised text-fg-secondary"}`}
         >
           <AttachmentThumbnail item={item} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-zinc-200">
+          <span className="block truncate text-meta font-medium text-fg">
             {name}
           </span>
           <span
             id={descriptionId}
-            className={`mt-0.5 block text-[11px] leading-4 ${item.status === "error" ? "line-clamp-2 text-red-300" : "truncate text-zinc-400"}`}
+            className={`mt-0.5 block text-caption leading-4 ${item.status === "error" ? "line-clamp-2 text-red-300" : "truncate text-fg-secondary"}`}
             title={detail}
           >
             {detail}
@@ -171,7 +171,7 @@ export default function AttachmentStrip({
         ))}
       </ul>
       {unsupportedImages && (
-        <p role="status" className="mt-1 text-xs leading-relaxed text-zinc-300">
+        <p role="status" className="mt-1 text-meta leading-relaxed text-fg-secondary">
           当前模型不支持图片，请更换支持图片的模型或移除图片后发送。
         </p>
       )}

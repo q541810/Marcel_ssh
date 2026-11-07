@@ -189,21 +189,21 @@ export default function FileEditorModal({
 
       <div
         onAnimationEnd={onExitAnimationEnd}
-        className={`relative w-full max-w-5xl mx-4 h-[85vh] rounded-2xl bg-zinc-800 border border-edge shadow-2xl flex flex-col overflow-hidden ${
+        className={`relative w-full max-w-5xl mx-4 h-[85vh] rounded-2xl bg-surface-raised border border-edge shadow-2xl flex flex-col overflow-hidden ${
           closing ? 'modal-panel-exit' : 'modal-panel-enter'
         }`}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-edge flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-fg-secondary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <h2 className="text-sm font-medium text-zinc-200 truncate">{filePath}</h2>
+            <h2 className="text-read font-medium text-fg truncate">{filePath}</h2>
           </div>
           <button
             onClick={handleClose}
-            className="text-zinc-400 hover:text-zinc-200 text-xl leading-none p-1"
+            className="text-fg-secondary hover:text-fg text-xl leading-none p-1"
             aria-label="关闭"
           >
             &times;
@@ -211,23 +211,23 @@ export default function FileEditorModal({
         </div>
 
         {/* Info bar */}
-        <div className="flex items-center gap-4 px-4 py-1.5 border-b border-edge/50 bg-zinc-800/50 flex-shrink-0">
-          <span className="text-xs text-zinc-500">
-            大小: <span className="text-zinc-400">{formatSize(fileSize)}</span>
+        <div className="flex items-center gap-4 px-4 py-1.5 border-b border-edge/50 bg-surface-raised/50 flex-shrink-0">
+          <span className="text-meta text-fg-tertiary">
+            大小: <span className="text-fg-secondary">{formatSize(fileSize)}</span>
           </span>
-          <span className="text-xs text-zinc-500">
-            行数: <span className="text-zinc-400">{loading ? '-' : lineCount}</span>
+          <span className="text-meta text-fg-tertiary">
+            行数: <span className="text-fg-secondary">{loading ? '-' : lineCount}</span>
           </span>
-          <span className="text-xs text-zinc-500">
-            编码: <span className="text-zinc-400">UTF-8</span>
+          <span className="text-meta text-fg-tertiary">
+            编码: <span className="text-fg-secondary">UTF-8</span>
           </span>
           {savedIndicator && (
-            <span className="text-xs text-green-400 ml-auto">已保存</span>
+            <span className="text-meta text-green-400 ml-auto">已保存</span>
           )}
         </div>
 
         {error && (
-          <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0">
+          <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-meta text-red-300 flex-shrink-0">
             <span>{error}</span>
             <div className="flex gap-2">
               <button onClick={handleSave} disabled={saving} className="text-red-400 hover:text-red-200">重试</button>
@@ -239,8 +239,8 @@ export default function FileEditorModal({
         {/* Body */}
         <div className="flex-1 min-h-0 flex flex-col relative">
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-zinc-900 z-10">
-              <div className="flex items-center gap-2 text-sm text-zinc-400">
+            <div className="absolute inset-0 flex items-center justify-center bg-surface z-10">
+              <div className="flex items-center gap-2 text-read text-fg-secondary">
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -258,7 +258,7 @@ export default function FileEditorModal({
           <button
             type="button"
             onClick={handleClose}
-            className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+            className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
           >
             取消
           </button>
@@ -266,7 +266,7 @@ export default function FileEditorModal({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-meta text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
           >
             {saving ? (
               <>
@@ -290,16 +290,16 @@ export default function FileEditorModal({
         {/* Close confirmation dialog */}
         {showCloseConfirm && (
           <div className="modal-backdrop-enter absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-              <h3 className="text-sm font-semibold text-zinc-200 mb-2">未保存的修改</h3>
-              <p className="text-xs text-zinc-400 mb-4">
+            <div className="modal-panel-enter w-80 rounded-xl bg-surface-raised border border-edge shadow-2xl p-4">
+              <h3 className="text-read font-semibold text-fg mb-2">未保存的修改</h3>
+              <p className="text-meta text-fg-secondary mb-4">
                 文件有未保存的修改，是否在关闭前保存？
               </p>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={handleCloseWithoutSaving}
-                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                  className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
                 >
                   放弃
                 </button>
@@ -310,14 +310,14 @@ export default function FileEditorModal({
                     const result = await handleSave();
                     if (result === 'saved') requestClose();
                   }}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                  className="px-3 py-1.5 rounded-lg text-meta text-white bg-indigo-600 hover:bg-indigo-500"
                 >
                   保存
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowCloseConfirm(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                  className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
                 >
                   取消
                 </button>
@@ -329,16 +329,16 @@ export default function FileEditorModal({
         {/* Overwrite confirmation dialog */}
         {showOverwriteConfirm && (
           <div className="modal-backdrop-enter absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-              <h3 className="text-sm font-semibold text-amber-300 mb-2">文件已被外部修改</h3>
-              <p className="text-xs text-zinc-400 mb-4">
+            <div className="modal-panel-enter w-80 rounded-xl bg-surface-raised border border-edge shadow-2xl p-4">
+              <h3 className="text-read font-semibold text-amber-300 mb-2">文件已被外部修改</h3>
+              <p className="text-meta text-fg-secondary mb-4">
                 此文件在编辑期间被其他程序修改过。覆盖将丢失外部修改。
               </p>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setShowOverwriteConfirm(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                  className="px-3 py-1.5 rounded-lg text-meta text-fg-secondary bg-zinc-700 hover:bg-state-strong"
                 >
                   取消
                 </button>
@@ -348,7 +348,7 @@ export default function FileEditorModal({
                     setShowOverwriteConfirm(false);
                     await doSave();
                   }}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-amber-600 hover:bg-amber-500"
+                  className="px-3 py-1.5 rounded-lg text-meta text-white bg-amber-600 hover:bg-amber-500"
                 >
                   覆盖保存
                 </button>

@@ -73,19 +73,19 @@ export default function ModelListModal({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="过滤模型 ID…"
-          className="w-full rounded-lg bg-zinc-900 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
         />
 
-        <div className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-zinc-900/40">
+        <div className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-surface/40">
           {loading && (
-            <div className="px-3 py-10 text-center text-sm text-zinc-500">
+            <div className="px-3 py-10 text-center text-body text-fg-tertiary">
               正在从供应商获取…
             </div>
           )}
 
           {!loading && error && (
             <div className="px-3 py-6 space-y-3">
-              <div className="text-sm text-red-400 break-words">{error}</div>
+              <div className="text-body text-red-400 break-words">{error}</div>
               <Button variant="secondary" size="sm" onClick={fetchModels}>
                 重试
               </Button>
@@ -93,7 +93,7 @@ export default function ModelListModal({
           )}
 
           {!loading && !error && filtered.length === 0 && (
-            <div className="px-3 py-10 text-center text-sm text-zinc-500">
+            <div className="px-3 py-10 text-center text-body text-fg-tertiary">
               {models.length === 0 ? '供应商未返回任何模型' : '无匹配模型'}
             </div>
           )}
@@ -106,16 +106,16 @@ export default function ModelListModal({
                   <button
                     key={m.id}
                     onClick={() => handleSelect(m.id)}
-                    className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors hover:bg-state-mid/40 ${
+                    className={`w-full text-left px-3 py-2 text-body font-mono transition-colors hover:bg-state-mid/40 ${
                       isCurrent
                         ? 'text-indigo-400 bg-indigo-600/10'
-                        : 'text-zinc-200'
+                        : 'text-fg'
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="flex-1 truncate">{m.id}</span>
                       {isCurrent && (
-                        <span className="text-xs text-indigo-400 flex-shrink-0">当前</span>
+                        <span className="text-meta text-indigo-400 flex-shrink-0">当前</span>
                       )}
                     </div>
                   </button>
@@ -126,7 +126,7 @@ export default function ModelListModal({
         </div>
 
         {!loading && !error && models.length > 0 && (
-          <div className="text-xs text-zinc-500">
+          <div className="text-meta text-fg-tertiary">
             共 {models.length} 个模型
             {filterText !== '' && ` · 匹配 ${filtered.length} 个`}
           </div>

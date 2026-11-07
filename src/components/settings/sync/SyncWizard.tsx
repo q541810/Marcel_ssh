@@ -24,7 +24,7 @@ const JOIN_METHOD_OPTIONS = [
 ] as const;
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none disabled:opacity-50';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:border-indigo-500 focus:outline-none disabled:opacity-50';
 
 /**
  * 「开启同步」与「加入已有同步」的向导（桌面 Modal / 手机 Sheet 共用）。
@@ -135,8 +135,8 @@ export function SyncWizard({
           </SyncButton>
         }
       >
-        <div className="flex items-start gap-2.5 text-sm text-zinc-300">
-          <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden />
+        <div className="flex items-start gap-3 text-body text-fg-secondary">
+          <ShieldCheck className="mt-1 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden />
           <p className="leading-relaxed">
             数据已经加密，这把恢复密钥是唯一能解开它们的钥匙。抄在纸上、或存进密码管理器都行。
           </p>
@@ -221,7 +221,7 @@ export function SyncWizard({
 
       {mode === 'join' && state.joinMethod === 'code' && (
         <div>
-          <label className="mb-1 block text-sm font-medium text-zinc-300" htmlFor="sync-code-input">
+          <label className="mb-1 block text-body font-medium text-fg-secondary" htmlFor="sync-code-input">
             同步码
           </label>
           <textarea
@@ -234,13 +234,13 @@ export function SyncWizard({
             autoCorrect="off"
             spellCheck={false}
             disabled={working}
-            className={`${inputClass} resize-none break-all font-mono text-xs`}
+            className={`${inputClass} resize-none break-all font-mono text-meta`}
           />
-          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">
             在已开启同步的设备上打开「设置 → 同步 → 添加设备」就能看到同步码。桌面端还有二维码：
             用手机相机扫一下，把扫出来的文字粘贴到这里即可。
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-amber-400/90">
+          <p className="mt-1 text-meta leading-relaxed text-amber-400/90">
             同步码里带着解锁数据的钥匙，别发给不信任的人。
           </p>
         </div>
@@ -255,7 +255,7 @@ export function SyncWizard({
 
       {mode === 'join' && state.joinMethod === 'manual' && (
         <div>
-          <label className="mb-1 block text-sm font-medium text-zinc-300" htmlFor="sync-recovery-input">
+          <label className="mb-1 block text-body font-medium text-fg-secondary" htmlFor="sync-recovery-input">
             恢复密钥
           </label>
           <input
@@ -271,17 +271,17 @@ export function SyncWizard({
             className={`${inputClass} font-mono`}
           />
           {state.recoveryKeyInput.trim().length > 0 && !isPlausibleRecoveryKey(state.recoveryKeyInput) ? (
-            <p className="mt-1 text-xs text-amber-400/90">
+            <p className="mt-1 text-meta text-amber-400/90">
               恢复密钥是 32 位字母和数字（4 个一组，用「-」分开）；这里的输入还不完整，或者有抄错的字符。
             </p>
           ) : (
-            <p className="mt-1 text-xs text-zinc-500">忽略大小写、空格和「-」。</p>
+            <p className="mt-1 text-meta text-fg-tertiary">忽略大小写、空格和「-」。</p>
           )}
         </div>
       )}
 
       {working && (
-        <p className="text-xs text-zinc-400" aria-live="polite">
+        <p className="text-meta text-fg-secondary" aria-live="polite">
           {mode === 'create' ? '正在创建加密空间…' : '正在加入并合并数据，数据多的话要花一会儿…'}
         </p>
       )}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Plus } from 'lucide-react';
 
 interface ListPanelProps {
   title: string;
@@ -27,48 +28,36 @@ export default function ListPanel({
   return (
     <div {...rest} className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-edge-subtle">
-        <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+      <div className="flex items-center justify-between px-3 py-2">
+        <h2 className="text-meta font-semibold text-fg-secondary uppercase tracking-wider">
           {title}
         </h2>
         {onAdd && (
           <button
             onClick={onAdd}
-            className="p-1 rounded-lg hover:bg-state-soft text-zinc-400 hover:text-zinc-100 transition-colors"
+            className="pressable focus-ring flex h-6 w-6 items-center justify-center rounded-md text-fg-secondary hover:bg-state-soft hover:text-fg"
             title={addButtonTitle}
             aria-label={addButtonTitle}
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
+            <Plus size={16} strokeWidth={1.5} />
           </button>
         )}
       </div>
 
       {/* Search */}
-      <div className="p-2 border-b border-edge-subtle">
+      <div className="px-2 pb-2">
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
-          className="w-full rounded-lg bg-zinc-800 border border-edge px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full h-7 rounded-lg bg-surface-raised border border-edge-subtle px-3 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors duration-120"
         />
       </div>
 
       {/* Status */}
       {status && (
-        <div className="px-3 py-1.5 border-b border-edge-subtle/50 text-xs text-zinc-500">
+        <div className="px-3 py-1.5 text-meta text-fg-tertiary">
           {status}
         </div>
       )}

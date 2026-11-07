@@ -197,7 +197,7 @@ export default function MobileApp() {
   // --ime-bottom (injected from MainActivity when the IME opens).
   return (
     <div
-      className="relative h-full min-h-0 w-full overflow-hidden overscroll-none bg-zinc-950 text-zinc-100"
+      className="relative h-full min-h-0 w-full overflow-hidden overscroll-none bg-surface-sunken text-fg"
       data-mobile-shell="1"
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',

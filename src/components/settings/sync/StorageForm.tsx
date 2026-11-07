@@ -23,7 +23,7 @@ const STORAGE_OPTIONS = [
 
 /** 字段下方的一行说明。 */
 function Hint({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1 text-xs leading-relaxed text-zinc-500">{children}</p>;
+  return <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">{children}</p>;
 }
 
 /**
@@ -74,7 +74,7 @@ export function StorageForm({
   return (
     <div className="space-y-3">
       <div>
-        <div className="mb-1.5 text-sm font-medium text-zinc-300">同步数据放在哪</div>
+        <div className="mb-2 text-body font-medium text-fg-secondary">同步数据放在哪</div>
         <SyncChoice
           variant={variant}
           options={STORAGE_OPTIONS}
@@ -109,7 +109,7 @@ export function StorageForm({
               disabled={disabled}
             />
             <Hint>
-              坚果云填 <code className="text-zinc-400">https://dav.jianguoyun.com/dav/</code>；
+              坚果云填 <code className="text-fg-secondary">https://dav.jianguoyun.com/dav/</code>；
               Nextcloud 等填各自的 WebDAV 地址。
             </Hint>          </div>
           <div>
@@ -146,7 +146,7 @@ export function StorageForm({
       ) : (
         <div className="space-y-3">
           <div>
-            <div className="mb-1 text-sm font-medium text-zinc-300">选择一台已保存的服务器</div>
+            <div className="mb-1 text-body font-medium text-fg-secondary">选择一台已保存的服务器</div>
             {options.length === 0 ? (
               <Callout tone="warn">
                 还没有已保存的服务器。先到「连接」里添加一台，再回来选；或者改用 WebDAV。
@@ -204,7 +204,7 @@ export function StorageForm({
         {kind === 'webDav' && jianguoyun ? (
           <Hint>
             坚果云不允许在根目录下直接新建文件夹，所以这里要写进已有的「我的坚果云」里，例如{' '}
-            <code className="text-zinc-400">{jgyDefaultRoot}</code>。不存在会自动创建。
+            <code className="text-fg-secondary">{jgyDefaultRoot}</code>。不存在会自动创建。
           </Hint>
         ) : (
           <Hint>同步数据都放在这个文件夹里；不存在会自动创建。一般保持默认即可。</Hint>
@@ -218,7 +218,7 @@ export function StorageForm({
 export function TestResult({ state }: { state: WizardState['test'] }) {
   if (state.status === 'testing') {
     return (
-      <p className="flex items-center gap-2 text-xs text-zinc-400" aria-live="polite">
+      <p className="flex items-center gap-2 text-meta text-fg-secondary" aria-live="polite">
         <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
         正在连接并检查读写权限…
       </p>
@@ -226,7 +226,7 @@ export function TestResult({ state }: { state: WizardState['test'] }) {
   }
   if (state.status === 'ok') {
     return (
-      <p className="flex items-center gap-1.5 text-xs text-emerald-400" aria-live="polite">
+      <p className="flex items-center gap-2 text-meta text-emerald-400" aria-live="polite">
         <Check className="h-3.5 w-3.5" aria-hidden />
         连接正常，可以读写
       </p>
@@ -234,8 +234,8 @@ export function TestResult({ state }: { state: WizardState['test'] }) {
   }
   if (state.status === 'failed') {
     return (
-      <p className="flex items-start gap-1.5 text-xs text-red-400" role="alert">
-        <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden />
+      <p className="flex items-start gap-2 text-meta text-red-400" role="alert">
+        <CircleAlert className="mt-1 h-3.5 w-3.5 flex-shrink-0" aria-hidden />
         <span>{state.message || '连接失败'}</span>
       </p>
     );

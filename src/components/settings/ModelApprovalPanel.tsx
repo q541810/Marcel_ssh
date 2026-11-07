@@ -118,10 +118,10 @@ export function ModelApprovalPanel({
   if (compact) {
     return (
       <div className="space-y-3">
-        <div className="space-y-1.5">
-          <span className="text-xs text-zinc-400">审批引擎</span>
+        <div className="space-y-2">
+          <span className="text-meta text-fg-secondary">审批引擎</span>
           {engineControl}
-          <p className="text-xs leading-relaxed text-zinc-500">
+          <p className="text-meta leading-relaxed text-fg-tertiary">
             {ENGINE_HINT[engine]}
           </p>
         </div>
@@ -172,15 +172,15 @@ function Row({
   children: ReactNode;
 }) {
   const noteEl = note ? (
-    <p className="text-xs leading-relaxed text-zinc-500">{note}</p>
+    <p className="text-meta leading-relaxed text-fg-tertiary">{note}</p>
   ) : null;
   if (compact) {
     return (
-      <div className="space-y-1.5">
-        <span className="text-xs text-zinc-400">{label}</span>
-        <div className="min-w-0 space-y-1.5">{children}</div>
+      <div className="space-y-2">
+        <span className="text-meta text-fg-secondary">{label}</span>
+        <div className="min-w-0 space-y-2">{children}</div>
         {hint && (
-          <p className="text-xs leading-relaxed text-zinc-500">{hint}</p>
+          <p className="text-meta leading-relaxed text-fg-tertiary">{hint}</p>
         )}
         {noteEl}
       </div>
@@ -194,7 +194,7 @@ function Row({
       sectionId="settings-command-policy"
       keywords={['模型审批', '命令执行策略', 'Agent', ...(keywords ?? [])]}
     >
-      <div className="min-w-0 space-y-1.5">
+      <div className="min-w-0 space-y-2">
         {children}
         {noteEl}
       </div>
@@ -203,10 +203,10 @@ function Row({
 }
 
 const INPUT =
-  'w-full rounded-lg bg-zinc-800 border border-edge px-3 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500';
+  'w-full rounded-lg bg-surface-raised border border-edge px-3 text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
 
 function inputClass(compact?: boolean) {
-  return `${INPUT} font-mono ${compact ? 'py-2.5 text-sm' : 'py-1.5 text-sm'}`;
+  return `${INPUT} font-mono ${compact ? 'py-3 text-body' : 'py-2 text-body'}`;
 }
 
 /**
@@ -242,16 +242,16 @@ function Collapsible({
         }`}
       >
         <ChevronRight
-          className={`h-3.5 w-3.5 flex-shrink-0 text-zinc-500 transition-transform duration-200 ${
+          className={`h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary transition-transform duration-200 ${
             open ? 'rotate-90' : ''
           }`}
           style={{ transitionTimingFunction: 'var(--spring-smooth)' }}
         />
-        <span className="text-sm font-medium text-zinc-300">{title}</span>
+        <span className="text-body font-medium text-fg-secondary">{title}</span>
         {summary && (
           <span
-            className={`ml-auto truncate text-xs transition-opacity duration-150 ${
-              warn ? 'text-amber-400/90' : 'text-zinc-500'
+            className={`ml-auto truncate text-meta transition-opacity duration-150 ${
+              warn ? 'text-amber-400/90' : 'text-fg-tertiary'
             } ${open ? 'opacity-0' : ''}`}
           >
             {summary}
@@ -278,7 +278,7 @@ function ResetButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="text-xs text-zinc-500 transition-colors hover:text-zinc-300 active:text-zinc-300"
+      className="text-meta text-fg-tertiary transition-colors hover:text-fg-secondary active:text-fg-secondary"
     >
       恢复默认
     </button>
@@ -311,12 +311,12 @@ function SwitchRow({
     );
   }
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-zinc-200">{title}</span>
+        <span className="text-body text-fg">{title}</span>
         <Toggle checked={checked} onChange={onChange} />
       </div>
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-meta leading-relaxed text-fg-tertiary">
         {hint}
         {note ? `。${note}` : ''}
       </p>
@@ -357,7 +357,7 @@ function PromptRow({
         placeholder={placeholder}
         aria-label={label}
         spellCheck={false}
-        className={`${INPUT} resize-none py-2 font-mono text-xs`}
+        className={`${INPUT} resize-none py-2 font-mono text-meta`}
       />
       {customized && (
         <div className="flex justify-end">
@@ -453,8 +453,8 @@ function JevRows({
             <button
               type="button"
               onClick={() => void clearKey()}
-              className={`flex-shrink-0 rounded-lg border border-edge px-3 text-xs text-zinc-400 transition-colors hover:bg-state-soft hover:text-zinc-200 active:bg-state-mid ${
-                compact ? 'py-2.5' : 'py-1.5'
+              className={`flex-shrink-0 rounded-lg border border-edge px-3 text-meta text-fg-secondary transition-colors hover:bg-state-soft hover:text-fg active:bg-state-mid ${
+                compact ? 'py-3' : 'py-2'
               }`}
             >
               清除
@@ -463,7 +463,7 @@ function JevRows({
         </div>
         {/* 状态只说一次：没配就把后果讲清（不静默回退会话模型），配了就一行确认。 */}
         {hasKey ? (
-          <p className="flex items-center gap-1.5 text-xs text-zinc-500">
+          <p className="flex items-center gap-2 text-meta text-fg-tertiary">
             <span
               aria-hidden
               className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400"
@@ -473,15 +473,15 @@ function JevRows({
         ) : (
           <p
             role="status"
-            className="flex items-start gap-1.5 text-xs leading-relaxed text-amber-400/90"
+            className="flex items-start gap-2 text-meta leading-relaxed text-amber-400/90"
           >
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <TriangleAlert className="mt-1 h-3.5 w-3.5 flex-shrink-0" />
             还没配 Key。配好之前，每条 bash
             都会被拦下并提示——不会偷偷换成会话模型来审批。
           </p>
         )}
-        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-zinc-500">
-          <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+        <p className="flex items-start gap-2 text-meta leading-relaxed text-fg-tertiary">
+          <Info className="mt-1 h-3.5 w-3.5 flex-shrink-0" />
           <span>
             {baseUrl ? (
               <>
@@ -563,8 +563,8 @@ function JevRows({
             className={inputClass(compact)}
           />
           {needsUrlScheme(agent.jevBaseUrl) && (
-            <p className="flex items-start gap-1.5 text-xs leading-relaxed text-amber-400/90">
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <p className="flex items-start gap-2 text-meta leading-relaxed text-amber-400/90">
+              <TriangleAlert className="mt-1 h-3.5 w-3.5 flex-shrink-0" />
               <span>
                 地址缺少 <code>http://</code> 或 <code>https://</code>
                 ，请求会失败，每条 bash 都会被拦下。请补上开头。

@@ -72,10 +72,10 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
         {entries.length === 0 ? (
           <div className="flex flex-col gap-3">
-            <p className={`${mobile ? 'text-sm' : 'text-[13px]'} leading-relaxed text-zinc-400`}>
+            <p className={`${mobile ? 'text-body' : 'text-body'} leading-relaxed text-fg-secondary`}>
               不用一条条手动改：告诉它要怎么整理，它会查看记忆、翻以前的会话，然后一次改好。
               每次的改动都能一键撤销。
-              {focusLabel && <span className="text-zinc-500">（当前围绕 {focusLabel}）</span>}
+              {focusLabel && <span className="text-fg-tertiary">（当前围绕 {focusLabel}）</span>}
             </p>
             <div className="flex flex-wrap gap-2">
               {assistantSuggestions(focusLabel).map((s) => (
@@ -83,8 +83,8 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
                   key={s.label}
                   type="button"
                   onClick={() => send(s.prompt)}
-                  className={`rounded-full border border-edge bg-zinc-800/60 text-zinc-300 transition hover:border-indigo-500/50 hover:text-zinc-100 active:scale-[0.97] ${
-                    mobile ? 'px-3 py-2 text-xs' : 'px-3 py-1 text-xs'
+                  className={`rounded-full border border-edge bg-surface-raised/60 text-fg-secondary transition hover:border-indigo-500/50 hover:text-fg ${
+                    mobile ? 'px-3 py-2 text-meta' : 'px-3 py-1 text-meta'
                   }`}
                 >
                   {s.label}
@@ -107,14 +107,14 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
         )}
       </div>
 
-      <div className={`flex-shrink-0 border-t px-3 pb-3 pt-2.5 ${mobile ? 'border-edge-subtle' : 'border-edge/70'}`}>
+      <div className={`flex-shrink-0 border-t px-3 pb-3 pt-3 ${mobile ? 'border-edge-subtle' : 'border-edge/70'}`}>
         {/* 药丸输入框：外圈圆角 = 内圈按钮半径 + 内边距，按钮是正圆，嵌进去才同心。
             全局 :focus-visible 的描边会在圆角框里再画出一个方框，且盖得过 Tailwind 的 outline-none
             （它在 layer 里），所以靠 `.agent-input` 这条全局规则关掉，外框的 border 是唯一的焦点提示。
             底色与宿主面板错开一档（弹窗 zinc-800 → 输入框 zinc-900；手机面板 zinc-900 → zinc-800）。 */}
         <div
-          className={`agent-input flex items-end gap-1 rounded-[1.375rem] border border-edge p-1.5 pl-4 transition-colors focus-within:border-indigo-500 ${
-            mobile ? 'bg-zinc-800' : 'bg-zinc-900'
+          className={`agent-input flex items-end gap-1 rounded-xl border border-edge p-2 pl-4 transition-colors focus-within:border-indigo-500 ${
+            mobile ? 'bg-surface-raised' : 'bg-surface'
           }`}
         >
           <textarea
@@ -129,13 +129,13 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
             }}
             rows={1}
             placeholder={focusLabel ? `要怎么整理 ${focusLabel} 的记忆？` : '要怎么整理记忆？'}
-            className="min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-zinc-100 placeholder:text-zinc-500 outline-none focus:ring-0"
+            className="min-h-8 min-w-0 flex-1 resize-none bg-transparent py-2 text-body leading-5 text-fg placeholder:text-fg-tertiary outline-none"
           />
           {running ? (
             <button
               type="button"
               onClick={() => void useMemoryAssistantStore.getState().cancel()}
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500 active:scale-90"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500"
               aria-label="停止"
               title="停止"
             >
@@ -146,7 +146,7 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
               type="button"
               onClick={() => send(draft)}
               disabled={!draft.trim()}
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition hover:bg-indigo-500 active:scale-90 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:active:scale-100"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-fg-tertiary"
               aria-label="发送"
               title="发送"
             >
@@ -155,11 +155,11 @@ export default function MemoryAssistantPanel({ focus, mobile = false }: Props) {
           )}
         </div>
         {entries.length > 0 && !running && (
-          <div className="mt-1.5 flex justify-end">
+          <div className="mt-2 flex justify-end">
             <button
               type="button"
               onClick={() => useMemoryAssistantStore.getState().clear()}
-              className="text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+              className="text-meta text-fg-tertiary transition-colors hover:text-fg-secondary"
             >
               清空对话
             </button>
@@ -200,16 +200,16 @@ function BatchUndoBar({
   };
 
   return (
-    <div className="mt-1 flex min-w-0 flex-col gap-1 text-xs">
-      <div className="flex items-center gap-2 px-1 text-zinc-500">
+    <div className="mt-1 flex min-w-0 flex-col gap-1 text-meta">
+      <div className="flex items-center gap-2 px-1 text-fg-tertiary">
         <span>{entry.reverted ? `已撤销这次的 ${entry.ops.length} 处改动` : `这次改了 ${entry.ops.length} 处`}</span>
         {canUndo && (
           <button
             type="button"
             disabled={busy}
             onClick={() => void undo()}
-            className={`rounded-md text-zinc-300 transition hover:bg-state-mid/60 active:scale-[0.96] disabled:opacity-40 ${
-              mobile ? 'px-2.5 py-1.5' : 'px-2 py-0.5'
+            className={`rounded-md text-fg-secondary transition hover:bg-state-mid/60 disabled:opacity-40 ${
+              mobile ? 'px-3 py-2' : 'px-2 py-0.5'
             }`}
           >
             {busy ? '撤销中…' : '撤销这次'}

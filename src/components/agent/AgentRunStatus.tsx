@@ -61,7 +61,7 @@ export const RunStatusLine = memo(function RunStatusLine({
     <div
       role="status"
       aria-live="off"
-      className="flex h-7 items-center gap-2 text-xs text-zinc-400"
+      className="flex h-7 items-center gap-2 text-meta text-fg-secondary"
     >
       <span className="run-dots flex flex-shrink-0 items-center gap-[3px]" aria-hidden="true">
         <i /><i /><i />
@@ -69,7 +69,7 @@ export const RunStatusLine = memo(function RunStatusLine({
       <span>{label}</span>
       {output !== undefined && (
         <span
-          className="flex items-center gap-0.5 tabular-nums text-zinc-300"
+          className="flex items-center gap-0.5 tabular-nums text-fg-secondary"
           title={`本次任务模型已输出 ${formatExactTokens(output)} tokens`}
         >
           <ArrowDown className="h-3 w-3 text-indigo-400" aria-hidden="true" />

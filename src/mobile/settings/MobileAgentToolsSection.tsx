@@ -121,7 +121,7 @@ export function selectMobileFetchMode(
 }
 
 const KEY_INPUT_CLASS =
-  'flex-1 rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'flex-1 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 联网工具的 API Key 输入框。已存时回显掩码；失焦即保存；Key 永不回传前端。 */
 function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placeholder: string }) {
@@ -145,7 +145,7 @@ function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placehol
         <button
           type="button"
           onClick={() => void clearToolApiKey(slot).then((cleared) => cleared && setDraft(''))}
-          className="flex-shrink-0 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+          className="flex-shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           清除
         </button>
@@ -236,7 +236,7 @@ export function MobileAgentToolsSection() {
             onChange={selectSearchMode}
           />
           {syncedBrowser && (
-            <p className="mt-2 rounded-lg bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+            <p className="mt-2 rounded-lg bg-amber-950/30 px-3 py-2 text-meta leading-relaxed text-amber-200/90">
               本机浏览器模式在手机端不可用，已自动降级为裸抓
               Bing HTML；如搜索结果质量不佳，可切换为搜索 API。
             </p>
@@ -290,10 +290,10 @@ export function MobileAgentToolsSection() {
                   className={`mt-2 w-full ${KEY_INPUT_CLASS}`}
                 />
                 {customForm.check.error && (
-                  <p className="mt-1.5 text-xs leading-relaxed text-red-400">{customForm.check.error}</p>
+                  <p className="mt-1.5 text-meta leading-relaxed text-red-400">{customForm.check.error}</p>
                 )}
                 {customForm.check.warning && (
-                  <p className="mt-1.5 text-xs leading-relaxed text-amber-300/90">
+                  <p className="mt-1.5 text-meta leading-relaxed text-amber-300/90">
                     {customForm.check.warning}
                   </p>
                 )}
@@ -398,12 +398,12 @@ export function MobileAgentToolsSection() {
                   className={`mt-2 w-full ${KEY_INPUT_CLASS}`}
                 />
                 {customFetchForm.check.error && (
-                  <p className="mt-1.5 text-xs leading-relaxed text-red-400">
+                  <p className="mt-1.5 text-meta leading-relaxed text-red-400">
                     {customFetchForm.check.error}
                   </p>
                 )}
                 {customFetchForm.check.warning && (
-                  <p className="mt-1.5 text-xs leading-relaxed text-amber-300/90">
+                  <p className="mt-1.5 text-meta leading-relaxed text-amber-300/90">
                     {customFetchForm.check.warning}
                   </p>
                 )}
@@ -459,7 +459,7 @@ export function MobileAgentToolsSection() {
           <button
             type="button"
             onClick={() => void fetchConnections()}
-            className="mt-2 w-full rounded-xl border border-edge bg-zinc-900/50 px-3 py-3 text-xs text-zinc-400 active:bg-state-soft"
+            className="mt-2 w-full rounded-xl min-h-11 border border-edge bg-surface/50 px-3 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             加载已保存连接
           </button>
@@ -479,10 +479,10 @@ export function MobileAgentToolsSection() {
                     key={conn.id}
                     type="button"
                     onClick={() => toggleMultiHost(conn.id)}
-                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors active:scale-[0.99] ${
+                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left pressable ${
                       active
                         ? 'bg-indigo-500/10 text-indigo-100'
-                        : 'bg-zinc-900/50 text-zinc-300'
+                        : 'bg-surface/50 text-fg-secondary'
                     }`}
                   >
                     <span
@@ -509,10 +509,10 @@ export function MobileAgentToolsSection() {
                       )}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">
+                      <span className="block truncate text-meta font-medium">
                         {conn.name}
                       </span>
-                      <span className="block truncate text-[10px] text-zinc-500">
+                      <span className="block truncate text-caption text-fg-tertiary">
                         {conn.group || '未分组'} ·{' '}
                         {formatConnLabel(
                           conn.username,
@@ -527,7 +527,7 @@ export function MobileAgentToolsSection() {
               })}
           </div>
         )}
-        <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+        <p className="mt-2 text-caption leading-relaxed text-fg-tertiary">
           集合为空 = 仅当前机可执行。upload/download 本机中转工具在手机端不可用。
         </p>
       </MobileSettingRow>

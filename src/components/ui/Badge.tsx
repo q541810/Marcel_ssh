@@ -11,12 +11,12 @@ interface Props {
 }
 
 const sizeStyles: Record<BadgeSize, string> = {
-  sm: 'px-1.5 py-0.5 text-[10px]',
-  md: 'px-2 py-0.5 text-xs',
-  lg: 'px-2.5 py-1 text-sm',
+  sm: 'px-1.5 py-0.5 text-caption',
+  md: 'px-2 py-0.5 text-meta',
+  lg: 'px-2 py-1 text-body',
 };
 
-const defaultStyle = 'bg-zinc-700 text-zinc-300';
+const defaultStyle = 'bg-state-mid text-fg-secondary';
 
 export default function Badge({ variant = 'default', size = 'sm', children }: Props) {
   const colorClass =
@@ -25,7 +25,7 @@ export default function Badge({ variant = 'default', size = 'sm', children }: Pr
   return (
     <span
       className={`
-        inline-flex items-center rounded-lg font-medium leading-none whitespace-nowrap
+        inline-flex items-center rounded-sm font-medium leading-none whitespace-nowrap
         ${colorClass}
         ${sizeStyles[size]}
       `}

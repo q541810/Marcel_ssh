@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useTaskStore } from '@/stores/taskStore';
 import { useConversationStore } from '@/stores/conversationStore';
@@ -8,7 +9,7 @@ import { AgentContentBand } from './panel/AgentContentBand';
 
 function PendingIcon() {
   return (
-    <svg className="w-3.5 h-3.5 text-zinc-500" viewBox="0 0 16 16" fill="none">
+    <svg className="w-3.5 h-3.5 text-fg-tertiary" viewBox="0 0 16 16" fill="none">
       <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
@@ -43,7 +44,7 @@ function FailedIcon() {
 
 function SkippedIcon() {
   return (
-    <svg className="w-3.5 h-3.5 text-zinc-600" viewBox="0 0 16 16" fill="none">
+    <svg className="w-3.5 h-3.5 text-fg-disabled" viewBox="0 0 16 16" fill="none">
       <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1" strokeDasharray="2 3" />
     </svg>
   );
@@ -62,7 +63,7 @@ const STATUS_LABEL: Record<PlanItemStatus, { text: string; className: string } |
   in_progress: { text: '当前', className: 'text-amber-400' },
   completed: null,
   failed: { text: '失败', className: 'text-red-400' },
-  skipped: { text: '跳过', className: 'text-zinc-500' },
+  skipped: { text: '跳过', className: 'text-fg-tertiary' },
 };
 
 // ────────────────────────── PlanList Component ──────────────────────────
@@ -138,27 +139,20 @@ export default function PlanList() {
         className="-mx-1 w-[calc(100%+0.5rem)] min-h-6 flex items-center justify-between rounded px-1 py-0.5 hover:bg-state-soft/30 active:bg-state-soft/50 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 [@media(pointer:coarse)]:min-h-8 motion-reduce:transition-none"
       >
         <div className="flex items-center gap-1.5">
-          <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-3.5 h-3.5 text-fg-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
-          <span className="text-xs font-medium text-zinc-400">执行计划</span>
-          <span className="text-xs tabular-nums text-zinc-500">
+          <span className="text-meta font-medium text-fg-secondary">执行计划</span>
+          <span className="text-meta tabular-nums text-fg-tertiary">
             {completedCount}/{totalCount}
           </span>
         </div>
-        <svg
-          className={`w-3 h-3 text-zinc-500 transition-transform duration-200 motion-reduce:transition-none ${collapsed ? '' : 'rotate-180'}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <ChevronDown className={`w-3 h-3 text-fg-tertiary transition-transform duration-200 motion-reduce:transition-none ${collapsed ? '' : 'rotate-180'}`} strokeWidth={1.5} />
       </button>
 
       {/* Progress bar (always visible) */}
       <div className="pb-1.5">
-        <div className="h-0.5 bg-zinc-800/60 rounded-full overflow-hidden">
+        <div className="h-0.5 bg-surface-raised/60 rounded-full overflow-hidden">
           <div
             className="h-full rounded-full bg-zinc-500 transition-[width] duration-300 ease-out motion-reduce:transition-none"
             style={{ width: `${progressPercent}%` }}
@@ -186,7 +180,7 @@ function StepItem({ item }: { item: PlanItem }) {
   const isCompleted = item.status === 'completed';
 
   return (
-    <div className="group flex items-start gap-1.5 px-1 py-0.5 rounded text-sm">
+    <div className="group flex items-start gap-1.5 px-1 py-0.5 rounded text-read">
       {/* Icon */}
       <div className="flex-shrink-0 mt-0.5">
         {icon}
@@ -196,7 +190,7 @@ function StepItem({ item }: { item: PlanItem }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           {/* Index badge — 用 item.id 作为编号，与 LLM 看到的编号一致 */}
-          <span className="flex-shrink-0 text-xs tabular-nums text-zinc-500">
+          <span className="flex-shrink-0 text-meta tabular-nums text-fg-tertiary">
             {item.id}
           </span>
 
@@ -204,8 +198,8 @@ function StepItem({ item }: { item: PlanItem }) {
           <span
             title={item.title}
             className={`
-              min-w-0 flex-1 text-xs leading-5 truncate transition-colors
-              ${isCompleted ? 'text-zinc-500 line-through' : 'text-zinc-300'}
+              min-w-0 flex-1 text-meta leading-5 truncate transition-colors
+              ${isCompleted ? 'text-fg-tertiary line-through' : 'text-fg-secondary'}
             `}
           >
             {item.title}
@@ -213,7 +207,7 @@ function StepItem({ item }: { item: PlanItem }) {
 
           {/* Status label badge */}
           {label && (
-            <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${label.className}`}>
+            <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-caption font-medium ${label.className}`}>
               {label.text}
             </span>
           )}
@@ -221,7 +215,7 @@ function StepItem({ item }: { item: PlanItem }) {
 
         {/* Error message for failed items */}
         {item.status === 'failed' && item.error && (
-          <div className="mt-0.5 ml-5 text-[10px] text-red-400/80 break-words [overflow-wrap:anywhere] max-h-[4.5em] overflow-y-auto">
+          <div className="mt-0.5 ml-5 text-caption text-red-400/80 break-words [overflow-wrap:anywhere] max-h-[4.5em] overflow-y-auto">
             {item.error}
           </div>
         )}

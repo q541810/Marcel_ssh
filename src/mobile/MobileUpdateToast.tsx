@@ -127,7 +127,7 @@ export default function MobileUpdateToast() {
               if (status === 'failed') dismissFailure();
               else if (version) dismiss(version);
             }}
-            className="flex-1 rounded-xl bg-zinc-800 px-3 py-3 text-sm font-medium text-zinc-200 active:bg-state-mid disabled:opacity-50"
+            className="flex-1 rounded-xl bg-surface-raised px-3 py-3 text-body font-medium text-fg active:bg-state-mid disabled:opacity-50"
           >
             稍后
           </button>
@@ -137,7 +137,7 @@ export default function MobileUpdateToast() {
               type="button"
               disabled={busy != null}
               onClick={() => void runInstall()}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
             >
               {busy === 'install' && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
               立即安装
@@ -149,7 +149,7 @@ export default function MobileUpdateToast() {
               type="button"
               disabled={busy != null}
               onClick={() => void runDownload()}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
             >
               {busy === 'download' && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
               后台下载
@@ -160,7 +160,7 @@ export default function MobileUpdateToast() {
             <button
               type="button"
               onClick={() => openExternalLink(state.releaseUrl)}
-              className="flex-1 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500"
+              className="flex-1 rounded-xl bg-indigo-600 px-3 py-3 text-body font-medium text-white active:bg-indigo-500"
             >
               去下载
             </button>
@@ -171,7 +171,7 @@ export default function MobileUpdateToast() {
               type="button"
               disabled={busy != null}
               onClick={() => void runDownload()}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
             >
               {busy === 'download' && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
               重试下载
@@ -185,10 +185,10 @@ export default function MobileUpdateToast() {
           {icon}
         </div>
         <div>
-          <p className="text-base font-semibold text-zinc-100">{title}</p>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-400">{description}</p>
+          <p className="text-title font-semibold text-fg">{title}</p>
+          <p className="mt-2 text-body leading-relaxed text-fg-secondary">{description}</p>
           {error && (
-            <p className="mt-3 break-words text-sm leading-relaxed text-red-400">
+            <p className="mt-3 break-words text-body leading-relaxed text-red-400">
               {error}
             </p>
           )}

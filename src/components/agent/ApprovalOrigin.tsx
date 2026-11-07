@@ -27,10 +27,10 @@ export function ApprovalOrigin({
   if (!hasNames && !onNavigateToContext) return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 text-xs text-zinc-500">
+    <div className="flex items-center justify-between gap-3 text-meta text-fg-tertiary">
       <span className="min-w-0 truncate">
         {!isCurrentContext && <span>来自其他会话 · </span>}
-        <span className="text-zinc-300">{sessionName || 'SSH 会话'}</span>
+        <span className="text-fg-secondary">{sessionName || 'SSH 会话'}</span>
         {conversationTitle && <span> · {conversationTitle}</span>}
       </span>
       {onNavigateToContext && (
@@ -40,12 +40,12 @@ export function ApprovalOrigin({
           title={
             isCurrentContext ? '收起审批，回到对话查看上下文' : '切到发起这条审批的会话查看上下文'
           }
-          className={`inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-edge bg-state-soft pl-2.5 pr-1.5 font-medium text-zinc-200 transition-colors hover:bg-state-mid active:bg-state-strong ${
+          className={`inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-edge bg-state-soft pl-2.5 pr-1.5 font-medium text-fg transition-colors hover:bg-state-mid active:bg-state-strong ${
             compact ? 'py-1.5' : 'py-1'
           }`}
         >
           跳转查看
-          <ChevronRight className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+          <ChevronRight className="h-3.5 w-3.5 text-fg-secondary" aria-hidden />
         </button>
       )}
     </div>

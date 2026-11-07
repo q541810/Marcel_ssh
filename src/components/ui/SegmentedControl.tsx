@@ -19,8 +19,8 @@ interface SegmentedControlProps<T extends string> {
 /**
  * 分段控件（互斥单选，2–4 项）。
  *
- * 与 Toggle 同一套观感：按下即反馈（`active:scale-95`）、`--spring-bounce`
- * 时间函数、indigo 选中态、`focus:ring` 键盘焦点环。
+ * 与 Toggle 同一套观感：按下即反馈（`pressable`）、
+ * indigo 选中态、`focus-ring` 键盘焦点环。
  *
  * 语义用 radiogroup/radio：读屏会播报「已选中/未选中」而不是「按钮」，
  * 左右方向键可在选项间移动（方向键移动 + 立即选中，和原生 radio 一致），
@@ -45,7 +45,7 @@ export default function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="inline-flex gap-0.5 rounded-lg border border-edge bg-zinc-800/60 p-0.5"
+      className="inline-flex gap-0.5 rounded-lg border border-edge-subtle bg-surface-raised p-0.5"
     >
       {options.map((option, index) => {
         const active = option.value === value;
@@ -71,15 +71,13 @@ export default function SegmentedControl<T extends string>({
                 move(index, -1);
               }
             }}
-            className={`rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors duration-100
-              focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 focus:ring-offset-zinc-900
-              active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
+            className={`pressable focus-ring h-6 rounded-md px-3 text-meta font-medium whitespace-nowrap
+              disabled:text-fg-disabled disabled:cursor-not-allowed
               ${
                 active
                   ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-300 hover:bg-state-mid/70 hover:text-zinc-100'
+                  : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
               }`}
-            style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
           >
             {option.label}
           </button>

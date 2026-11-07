@@ -167,7 +167,7 @@ export default function UnlockCeremony({ anchor, onCannon, onDone }: Props) {
           style={{ top: bannerTop, zIndex: 100002 }}
         >
           <div
-            className={`supreme-banner ${bannerLeaving ? 'supreme-banner-leaving' : ''} flex max-w-[min(92vw,520px)] items-center gap-3 rounded-2xl border border-amber-300/40 bg-zinc-900/80 px-5 py-3.5 text-sm font-medium leading-snug text-zinc-100 shadow-2xl shadow-black/50 backdrop-blur-xl`}
+            className={`supreme-banner ${bannerLeaving ? 'supreme-banner-leaving' : ''} flex max-w-[min(92vw,520px)] items-center gap-3 rounded-2xl border border-amber-300/40 bg-surface/80 px-5 py-4 text-read font-medium leading-snug text-fg shadow-raised shadow-black/50 backdrop-blur-xl`}
           >
             <Sparkles className="h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
             <span>{UNLOCK_MESSAGE}</span>

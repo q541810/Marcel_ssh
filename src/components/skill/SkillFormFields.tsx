@@ -21,8 +21,8 @@ const PLACEHOLDER_PROMPT =
   'Commands:\n  -\nWhen to Use:\n  -\nOutput Interpretation:\n  -\nExamples:\n  -';
 
 const inputCls =
-  'w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-sm text-zinc-100 ' +
-  'placeholder-zinc-500 focus:outline-none focus:border-indigo-500 resize-none';
+  'w-full rounded-lg bg-surface border border-edge px-3 py-2 text-body text-fg ' +
+  'placeholder-fg-tertiary focus:outline-none focus:border-indigo-500 resize-none';
 
 export default function SkillFormFields({
   name,
@@ -38,7 +38,7 @@ export default function SkillFormFields({
   return (
     <div className='space-y-4'>
       <div>
-        <label className='block text-xs text-zinc-400 mb-1'>
+        <label className='block text-meta text-fg-secondary mb-1'>
           <span className='text-red-400'>*</span> Skill 名称
         </label>
         <input
@@ -52,7 +52,7 @@ export default function SkillFormFields({
       </div>
 
       <div>
-        <label className='block text-xs text-zinc-400 mb-1'>
+        <label className='block text-meta text-fg-secondary mb-1'>
           <span className='text-red-400'>*</span> 描述
         </label>
         <textarea
@@ -65,7 +65,7 @@ export default function SkillFormFields({
       </div>
 
       <div>
-        <label className='block text-xs text-zinc-400 mb-1'>
+        <label className='block text-meta text-fg-secondary mb-1'>
           <span className='text-red-400'>*</span> 指令
         </label>
         <textarea

@@ -242,7 +242,7 @@ export default function MobileSheet({
       <div
         ref={sheetRef}
         onAnimationEnd={presence.onAnimationEnd}
-        className={`relative flex w-full flex-col rounded-t-2xl border-t border-edge bg-zinc-900 shadow-2xl ${
+        className={`relative flex w-full flex-col rounded-t-2xl border-t border-edge-subtle bg-surface shadow-overlay ${
           exiting ? 'mobile-sheet-exit' : 'mobile-sheet-enter'
         } ${maxHeightClassName}`}
         style={{
@@ -261,18 +261,18 @@ export default function MobileSheet({
           onPointerCancel={handlePointerCancel}
         >
           <div className="flex justify-center pb-1 pt-2" aria-hidden>
-            <div className="h-1 w-10 rounded-full bg-zinc-600" />
+            <div className="h-1 w-10 rounded-full bg-edge-strong" />
           </div>
           {title != null && (
             <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-1">
-              <div className="min-w-0 flex-1 text-sm font-semibold text-zinc-100">
+              <div className="min-w-0 flex-1 text-title text-fg">
                 {title}
               </div>
               {dismissible && (
                 <button
                   type="button"
                   onClick={onClose}
-                  className="-mr-1 rounded-lg px-2 py-1 text-xs text-zinc-400 active:bg-state-soft"
+                  className="-mr-2 flex min-h-11 items-center rounded-lg px-3 text-body text-fg-secondary pressable active:bg-state-soft"
                 >
                   关闭
                 </button>

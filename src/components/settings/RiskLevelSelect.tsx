@@ -39,7 +39,7 @@ export function LevelSelect({
         onChange={onChange}
         ariaLabel={ariaLabel}
         title="选择处置档位"
-        className={`flex-shrink-0 rounded-lg border bg-zinc-800 px-3 text-sm ${RULE_LEVEL_TONE[value]}`}
+        className={`flex-shrink-0 rounded-lg border bg-surface-raised px-3 text-body ${RULE_LEVEL_TONE[value]}`}
         options={options.map((l) => ({
           value: l,
           label: RULE_LEVEL_LABELS[l],
@@ -47,7 +47,7 @@ export function LevelSelect({
           badge: l === defaultLevel ? '默认' : undefined,
           leading: (
             <span
-              className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${RULE_LEVEL_DOT[l]}`}
+              className={`mt-2 h-2 w-2 flex-shrink-0 rounded-full ${RULE_LEVEL_DOT[l]}`}
             />
           ),
         }))}
@@ -64,7 +64,7 @@ export function LevelSelect({
       options={options.map((l) => ({
         value: l,
         label: (
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-2">
             <span
               className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${RULE_LEVEL_DOT[l]}`}
             />

@@ -31,7 +31,7 @@ interface MobileSelectProps<T extends string> {
 }
 
 const DEFAULT_TRIGGER_CLASS =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg';
 
 /**
  * 移动端的下拉：一个看起来像下拉的按钮，点开从底部升起选项面板（`MobileSheet`）。
@@ -64,7 +64,7 @@ export default function MobileSelect<T extends string>({
         onClick={() => setOpen(true)}
         className={`flex min-h-11 items-center justify-between gap-2 text-left outline-none focus:border-indigo-500 active:opacity-70 disabled:opacity-40 ${className}`}
       >
-        <span className={`min-w-0 truncate ${current ? '' : 'text-zinc-500'}`}>
+        <span className={`min-w-0 truncate ${current ? '' : 'text-fg-tertiary'}`}>
           {shown}
         </span>
         <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-70" />
@@ -88,16 +88,16 @@ export default function MobileSelect<T extends string>({
               >
                 {o.leading}
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2 text-sm text-zinc-100">
+                  <span className="flex items-center gap-2 text-body text-fg">
                     <span className="min-w-0 break-words">{o.label}</span>
                     {o.badge && (
-                      <span className="flex-shrink-0 rounded border border-edge px-1 py-px text-[10px] text-zinc-400">
+                      <span className="flex-shrink-0 rounded border border-edge px-1 py-px text-caption text-fg-secondary">
                         {o.badge}
                       </span>
                     )}
                   </span>
                   {o.hint && (
-                    <span className="mt-0.5 block text-xs leading-relaxed text-zinc-500">
+                    <span className="mt-0.5 block text-meta leading-relaxed text-fg-tertiary">
                       {o.hint}
                     </span>
                   )}

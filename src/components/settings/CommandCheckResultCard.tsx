@@ -52,19 +52,19 @@ export function CommandCheckResultCard({
         {groups.map((g) => (
           <span
             key={g.outcome}
-            className={`inline-flex items-center gap-1.5 text-sm font-medium ${OUTCOME_STYLE[g.outcome].text}`}
+            className={`inline-flex items-center gap-2 text-body font-medium ${OUTCOME_STYLE[g.outcome].text}`}
           >
             {OUTCOME_STYLE[g.outcome].icon}
             {OUTCOME_LABELS[g.outcome]}
-            <span className="text-xs font-normal text-zinc-500">
+            <span className="text-meta font-normal text-fg-tertiary">
               {g.all ? '所有模式' : g.modes.join(' · ')}
             </span>
           </span>
         ))}
       </div>
       {hits.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-zinc-500">原因</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-meta text-fg-tertiary">原因</span>
           {hits.map((hit) => (
             <button
               key={hit.ruleId}
@@ -72,25 +72,25 @@ export function CommandCheckResultCard({
               onClick={() => onJump(hit.ruleId)}
               title="去规则里看"
               aria-label={`${hit.title}：${RULE_LEVEL_LABELS[hit.level]}，去规则里看`}
-              className={`inline-flex items-center gap-1.5 rounded-full border border-edge-strong bg-zinc-800 text-zinc-200 hover:bg-state-mid active:bg-state-mid ${
-                compact ? 'px-3 py-1.5 text-xs' : 'px-2.5 py-0.5 text-xs'
+              className={`inline-flex items-center gap-2 rounded-full border border-edge-strong bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid ${
+                compact ? 'px-3 py-2 text-meta' : 'px-3 py-0.5 text-meta'
               }`}
             >
               <span
                 className={`h-1.5 w-1.5 rounded-full ${RULE_LEVEL_DOT[hit.level]}`}
               />
               {hit.title}
-              <span className="text-zinc-500">
+              <span className="text-fg-tertiary">
                 {RULE_LEVEL_LABELS[hit.level]}
               </span>
             </button>
           ))}
         </div>
       ) : (
-        <p className="text-xs text-zinc-500">没有命中任何规则</p>
+        <p className="text-meta text-fg-tertiary">没有命中任何规则</p>
       )}
       {modelApprovalOn && (
-        <p className="text-xs leading-relaxed text-zinc-500">
+        <p className="text-meta leading-relaxed text-fg-tertiary">
           这里只测规则这一关。你开了「执行前模型审批」，规则放行的命令实际执行前还会让模型再看一遍，可能被拦下。
         </p>
       )}

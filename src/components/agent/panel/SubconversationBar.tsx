@@ -16,11 +16,11 @@ export function SubconversationBar({
 }: SubconversationBarProps) {
   return (
     <AgentContentBand className="py-3 border-t border-edge-subtle">
-      <div className="flex items-center gap-3 rounded-lg border border-edge/60 bg-zinc-800/40 px-3 py-2.5">
+      <div className="flex items-center gap-3 rounded-lg border border-edge/60 bg-surface-raised/40 px-3 py-2.5">
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center gap-1.5 flex-shrink-0 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+          className="flex items-center gap-1.5 flex-shrink-0 text-meta font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
         >
           <svg
             className="w-3.5 h-3.5"
@@ -38,11 +38,11 @@ export function SubconversationBar({
           返回主对话
         </button>
         <div className="flex-1 min-w-0 border-l border-edge/50 pl-3">
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-400">
+          <div className="flex min-w-0 items-center gap-1.5 text-meta text-fg-secondary">
             {/* 本机子任务（local_subagent）：这条子对话在用户这台电脑上跑，
                 没有 SSH 会话。不标的话用户会以为它跑在某台服务器上。 */}
             {isLocal && (
-              <span className="flex-shrink-0 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+              <span className="flex-shrink-0 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-caption font-semibold text-sky-300">
                 本机
               </span>
             )}
@@ -51,7 +51,7 @@ export function SubconversationBar({
               {title}
             </span>
           </div>
-          <div className="text-[11px] text-zinc-600 mt-0.5">
+          <div className="text-caption text-fg-disabled mt-0.5">
             {subAgentMode === "agent"
               ? "此对话由主 Agent 派发，用于读写执行，不支持输入"
               : "此对话由主 Agent 派发，仅用于只读调研，不支持输入"}

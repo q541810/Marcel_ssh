@@ -1,3 +1,4 @@
+import { Check, ChevronDown, ChevronRight, Copy, Undo2 } from 'lucide-react';
 import { memo, useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
 import type { AgentMessage as AgentMessageType } from '@/lib/types';
 import UserMessageAttachments from './UserMessageAttachments';
@@ -57,7 +58,7 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
 }
 
 const MARKDOWN_CLASS =
-  'text-[15px] leading-relaxed text-zinc-100 break-words prose marcel-prose prose-sm max-w-none prose-p:my-0.5 prose-code:text-[var(--marcel-md-code-text)] prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-code:before:content-none prose-code:after:content-none prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-edge prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-edge-strong prose-blockquote:text-zinc-400 prose-blockquote:italic [&_.katex-display]:my-2 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-0.5 [&_.katex]:text-zinc-100 [&_.katex-error]:text-red-400 [&_.katex-error]:text-[0.9em]';
+  'text-read text-fg break-words prose marcel-prose prose-sm max-w-none prose-p:my-0.5 prose-code:text-[var(--marcel-md-code-text)] prose-code:bg-surface prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-code:before:content-none prose-code:after:content-none prose-pre:bg-surface prose-pre:border prose-pre:border-edge prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-edge-strong prose-blockquote:text-fg-secondary prose-blockquote:italic [&_.katex-display]:my-2 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-0.5 [&_.katex]:text-fg [&_.katex-error]:text-red-400 [&_.katex-error]:text-[0.9em]';
 
 // ─── Retry indicator ───
 // 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs
@@ -120,7 +121,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
             <MarkdownBody content={partial} />
           </div>
         )}
-        <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500" role="status">
+        <div className="flex min-w-0 items-center gap-1.5 text-meta text-fg-tertiary" role="status">
           {waiting ? (
             <svg className="h-3 w-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="9" strokeWidth={2} />
@@ -138,7 +139,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
               type="button"
               aria-expanded={detailsOpen}
               onClick={() => setDetailsOpen((v) => !v)}
-              className="flex-shrink-0 rounded px-1 text-zinc-500 underline-offset-2 transition-colors hover:text-zinc-300 hover:underline [@media(pointer:coarse)]:py-1.5"
+              className="flex-shrink-0 rounded px-1 text-fg-tertiary underline-offset-2 transition-colors hover:text-fg-secondary hover:underline [@media(pointer:coarse)]:py-1.5"
             >
               详情
             </button>
@@ -147,7 +148,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
         {lastError && detailsOpen && (
           <div
             data-testid="retry-details"
-            className="mt-0.5 max-w-full break-words text-[11px] text-zinc-500 [overflow-wrap:anywhere]"
+            className="mt-0.5 max-w-full break-words text-caption text-fg-tertiary [overflow-wrap:anywhere]"
           >
             {lastError}
             {maxAttempts > 0 && <span className="block">最多重试 {maxAttempts} 次</span>}
@@ -258,19 +259,19 @@ function AgentMessage({
           )}
           {!searchKeyword?.trim() && userInput?.replyTo && (
             <div
-              className="mb-1 max-w-full truncate text-[12px] leading-5 text-zinc-500"
+              className="mb-1 max-w-full truncate text-meta leading-5 text-fg-tertiary"
               title={userInput.replyTo.question}
             >
               回复：{userInput.replyTo.question}
             </div>
           )}
           {displayContent ? (
-            <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            <div className="max-w-full rounded-xl bg-surface-raised px-3 py-2 text-read text-fg whitespace-pre-wrap [overflow-wrap:anywhere]">
               {highlightPlainText(displayContent, searchKeyword)}
             </div>
           ) : null}
           <div
-            className={`mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 transition-all duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${
+            className={`mt-1 flex w-max max-w-full items-center justify-end gap-2 text-caption text-fg-tertiary transition duration-200 ease-standard focus-within:opacity-100 focus-within:translate-y-0 ${
               alwaysShowActions
                 ? 'opacity-100 translate-y-0'
                 : 'opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0'
@@ -282,62 +283,26 @@ function AgentMessage({
                 type="button"
                 onClick={() => onRollback(message)}
                 disabled={rollbackDisabled}
-                className="p-1 rounded text-zinc-500 hover:text-amber-300 hover:bg-state-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="p-1 rounded text-fg-tertiary hover:text-amber-300 hover:bg-state-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title={
                   rollbackDisabled ? '任务运行中，暂不能撤回' : '撤回到这条消息'
                 }
               >
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                  />
-                </svg>
+                <Undo2 className="w-3.5 h-3.5" strokeWidth={1.5} />
               </button>}
               <button
                 type="button"
                 onClick={handleCopy}
-                className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-soft transition-colors relative"
+                className="p-1 rounded text-fg-tertiary hover:text-fg hover:bg-state-soft transition-colors relative"
                 title={copied ? '已复制' : '复制消息'}
               >
                 <span className="relative block w-3.5 h-3.5">
-                  <svg
-                    className={`w-3.5 h-3.5 absolute inset-0 transition-all duration-120 ${
+                  <Copy className={`w-3.5 h-3.5 absolute inset-0 transition duration-120 ${
                       copied ? 'opacity-0 scale-50' : 'opacity-100 scale-100'
-                    }`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </svg>
-                  <svg
-                    className={`w-3.5 h-3.5 text-green-400 absolute inset-0 transition-all duration-120 ${
+                    }`} strokeWidth={1.5} />
+                  <Check className={`w-3.5 h-3.5 text-emerald-400 absolute inset-0 transition duration-120 ${
                       copied ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
-                    }`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
+                    }`} strokeWidth={1.5} />
                 </span>
               </button>
             </div>
@@ -368,7 +333,7 @@ function AgentMessage({
     }
     return (
       <div className="flex justify-center my-1">
-        <div className="text-xs text-zinc-500 italic px-2 py-1 break-words [overflow-wrap:anywhere]">
+        <div className="text-meta text-fg-tertiary italic px-2 py-1 break-words [overflow-wrap:anywhere]">
           {message.content}
         </div>
       </div>
@@ -390,21 +355,9 @@ function AgentMessage({
             <button
               type="button"
               onClick={handleToggleThinking}
-              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="flex items-center gap-1 text-meta text-fg-tertiary hover:text-fg-secondary transition-colors"
             >
-              <svg
-                className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
+              <ChevronRight className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`} strokeWidth={1.5} />
               <span>{message.isThinking ? '思考中' : '已思考'}</span>
               {message.isThinking && (
                 <svg
@@ -433,7 +386,7 @@ function AgentMessage({
               <div
                 ref={thinkingBodyRef}
                 onScroll={onThinkingScroll}
-                className="mt-1.5 max-h-[40vh] overflow-y-auto overscroll-contain pl-4 border-l-2 border-edge text-xs text-zinc-400 whitespace-pre-wrap break-words"
+                className="mt-1.5 max-h-[40vh] overflow-y-auto overscroll-contain pl-4 border-l-2 border-edge text-meta text-fg-secondary whitespace-pre-wrap break-words"
               >
                 {message.reasoningContent}
               </div>
@@ -447,7 +400,7 @@ function AgentMessage({
           <span className="sr-only">任务运行中</span>
         ) : !message.content ? (
           hasReasoning ? null : (
-            <div className="text-sm text-zinc-500 italic">（无内容）</div>
+            <div className="text-read text-fg-tertiary italic">（无内容）</div>
           )
         ) : (
           <div className={MARKDOWN_CLASS}>
@@ -478,7 +431,7 @@ const JOB_STATUS_STYLE: Record<string, { tone: ToolCardTone; text: string }> = {
   仍在运行: { tone: 'default', text: 'text-sky-400' },
 };
 
-const UNKNOWN_JOB_STATUS = { tone: 'default' as ToolCardTone, text: 'text-zinc-500' };
+const UNKNOWN_JOB_STATUS = { tone: 'default' as ToolCardTone, text: 'text-fg-tertiary' };
 
 /**
  * 「系统告知」卡：后台作业的结算告知（`role=notice`）。
@@ -548,10 +501,10 @@ function JobNoticeCard({
                 {jobs.map((job) => {
                   const style = JOB_STATUS_STYLE[job.status] ?? UNKNOWN_JOB_STATUS;
                   return (
-                    <li key={job.jobId} className="flex items-baseline gap-2 text-xs">
-                      <span className="flex-shrink-0 font-mono text-zinc-300">{job.jobId}</span>
+                    <li key={job.jobId} className="flex items-baseline gap-2 text-meta">
+                      <span className="flex-shrink-0 font-mono text-fg-secondary">{job.jobId}</span>
                       <span
-                        className="min-w-0 flex-1 truncate text-zinc-400"
+                        className="min-w-0 flex-1 truncate text-fg-secondary"
                         title={job.description}
                       >
                         {job.description}
@@ -562,7 +515,7 @@ function JobNoticeCard({
                 })}
               </ul>
               {notesText && (
-                <div className="whitespace-pre-wrap break-words text-xs text-zinc-500 [overflow-wrap:anywhere]">
+                <div className="whitespace-pre-wrap break-words text-meta text-fg-tertiary [overflow-wrap:anywhere]">
                   {highlightPlainText(notesText, searchKeyword)}
                 </div>
               )}
@@ -591,14 +544,14 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
 
   return (
     <div className="my-1.5 flex justify-start">
-      <div className="min-w-0 max-w-[85%] rounded-md border border-edge/60 bg-zinc-800/50 px-3 py-2.5">
+      <div className="min-w-0 max-w-[85%] rounded-md border border-edge/60 bg-surface-raised/50 px-3 py-2.5">
         <div className="flex items-baseline gap-2">
           {/* 静态状态点（不转圈，避免与"思考中"的 spinner 混淆） */}
           <span className="h-2 w-2 shrink-0 translate-y-[-1px] rounded-full bg-violet-400/90 ring-2 ring-violet-400/15" />
-          <span className="text-xs font-medium text-zinc-200">
+          <span className="text-meta font-medium text-fg">
             正在压缩上下文
           </span>
-          <span className="truncate text-[11px] text-zinc-500">
+          <span className="truncate text-caption text-fg-tertiary">
             {isOverflow
               ? '上下文超限，压缩早期历史后自动重试'
               : '总结早期历史、释放上下文空间'}
@@ -608,14 +561,14 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
         <div
           ref={previewRef}
           onScroll={onPreviewScroll}
-          className="mt-2 max-h-44 overflow-y-auto rounded-md border border-edge/40 bg-zinc-950/60 px-2.5 py-2"
+          className="mt-2 max-h-44 overflow-y-auto rounded-md border border-edge/40 bg-surface-sunken/60 px-2.5 py-2"
         >
           {live ? (
-            <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-zinc-300 [overflow-wrap:anywhere]">
+            <pre className="whitespace-pre-wrap font-mono text-body leading-relaxed text-fg-secondary [overflow-wrap:anywhere]">
               {live}
             </pre>
           ) : (
-            <span className="text-xs italic text-zinc-500">
+            <span className="text-meta italic text-fg-tertiary">
               {/* 摘要分两段：模型先写 <analysis> 梳理对话（后端不推那段文本，所以
                   这段时间卡片一直是空的），再写八段正文。文案要同时成立"还没吐
                   第一个字"和"正在梳理"两种情形 */}
@@ -651,49 +604,25 @@ function CompactionCard({ message }: { message: AgentMessageType }) {
     comp.shadowedMessages != null && comp.shadowedTokens != null;
   return (
     <div className="my-1.5 flex justify-start">
-      <div className="min-w-0 max-w-[85%] rounded-md border border-edge/60 bg-zinc-800/50 px-2 py-1.5 text-xs text-zinc-300">
+      <div className="min-w-0 max-w-[85%] rounded-md border border-edge/60 bg-surface-raised/50 px-2 py-1.5 text-meta text-fg-secondary">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
           className="group flex w-full items-center justify-between gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-state-mid/20"
         >
           <span className="flex items-center gap-1.5 text-emerald-300">
-            <svg
-              className="h-3.5 w-3.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
+            <Check className="h-3.5 w-3.5" strokeWidth={1.5} />
             上下文已压缩
           </span>
           {hasStats && (
-            <span className="tabular-nums text-zinc-500">
+            <span className="tabular-nums text-fg-tertiary">
               已整理 {comp.shadowedMessages} 条 · ~{comp.shadowedTokens} tokens
             </span>
           )}
-          <svg
-            className={`h-3 w-3 shrink-0 text-zinc-500 transition-transform duration-200 group-hover:text-zinc-300 ${expanded ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 9l-7 7-7-7"
-            />
-          </svg>
+          <ChevronDown className={`h-3 w-3 shrink-0 text-fg-tertiary transition-transform duration-200 group-hover:text-fg-secondary ${expanded ? 'rotate-180' : ''}`} strokeWidth={1.5} />
         </button>
         {expanded && comp.summary && (
-          <div className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-zinc-950/60 p-2 font-mono text-[12px] leading-relaxed text-zinc-400 [overflow-wrap:anywhere]">
+          <div className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-surface-sunken/60 p-2 font-mono text-meta leading-relaxed text-fg-secondary [overflow-wrap:anywhere]">
             {comp.summary}
           </div>
         )}

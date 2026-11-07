@@ -441,7 +441,7 @@ export default function AgentPanel() {
     <div
       ref={agentRootRef}
       data-region="agent-panel"
-      className="relative flex flex-col h-full bg-zinc-900"
+      className="relative flex flex-col h-full bg-surface"
     >
       <AgentPanelHeader
         activeUsageView={activeUsageView}
@@ -477,35 +477,35 @@ export default function AgentPanel() {
             </div>
           )}
           {!activeSession && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>请先连接 SSH 服务器。</p>
               <p className="mt-1">连接成功后即可使用智能助手。</p>
             </div>
           )}
           {activeSession?.status === "connecting" && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>正在连接 SSH 服务器...</p>
               <p className="mt-1">连接完成后将加载智能助手会话。</p>
             </div>
           )}
           {activeSession?.status === "error" && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>连接失败，请在标签栏重新连接。</p>
             </div>
           )}
           {activeSession?.status === "disconnected" && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>连接已断开，请在标签栏重新连接。</p>
             </div>
           )}
           {canInteract && !activeConversationId && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>暂无会话。</p>
               <p className="mt-1">点击左上角 + 新建会话。</p>
             </div>
           )}
           {canInteract && activeConversationId && (
-            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
+            <div className={`text-center text-fg-tertiary text-read ${emptyTextGap}`}>
               <p>暂无消息。</p>
               <p className="mt-1">描述您想要做的事情，智能助手将为您提供帮助。</p>
             </div>

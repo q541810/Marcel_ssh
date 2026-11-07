@@ -33,7 +33,7 @@ export default function HostKeyMismatchModal({ open, data, onTrust, onCancel }: 
         label: '已知',
         algorithm: data.storedAlgorithm,
         fingerprint: data.storedFingerprint,
-        tone: 'text-zinc-300',
+        tone: 'text-fg-secondary',
       },
       {
         label: '当前',
@@ -49,11 +49,11 @@ export default function HostKeyMismatchModal({ open, data, onTrust, onCancel }: 
       <div className="p-4 space-y-4">
         {data && (
           <>
-            <p className="text-sm text-zinc-300">
-              服务器 <span className="font-mono text-zinc-100">{formatAddress(data.host, data.port, privacyMode)}</span>{' '}
+            <p className="text-read text-fg-secondary">
+              服务器 <span className="font-mono text-fg">{formatAddress(data.host, data.port, privacyMode)}</span>{' '}
               提供的主机密钥与本地记录不一致。可能是服务器重装/迁移了密钥，也可能是遭遇中间人攻击。
             </p>
-            <p className="text-sm text-zinc-500">
+            <p className="text-read text-fg-tertiary">
               请在确认安全后再信任新密钥；信任后会覆盖本地记录的指纹。
             </p>
 
@@ -62,13 +62,13 @@ export default function HostKeyMismatchModal({ open, data, onTrust, onCancel }: 
                 {fingerprintRows.map((row) => (
                   <div
                     key={row.label}
-                    className="rounded-lg border border-edge bg-zinc-900/50 px-3 py-2"
+                    className="rounded-lg border border-edge bg-surface/50 px-3 py-2"
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium text-zinc-400">{row.label}</span>
-                      <span className="text-xs text-zinc-500 font-mono">{row.algorithm}</span>
+                      <span className="text-meta font-medium text-fg-secondary">{row.label}</span>
+                      <span className="text-meta text-fg-tertiary font-mono">{row.algorithm}</span>
                     </div>
-                    <div className={`font-mono text-xs break-all ${row.tone}`}>
+                    <div className={`font-mono text-meta break-all ${row.tone}`}>
                       {row.fingerprint}
                     </div>
                   </div>

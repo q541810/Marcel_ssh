@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { ChevronLeft, ChevronRight, FolderPlus, FilePlus, Upload, FolderUp, Eye, EyeOff, RefreshCw, PanelLeft, Folder, Link2, File as FileIcon, FolderOpen } from 'lucide-react';
 import { stat } from '@tauri-apps/plugin-fs';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { sftpListDir, sftpOpenWithSystem, sftpHomeDir } from '@/lib/tauri';
@@ -729,79 +730,67 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       onMouseDown={handlePanelMouseDown}
       onMouseUp={handlePanelMouseUp}
     >
-      <div ref={toolbarRef} className="flex items-center gap-1.5 border-b border-edge-subtle px-3 py-2 flex-shrink-0">
+      <div ref={toolbarRef} className="flex items-center gap-1 px-3 py-2 flex-shrink-0">
         <button
           type="button"
           onClick={handleGoBack}
           disabled={historyIndex === 0}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid disabled:opacity-40"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg disabled:text-fg-disabled disabled:cursor-not-allowed disabled:hover:bg-transparent"
           title="后退"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
+          <ChevronLeft size={16} strokeWidth={1.5} />
         </button>
         <button
           type="button"
           onClick={handleGoForward}
           disabled={historyIndex === history.length - 1}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid disabled:opacity-40"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg disabled:text-fg-disabled disabled:cursor-not-allowed disabled:hover:bg-transparent"
           title="前进"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+          <ChevronRight size={16} strokeWidth={1.5} />
         </button>
         <PathBreadcrumb currentPath={currentPath} onNavigate={navigateTo} />
         <button
           type="button"
           onClick={() => openNewFolder(currentPath)}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid whitespace-nowrap"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg"
           title="新建文件夹"
         >
           {mode !== 'compact' && (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-            </svg>
+            <FolderPlus size={16} strokeWidth={1.5} />
           )}
           {mode !== 'icon-only' && <span>新建文件夹</span>}
         </button>
         <button
           type="button"
           onClick={() => setShowNewFile(true)}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid whitespace-nowrap"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg"
           title="新建文件"
         >
           {mode !== 'compact' && (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
+            <FilePlus size={16} strokeWidth={1.5} />
           )}
           {mode !== 'icon-only' && <span>新建文件</span>}
         </button>
         <button
           type="button"
           onClick={handleUpload}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid whitespace-nowrap"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg"
           title="上传文件"
         >
           {mode !== 'compact' && (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
+            <Upload size={16} strokeWidth={1.5} />
           )}
           {mode !== 'icon-only' && <span>上传</span>}
         </button>
         <button
           type="button"
           onClick={handleUploadFolder}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid whitespace-nowrap"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg"
           title="上传文件夹"
         >
           {mode !== 'compact' && (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
+            <FolderUp size={16} strokeWidth={1.5} />
           )}
           {mode !== 'icon-only' && <span>上传文件夹</span>}
         </button>
@@ -812,14 +801,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             setShowHidden(newVal);
             useSettingsStore.getState().update({ fileManagerShowHidden: newVal });
           }}
-          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${showHidden ? 'bg-indigo-500/20 text-indigo-400' : 'bg-zinc-800 text-zinc-200 hover:bg-state-mid'}`}
+          className={`h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring ${showHidden ? 'bg-state-selected text-fg' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'}`}
           title="显示隐藏文件"
         >
           {mode !== 'compact' && (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
+            (showHidden ? <Eye size={16} strokeWidth={1.5} /> : <EyeOff size={16} strokeWidth={1.5} />)
           )}
           {mode !== 'icon-only' && <span>{showHidden ? '隐藏' : '显示'}</span>}
         </button>
@@ -827,13 +813,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           type="button"
           onClick={() => void loadDirectory(currentPath)}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid disabled:opacity-40 whitespace-nowrap"
+          className="h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring text-fg-secondary hover:bg-state-soft hover:text-fg disabled:text-fg-disabled disabled:cursor-not-allowed disabled:hover:bg-transparent"
           title="刷新"
         >
           {mode === 'icon-only' ? (
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <RefreshCw size={16} strokeWidth={1.5} />
           ) : loading ? (
             '加载中...'
           ) : (
@@ -844,25 +828,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <button
             type="button"
             onClick={toggleTreeUserHidden}
-            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${
-              !treeUserHidden
-                ? 'bg-indigo-500/20 text-indigo-400'
-                : 'bg-zinc-800 text-zinc-200 hover:bg-state-mid'
-            }`}
+            className={`h-6 min-w-6 inline-flex items-center justify-center gap-1.5 rounded-md px-1.5 text-body whitespace-nowrap transition-colors pressable focus-ring ${!treeUserHidden ? 'bg-state-selected text-fg' : 'text-fg-secondary hover:bg-state-soft hover:text-fg'}`}
             title={treeUserHidden ? '显示目录树' : '隐藏目录树'}
           >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h6v6H4V6zm10 0h6v4h-6V6zM4 14h6v4H4v-4zm10 2h6v4h-6v-4z" />
-            </svg>
+            <PanelLeft size={16} strokeWidth={1.5} />
             {mode !== 'icon-only' && <span>目录树</span>}
           </button>
         )}
       </div>
 
       {showNewFolder && (
-        <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 bg-zinc-800/50">
+        <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 bg-surface-raised/50">
           {normalizeRemotePath(newFolderDir) !== normalizeRemotePath(currentPath) && (
-            <span className="max-w-[40%] flex-shrink-0 truncate text-xs text-zinc-500" title={newFolderDir}>
+            <span className="max-w-[40%] flex-shrink-0 truncate text-meta text-fg-tertiary" title={newFolderDir}>
               在 {newFolderDir} 下
             </span>
           )}
@@ -875,27 +853,27 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFolder(false);
             }}
             placeholder="新文件夹名称"
-            className="flex-1 rounded-md bg-zinc-800 border border-edge px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+            className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
             autoFocus
           />
           <button
             type="button"
             onClick={handleCreateFolder}
-            className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            className="h-7 rounded-lg bg-indigo-600 px-3 text-body text-white pressable focus-ring hover:bg-indigo-500"
           >
             创建
           </button>
           <button
             type="button"
             onClick={() => setShowNewFolder(false)}
-            className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-state-strong"
+            className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg-secondary hover:bg-state-mid pressable focus-ring"
           >
             取消
           </button>
         </div>
       )}
       {showNewFile && (
-        <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 bg-zinc-800/50">
+        <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 bg-surface-raised/50">
           <input
             type="text"
             value={newFileName}
@@ -905,20 +883,20 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFile(false);
             }}
             placeholder="新文件名称"
-            className="flex-1 rounded-md bg-zinc-800 border border-edge px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+            className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
             autoFocus
           />
           <button
             type="button"
             onClick={handleCreateFile}
-            className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            className="h-7 rounded-lg bg-indigo-600 px-3 text-body text-white pressable focus-ring hover:bg-indigo-500"
           >
             创建
           </button>
           <button
             type="button"
             onClick={() => setShowNewFile(false)}
-            className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-state-strong"
+            className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg-secondary hover:bg-state-mid pressable focus-ring"
           >
             取消
           </button>
@@ -926,7 +904,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {(clipboard || pasteStatus) && (
-        <div className="flex items-center gap-2 border-b border-edge-subtle bg-indigo-500/10 px-3 py-1.5 text-xs text-zinc-300 flex-shrink-0">
+        <div className="flex items-center gap-2 border-b border-edge-subtle bg-indigo-500/10 px-3 py-1.5 text-meta text-fg-secondary flex-shrink-0">
           <span className="min-w-0 flex-1 truncate">
             {pasteStatus ?? (clipboard ? clipboardLabel(clipboard) : '')}
           </span>
@@ -937,14 +915,14 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 onClick={() => void handlePaste()}
                 disabled={pasteBlocked != null}
                 title={pasteBlocked ?? '粘贴到当前目录（Ctrl+V）'}
-                className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600"
+                className="h-7 rounded-lg bg-indigo-600 px-3 text-body text-white pressable focus-ring hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600"
               >
                 粘贴到此处
               </button>
               <button
                 type="button"
                 onClick={() => useFileClipboardStore.getState().clear()}
-                className="text-zinc-500 hover:text-zinc-200 transition-colors"
+                className="text-fg-tertiary hover:text-fg transition-colors"
                 aria-label="清空剪贴板"
               >
                 ✕
@@ -955,21 +933,21 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {pasteNotice && (
-        <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-meta text-amber-300 flex-shrink-0">
           <span>{pasteNotice}</span>
           <button type="button" onClick={() => setPasteNotice(null)} className="ml-2 text-amber-400 hover:text-amber-200 transition-colors">✕</button>
         </div>
       )}
 
       {error && (
-        <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-meta text-red-300 flex-shrink-0">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-200 transition-colors">✕</button>
         </div>
       )}
 
       {dropWarning && (
-        <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 text-meta text-amber-300 flex-shrink-0">
           <span>{dropWarning}</span>
           <button type="button" onClick={() => setDropWarning(null)} className="ml-2 text-amber-400 hover:text-amber-200 transition-colors">✕</button>
         </div>
@@ -1038,15 +1016,15 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <p className="text-sm text-indigo-300 font-medium">松手上传到当前目录</p>
+                <p className="text-body text-indigo-300 font-medium">松手上传到当前目录</p>
               </div>
             </div>
           )}
 
-        <table className="w-full text-xs table-fixed border-separate border-spacing-0">
+        <table className="w-full text-body table-fixed border-separate border-spacing-0">
           <thead className="sticky top-0 z-10">
-            <tr className="text-zinc-500 bg-zinc-900">
-              <th className="py-2 text-center font-medium w-8 border-b border-edge-subtle">
+            <tr className="text-caption text-fg-tertiary bg-surface">
+              <th className="h-7 text-center font-normal w-8">
                 <label className="relative inline-flex items-center justify-center cursor-pointer">
                   <input
                     type="checkbox"
@@ -1059,7 +1037,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         setSelected(new Set(filteredEntries.map((e) => e.name)));
                       }
                     }}
-                    className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${selected.size > 0 && selected.size === filteredEntries.length ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                    className={`appearance-none w-3.5 h-3.5 rounded-sm border cursor-pointer ${selected.size > 0 && selected.size === filteredEntries.length ? 'bg-indigo-500 border-indigo-500' : 'bg-state-strong border-edge-strong'}`}
                   />
                   {selected.size > 0 && selected.size === filteredEntries.length && (
                     <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1068,21 +1046,23 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   )}
                 </label>
               </th>
-              <th className="px-3 py-2 text-left font-medium border-b border-edge-subtle">名称</th>
-              <th className="px-3 py-2 text-left font-medium w-24 border-b border-edge-subtle">大小</th>
-              <th className="px-3 py-2 text-left font-medium w-28 border-b border-edge-subtle">权限</th>
+              <th className="h-7 px-3 text-left font-normal">名称</th>
+              <th className="h-7 px-3 text-left font-normal w-24">大小</th>
+              <th className="h-7 px-3 text-left font-normal w-28">权限</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={4} className="py-8 text-center">
-                  <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span>加载中...</span>
+                <td colSpan={4} className="py-3 text-center">
+                  <div className="flex flex-col gap-2 px-3" role="status">
+                    {[72, 54, 64, 40, 58].map((w, i) => (
+                      <div key={i} className="flex h-5 items-center gap-2">
+                        <div className="h-4 w-4 rounded-sm bg-state-soft animate-pulse" />
+                        <div className="h-3 rounded-sm bg-state-soft animate-pulse" style={{ width: `${w}%` }} />
+                      </div>
+                    ))}
+                    <span className="sr-only">加载中...</span>
                   </div>
                 </td>
               </tr>
@@ -1096,8 +1076,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   key={entryPath}
                   data-file-name={entry.name}
                   aria-selected={isFocused || undefined}
-                  className={`transition-colors cursor-pointer ${
-                    isFocused ? 'bg-state-selected' : isSelected ? 'bg-indigo-500/10 hover:bg-state-soft/50' : 'hover:bg-state-soft/50'
+                  className={`h-7 transition-colors cursor-pointer ${
+                    isFocused ? 'bg-state-selected' : isSelected ? 'bg-state-selected' : 'hover:bg-state-soft'
                   }`}
                   onDoubleClick={() => handleNavigate(entry)}
                   onClick={(e) => {
@@ -1116,7 +1096,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   }}
                   onContextMenu={(e) => handleContextMenu(e, entry)}
                 >
-                  <td className="py-1.5 text-center border-b border-edge-subtle/50">
+                  <td className="py-0 text-center">
                     <label className="relative inline-flex items-center justify-center cursor-pointer">
                       <input
                         type="checkbox"
@@ -1131,7 +1111,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                           });
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                        className={`appearance-none w-3.5 h-3.5 rounded-sm border cursor-pointer ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'bg-state-strong border-edge-strong'}`}
                       />
                       {isSelected && (
                         <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1140,26 +1120,20 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       )}
                     </label>
                   </td>
-                  <td className="px-3 py-1.5 text-zinc-300 truncate border-b border-edge-subtle/50">
+                  <td className="px-3 py-0 text-fg truncate">
                     <span className="flex items-center gap-2">
                       {entry.is_dir ? (
-                        <svg className="w-4 h-4 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-                        </svg>
+                        <Folder size={16} strokeWidth={1.5} className="text-amber-500 flex-shrink-0" />
                       ) : entry.is_symlink ? (
-                        <svg className="w-4 h-4 text-cyan-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                        </svg>
+                        <Link2 size={16} strokeWidth={1.5} className="text-sky-500 flex-shrink-0" />
                       ) : (
-                        <svg className="w-4 h-4 text-zinc-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
+                        <FileIcon size={16} strokeWidth={1.5} className="text-fg-tertiary flex-shrink-0" />
                       )}
                       <span className="truncate">{entry.name}</span>
                     </span>
                   </td>
-                  <td className="px-3 py-1.5 text-zinc-400 border-b border-edge-subtle/50">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
-                  <td className="px-3 py-1.5 text-zinc-500 font-mono border-b border-edge-subtle/50">{modeToString(entry.mode)}</td>
+                  <td className="px-3 py-0 text-meta text-fg-tertiary tabular-nums">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
+                  <td className="px-3 py-0 text-meta text-fg-tertiary font-mono tabular-nums">{modeToString(entry.mode)}</td>
                 </tr>
               );
             })
@@ -1168,26 +1142,34 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </table>
 
         {filteredEntries.length === 0 && !loading && !error && (
-          <div className="py-8 text-center text-sm text-zinc-500">
-            {showHidden ? '空目录' : '空目录（可能包含隐藏文件）'}
+          <div className="flex flex-col items-center gap-3 py-8 text-center text-body text-fg-secondary">
+            <FolderOpen size={20} strokeWidth={1.5} className="text-fg-tertiary" />
+            <span>{showHidden ? '空目录' : '空目录（可能包含隐藏文件）'}</span>
+            <button
+              type="button"
+              onClick={handleUpload}
+              className="h-7 rounded-lg bg-indigo-600 px-3 text-body text-white transition-colors hover:bg-indigo-500 pressable focus-ring"
+            >
+              上传文件到此处
+            </button>
           </div>
         )}
 
         {selected.size > 0 && (
-          <div className="sticky bottom-0 flex items-center justify-between gap-3 px-3 py-2 bg-zinc-800/95 border-t border-edge backdrop-blur-sm">
-            <span className="text-xs text-zinc-300">已选 {selected.size} 个</span>
+          <div className="sticky bottom-0 flex items-center justify-between gap-3 px-3 py-2 bg-surface-raised/95 border-t border-edge backdrop-blur-sm">
+            <span className="text-meta text-fg-secondary">已选 {selected.size} 个</span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => handleClip(filteredEntries.filter((e) => selected.has(e.name)), false)}
-                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-state-strong transition-colors"
+                className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg hover:bg-state-mid transition-colors pressable focus-ring"
               >
                 复制
               </button>
               <button
                 type="button"
                 onClick={() => handleClip(filteredEntries.filter((e) => selected.has(e.name)), true)}
-                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-state-strong transition-colors"
+                className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg hover:bg-state-mid transition-colors pressable focus-ring"
               >
                 剪切
               </button>
@@ -1197,7 +1179,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   const targets = filteredEntries.filter((e) => selected.has(e.name));
                   handleCopyPath(targets);
                 }}
-                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-state-strong transition-colors"
+                className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg hover:bg-state-mid transition-colors pressable focus-ring"
               >
                 复制路径
               </button>
@@ -1207,14 +1189,14 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   const targets = filteredEntries.filter((e) => selected.has(e.name));
                   setDeleteConfirm(entriesToTargets(targets));
                 }}
-                className="rounded-md bg-red-900/60 px-2.5 py-1 text-xs text-red-300 hover:bg-red-900/80 transition-colors"
+                className="h-7 rounded-lg bg-red-900/60 px-3 text-body text-red-300 pressable focus-ring hover:bg-red-900/80 transition-colors"
               >
                 删除
               </button>
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}
-                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:bg-state-strong transition-colors"
+                className="h-7 rounded-lg bg-state-soft px-3 text-body text-fg-secondary hover:bg-state-mid transition-colors pressable focus-ring"
               >
                 取消选择
               </button>
@@ -1227,7 +1209,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       {menuEntry && menuTargets.length > 0 && createPortal(
         <div
           ref={menuRef}
-          className="context-menu-enter fixed z-50 w-40 rounded-lg border border-edge bg-zinc-800 p-1 shadow-lg"
+          className="context-menu-enter surface-glass fixed z-50 w-40 rounded-xl p-1"
           style={{ top: menuPos.y, left: menuPos.x }}
         >
           {menuTargets.length === 1 ? (
@@ -1237,7 +1219,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   <button
                     type="button"
                     onClick={() => { handleNavigate(menuEntry); setMenuEntry(null); setMenuTargets([]); }}
-                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                    className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                   >
                     打开
                   </button>
@@ -1247,7 +1229,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       setCompressEntry(targetFromEntry(currentPath, menuEntry));
                       setMenuEntry(null); setMenuTargets([]);
                     }}
-                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                    className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                   >
                     压缩为...
                   </button>
@@ -1262,7 +1244,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         openFileByPath(joinRemotePath(currentPath, menuEntry.name), menuEntry.name, menuEntry.size, 'preview');
                         setMenuEntry(null); setMenuTargets([]);
                       }}
-                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                      className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                     >
                       预览
                     </button>
@@ -1273,7 +1255,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         openFileByPath(joinRemotePath(currentPath, menuEntry.name), menuEntry.name, menuEntry.size, 'editor');
                         setMenuEntry(null); setMenuTargets([]);
                       }}
-                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                      className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                     >
                       编辑
                     </button>
@@ -1281,14 +1263,14 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                    <button
                     type="button"
                     onClick={() => handleDownload(menuEntry)}
-                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                    className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                   >
                     下载
                   </button>
                   <button
                     type="button"
                     onClick={() => handleOpenWithSystem(menuEntry)}
-                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                    className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                   >
                     用系统方式打开
                   </button>
@@ -1299,7 +1281,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         setExtractConfirm(targetFromEntry(currentPath, menuEntry));
                         setMenuEntry(null); setMenuTargets([]);
                       }}
-                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                      className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
                     >
                       解压
                     </button>
@@ -1313,27 +1295,27 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   setRenameValue(menuEntry.name);
                   setMenuEntry(null); setMenuTargets([]);
                 }}
-                className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+                className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
               >
                 重命名
               </button>
             </>
           ) : (
-            <div className="px-2 py-1.5 text-xs text-zinc-400">
+            <div className="px-2 py-1.5 text-meta text-fg-secondary">
               已选 {menuTargets.length} 个
             </div>
           )}
           <button
             type="button"
             onClick={() => handleClip(menuTargets, false)}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+            className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
           >
             复制
           </button>
           <button
             type="button"
             onClick={() => handleClip(menuTargets, true)}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+            className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
           >
             剪切
           </button>
@@ -1343,7 +1325,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               disabled={pasteBlocked != null}
               title={pasteBlocked ?? undefined}
               onClick={() => void handlePaste(joinRemotePath(currentPath, menuEntry.name))}
-              className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid disabled:opacity-40 disabled:hover:bg-transparent"
+              className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft disabled:opacity-40 disabled:hover:bg-transparent"
             >
               粘贴到此文件夹
             </button>
@@ -1351,7 +1333,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <button
             type="button"
             onClick={() => handleCopyPath(menuTargets)}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+            className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
           >
             复制路径
           </button>
@@ -1359,19 +1341,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             <button
               type="button"
               onClick={() => void handleOpenInTerminal(targetFromEntry(currentPath, menuEntry))}
-              className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+              className="w-full rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-state-soft"
             >
               {menuEntry.is_dir ? '在终端中打开' : '在终端中打开所在目录'}
             </button>
           )}
-          <hr className="border-edge my-1" />
+          <hr className="border-edge-subtle my-1" />
           <button
             type="button"
             onClick={() => {
               setDeleteConfirm(entriesToTargets(menuTargets));
               setMenuEntry(null); setMenuTargets([]);
             }}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
+            className="w-full rounded-md px-2 py-1.5 text-left text-body text-red-400 hover:bg-red-950/60"
           >
             删除
           </button>
@@ -1390,8 +1372,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {renameTarget && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-3">重命名</h3>
+          <div className="modal-panel-enter w-80 surface-glass rounded-2xl p-4">
+            <h3 className="text-title text-fg mb-3">重命名</h3>
             <input
               type="text"
               value={renameValue}
@@ -1400,21 +1382,21 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 if (e.key === 'Enter') handleRename();
                 if (e.key === 'Escape') setRenameTarget(null);
               }}
-              className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 mb-3"
+              className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500 mb-3"
               autoFocus
             />
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setRenameTarget(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={handleRename}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                className="px-3 py-1.5 rounded-lg text-body text-white bg-indigo-600 hover:bg-indigo-500"
               >
                 确认
               </button>
@@ -1426,39 +1408,39 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {deleteConfirm.length > 0 && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-red-300 mb-2">
+          <div className="modal-panel-enter w-80 surface-glass rounded-2xl p-4">
+            <h3 className="text-title text-red-300 mb-2">
               确认删除 {deleteConfirm.length > 1 ? `${deleteConfirm.length} 个文件` : ''}
             </h3>
             {deleteConfirm.length === 1 ? (
               <>
-                <p className="text-xs text-zinc-400 mb-1">
-                  类型: <span className="text-zinc-200">{deleteConfirm[0].isDir ? '目录' : '文件'}</span>
+                <p className="text-meta text-fg-secondary mb-1">
+                  类型: <span className="text-fg">{deleteConfirm[0].isDir ? '目录' : '文件'}</span>
                 </p>
-                <p className="text-xs text-zinc-400 mb-4">
-                  名称: <span className="text-zinc-200">{deleteConfirm[0].name}</span>
+                <p className="text-meta text-fg-secondary mb-4">
+                  名称: <span className="text-fg">{deleteConfirm[0].name}</span>
                 </p>
               </>
             ) : (
-              <div className="text-xs text-zinc-400 mb-4 max-h-40 overflow-auto">
+              <div className="text-meta text-fg-secondary mb-4 max-h-40 overflow-auto">
                 {deleteConfirm.slice(0, 10).map((e) => (
-                  <p key={e.path} className="text-zinc-200">{e.name}</p>
+                  <p key={e.path} className="text-fg">{e.name}</p>
                 ))}
-                {deleteConfirm.length > 10 && <p className="text-zinc-500">等 {deleteConfirm.length} 个文件…</p>}
+                {deleteConfirm.length > 10 && <p className="text-fg-tertiary">等 {deleteConfirm.length} 个文件…</p>}
               </div>
             )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setDeleteConfirm([])}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={() => handleDelete(deleteConfirm)}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
+                className="px-3 py-1.5 rounded-lg text-body text-white bg-red-600 hover:bg-red-500"
               >
                 确认删除
               </button>
@@ -1466,7 +1448,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 <button
                   type="button"
                   onClick={() => handleQuickDelete(deleteConfirm)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
+                  className="px-3 py-1.5 rounded-lg text-body text-white bg-red-600 hover:bg-red-500"
                 >
                   快速删除（打包成rm）
                 </button>
@@ -1521,10 +1503,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       {/* Upload mode selection dialog for multiple files */}
       {pendingDropFiles && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传多个文件</h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              检测到 {pendingDropFiles.paths.length} 个文件，上传到 <span className="text-zinc-300">{pendingDropFiles.destDir}</span>，选择上传方式：
+          <div className="modal-panel-enter w-96 surface-glass rounded-2xl p-4">
+            <h3 className="text-title text-fg mb-2">上传多个文件</h3>
+            <p className="text-meta text-fg-secondary mb-4">
+              检测到 {pendingDropFiles.paths.length} 个文件，上传到 <span className="text-fg-secondary">{pendingDropFiles.destDir}</span>，选择上传方式：
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -1534,10 +1516,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   setPendingDropFiles(null);
                   actions.uploadPaths(paths, destDir);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">逐个上传</span>
-                <span className="block text-zinc-500 mt-0.5">每个文件单独上传到目标目录</span>
+                <span className="font-medium text-fg">逐个上传</span>
+                <span className="block text-fg-tertiary mt-0.5">每个文件单独上传到目标目录</span>
               </button>
               <button
                 type="button"
@@ -1546,17 +1528,17 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   setPendingDropFiles(null);
                   await actions.uploadAsZip(paths, destDir, setDropWarning);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">打包上传</span>
-                <span className="block text-zinc-500 mt-0.5">压缩为 zip 后上传并解压到目标目录</span>
+                <span className="font-medium text-fg">打包上传</span>
+                <span className="block text-fg-tertiary mt-0.5">压缩为 zip 后上传并解压到目标目录</span>
               </button>
             </div>
             <div className="flex justify-end mt-3">
               <button
                 type="button"
                 onClick={() => setPendingDropFiles(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
               >
                 取消
               </button>
@@ -1569,34 +1551,34 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       {/* Upload mode selection dialog for folder upload */}
       {pendingFolderUpload && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传文件夹</h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              将「{pendingFolderUpload.folderName}」上传到 <span className="text-zinc-300">{pendingFolderUpload.destDir}</span>，选择上传方式：
+          <div className="modal-panel-enter w-96 surface-glass rounded-2xl p-4">
+            <h3 className="text-title text-fg mb-2">上传文件夹</h3>
+            <p className="text-meta text-fg-secondary mb-4">
+              将「{pendingFolderUpload.folderName}」上传到 <span className="text-fg-secondary">{pendingFolderUpload.destDir}</span>，选择上传方式：
             </p>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={() => runFolderUpload('folder')}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">上传到新建子文件夹</span>
-                <span className="block text-zinc-500 mt-0.5">在当前目录下创建同名文件夹，文件落到该子文件夹内</span>
+                <span className="font-medium text-fg">上传到新建子文件夹</span>
+                <span className="block text-fg-tertiary mt-0.5">在当前目录下创建同名文件夹，文件落到该子文件夹内</span>
               </button>
               <button
                 type="button"
                 onClick={() => runFolderUpload('flat')}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">上传到当前目录</span>
-                <span className="block text-zinc-500 mt-0.5">文件直接落到当前目录；若存在同名条目将报错中止</span>
+                <span className="font-medium text-fg">上传到当前目录</span>
+                <span className="block text-fg-tertiary mt-0.5">文件直接落到当前目录；若存在同名条目将报错中止</span>
               </button>
             </div>
             <div className="flex justify-end mt-3">
               <button
                 type="button"
                 onClick={() => setPendingFolderUpload(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
               >
                 取消
               </button>
@@ -1608,10 +1590,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {extractConfirm && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-2">解压文件</h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              将「{extractConfirm.name}」解压到 <span className="text-zinc-300">{parentDir(extractConfirm.path)}</span>，选择解压位置：
+          <div className="modal-panel-enter w-96 surface-glass rounded-2xl p-4">
+            <h3 className="text-title text-fg mb-2">解压文件</h3>
+            <p className="text-meta text-fg-secondary mb-4">
+              将「{extractConfirm.name}」解压到 <span className="text-fg-secondary">{parentDir(extractConfirm.path)}</span>，选择解压位置：
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -1621,25 +1603,25 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   const target = joinRemotePath(parentDir(extractConfirm.path), stem);
                   handleExtract(target);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">解压到同名子文件夹</span>
-                <span className="block text-zinc-500 mt-0.5">在当前目录下创建「{archiveStem(extractConfirm.name)}」文件夹并解压到其中</span>
+                <span className="font-medium text-fg">解压到同名子文件夹</span>
+                <span className="block text-fg-tertiary mt-0.5">在当前目录下创建「{archiveStem(extractConfirm.name)}」文件夹并解压到其中</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleExtract(parentDir(extractConfirm.path))}
-                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
               >
-                <span className="font-medium text-zinc-100">解压到当前目录</span>
-                <span className="block text-zinc-500 mt-0.5">直接解压到当前目录，保留压缩包内部结构</span>
+                <span className="font-medium text-fg">解压到当前目录</span>
+                <span className="block text-fg-tertiary mt-0.5">直接解压到当前目录，保留压缩包内部结构</span>
               </button>
             </div>
             <div className="flex justify-end mt-3">
               <button
                 type="button"
                 onClick={() => setExtractConfirm(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
+                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
               >
                 取消
               </button>

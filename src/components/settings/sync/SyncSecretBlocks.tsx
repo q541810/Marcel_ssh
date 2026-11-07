@@ -88,7 +88,7 @@ function RevealToggle({
         {open ? '隐藏' : showLabel}
       </SyncButton>
       {secret.error && (
-        <span className="text-xs text-red-400" role="alert">
+        <span className="text-meta text-red-400" role="alert">
           {secret.error}
         </span>
       )}
@@ -118,14 +118,14 @@ export function AddDeviceBlock({ variant }: { variant: SyncVariant }) {
             {qrFits && code !== null && (
               <div className="flex-shrink-0">
                 <QrCode text={code} size={168} label="同步码二维码" />
-                <p className="mt-1.5 max-w-[168px] text-[11px] leading-snug text-zinc-500">
+                <p className="mt-2 max-w-[168px] text-caption leading-snug text-fg-tertiary">
                   用手机相机扫描，把扫出的文字粘贴到手机端的「加入已有同步」。
                 </p>
               </div>
             )}
             <div className="min-w-0 flex-1 space-y-2">
               <div
-                className="max-h-32 overflow-y-auto break-all rounded-lg border border-edge bg-zinc-900/70 px-3 py-2 font-mono text-xs leading-relaxed text-zinc-300 select-all"
+                className="max-h-32 overflow-y-auto break-all rounded-lg border border-edge bg-surface/70 px-3 py-2 font-mono text-meta leading-relaxed text-fg-secondary select-all"
                 data-testid="sync-code"
               >
                 {code ?? ''}
@@ -134,7 +134,7 @@ export function AddDeviceBlock({ variant }: { variant: SyncVariant }) {
             </div>
           </div>
           {variant === 'desktop' && code !== null && !qrFits && (
-            <p className="text-xs text-zinc-500">同步码较长，无法生成二维码，请复制后发到另一台设备。</p>
+            <p className="text-meta text-fg-tertiary">同步码较长，无法生成二维码，请复制后发到另一台设备。</p>
           )}
           <Callout tone="warn">
             同步码里带着解锁数据的钥匙，等同于钥匙本身：只在你自己的设备之间传递，别发给别人。

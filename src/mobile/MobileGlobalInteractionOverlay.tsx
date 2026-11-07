@@ -173,7 +173,7 @@ export default function MobileGlobalInteractionOverlay() {
   // 任务进行中的提问：agent 在等答案，像审批一样从底部升起（无论用户在哪一页）。
   if (current.kind === 'question' && current.question) {
     return (
-      <div className="pointer-events-auto fixed inset-x-0 bottom-0 z-50 shadow-2xl animate-fadeIn">
+      <div className="pointer-events-auto fixed inset-x-0 bottom-0 z-50 shadow-overlay animate-fadeIn">
         {/* key：交互切换必须重挂载。面板内部题号/答案按首份 questions 定格，
             不重挂的话 2 题切 1 题会越界渲染崩掉整棵树（2026-10-06 线上爆炸） */}
         <MobileQuestionPanel

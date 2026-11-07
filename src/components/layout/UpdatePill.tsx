@@ -135,14 +135,14 @@ export default function UpdatePill() {
   };
 
   const base =
-    'mx-1 h-[18px] rounded-full px-1.5 text-[10px] leading-[18px] font-medium select-none transition-colors whitespace-nowrap';
+    'mx-1 h-[18px] rounded-full px-1.5 text-caption leading-[18px] font-medium select-none transition-colors duration-120 whitespace-nowrap';
 
   return (
     <>
       <div className="relative" ref={rootRef}>
         {state.status === 'downloading' ? (
           <span
-            className={`${base} border border-edge/60 bg-zinc-800/80 text-zinc-300 cursor-default`}
+            className={`${base} border border-edge-subtle bg-surface-raised text-fg-secondary cursor-default`}
             title={pillText}
           >
             <span className="inline-block motion-reduce:animate-none animate-pulse">
@@ -150,19 +150,19 @@ export default function UpdatePill() {
             </span>{' '}
             {version}
             {state.total > 0 && (
-              <span className="text-zinc-500"> {percent}%</span>
+              <span className="text-fg-tertiary"> {percent}%</span>
             )}
           </span>
         ) : (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className={`${base} cursor-pointer ${
+            className={`${base} cursor-pointer focus-ring ${
               state.status === 'ready'
                 ? 'border border-indigo-500/30 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25'
                 : state.status === 'failed'
                   ? 'border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
-                  : 'border border-edge/60 bg-zinc-800/80 text-zinc-300 hover:bg-state-mid/80'
+                  : 'border border-edge-subtle bg-surface-raised text-fg-secondary hover:bg-state-mid'
             }`}
             title={pillText}
           >
@@ -175,15 +175,15 @@ export default function UpdatePill() {
         )}
 
         {open && state.status !== 'downloading' && (
-          <div className="absolute top-7 left-0 z-50 w-72 rounded-xl border border-edge bg-zinc-900/95 p-3 shadow-xl backdrop-blur">
+          <div className="absolute top-7 left-0 z-50 w-72 rounded-xl surface-glass p-3">
             {state.status === 'ready' && (
               <>
-                <p className="mb-1 text-xs text-zinc-200">
+                <p className="mb-1 text-meta text-fg">
                   新版本{' '}
                   <span className="font-medium text-indigo-300">{version}</span>{' '}
                   已下载完成。
                 </p>
-                <p className="mb-3 text-[11px] leading-relaxed text-zinc-500">
+                <p className="mb-3 text-caption leading-relaxed text-fg-tertiary">
                   {capabilities?.installKind === 'apk'
                     ? '点击后在系统安装界面确认安装，装完自动重启到新版本。'
                     : '点「稍后」只是不再提示；你退出应用时它仍会自动安装。'}
@@ -191,7 +191,7 @@ export default function UpdatePill() {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="primary"
-                    className="!px-3 !py-1.5 !text-xs"
+                    className="!px-3 !text-meta"
                     loading={busy}
                     onClick={onInstallClick}
                   >
@@ -199,7 +199,7 @@ export default function UpdatePill() {
                   </Button>
                   <Button
                     variant="secondary"
-                    className="!px-3 !py-1.5 !text-xs"
+                    className="!px-3 !text-meta"
                     onClick={() => {
                       dismiss(version);
                       setOpen(false);
@@ -213,12 +213,12 @@ export default function UpdatePill() {
 
             {state.status === 'available' && (
               <>
-                <p className="mb-1 text-xs text-zinc-200">
+                <p className="mb-1 text-meta text-fg">
                   新版本{' '}
                   <span className="font-medium text-indigo-300">{version}</span>{' '}
                   可用。
                 </p>
-                <p className="mb-3 text-[11px] leading-relaxed text-zinc-500">
+                <p className="mb-3 text-caption leading-relaxed text-fg-tertiary">
                   {canBackgroundDownload
                     ? '可在后台下载，下载完再决定什么时候装；也可以直接去浏览器下载。'
                     : '当前平台不支持后台自动更新，请前往下载页手动安装。'}
@@ -227,7 +227,7 @@ export default function UpdatePill() {
                   {canBackgroundDownload && (
                     <Button
                       variant="primary"
-                      className="!px-3 !py-1.5 !text-xs"
+                      className="!px-3 !text-meta"
                       loading={busy}
                       onClick={() => void runDownload()}
                     >
@@ -236,14 +236,14 @@ export default function UpdatePill() {
                   )}
                   <Button
                     variant={canBackgroundDownload ? 'secondary' : 'primary'}
-                    className="!px-3 !py-1.5 !text-xs"
+                    className="!px-3 !text-meta"
                     onClick={() => openExternalLink(state.releaseUrl)}
                   >
                     去下载页
                   </Button>
                   <Button
                     variant="secondary"
-                    className="!px-3 !py-1.5 !text-xs"
+                    className="!px-3 !text-meta"
                     onClick={() => {
                       dismiss(version);
                       setOpen(false);
@@ -257,15 +257,15 @@ export default function UpdatePill() {
 
             {state.status === 'failed' && (
               <>
-                <p className="mb-1 text-xs text-amber-300">自动更新失败</p>
-                <p className="mb-3 text-[11px] leading-relaxed text-zinc-400">
+                <p className="mb-1 text-meta text-amber-300">自动更新失败</p>
+                <p className="mb-3 text-caption leading-relaxed text-fg-secondary">
                   {state.message}
                 </p>
                 <div className="flex items-center gap-2">
                   {canBackgroundDownload && (
                     <Button
                       variant="primary"
-                      className="!px-3 !py-1.5 !text-xs"
+                      className="!px-3 !text-meta"
                       loading={busy}
                       onClick={() => void runDownload()}
                     >
@@ -274,7 +274,7 @@ export default function UpdatePill() {
                   )}
                   <Button
                     variant="secondary"
-                    className="!px-3 !py-1.5 !text-xs"
+                    className="!px-3 !text-meta"
                     onClick={dismissFailure}
                   >
                     知道了
@@ -284,7 +284,7 @@ export default function UpdatePill() {
             )}
 
             {error && (
-              <p className="mt-2 text-[11px] leading-relaxed text-red-400">
+              <p className="mt-2 text-caption leading-relaxed text-red-400">
                 {error}
               </p>
             )}
@@ -299,18 +299,18 @@ export default function UpdatePill() {
         size="sm"
       >
         <div className="space-y-4 p-4">
-          <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
+          <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-3">
             <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" aria-hidden="true" />
-            <p className="text-sm leading-relaxed text-amber-100/90">
+            <p className="text-body leading-relaxed text-amber-100/90">
               当前有正在运行的任务（Agent 任务、后台作业、文件传输）或 SSH 会话，安装会中断它们。
             </p>
           </div>
-          <p className="text-sm leading-relaxed text-zinc-400">
+          <p className="text-body leading-relaxed text-fg-secondary">
             {capabilities?.installKind === 'apk'
               ? '接下来会打开系统安装界面，确认后应用会重启到新版本。'
               : '应用将退出并静默安装新版本，完成后自动重新打开。'}
           </p>
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-body text-red-400">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <Button
               variant="secondary"

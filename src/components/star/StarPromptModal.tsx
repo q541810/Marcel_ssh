@@ -58,14 +58,14 @@ export default function StarPromptModal() {
       open={open}
       onClose={handleSkip}
       size="sm"
-      contentClassName="!max-w-[340px] !bg-zinc-900 !border-edge-subtle"
+      contentClassName="!max-w-[340px] !bg-surface !border-edge-subtle"
     >
       <div className="relative px-4 pb-2">
         <button
           type="button"
           onClick={handleSkip}
           aria-label="关闭"
-          className="absolute right-0 top-0 flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-zinc-600 hover:bg-state-soft hover:text-zinc-300 transition-colors"
+          className="absolute right-0 top-0 flex h-6 w-6 items-center justify-center rounded-md text-body leading-none text-fg-disabled hover:bg-state-soft hover:text-fg-secondary transition-colors"
         >
           ✕
         </button>
@@ -73,10 +73,10 @@ export default function StarPromptModal() {
           <div className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-amber-400/10">
             <Star className="h-[26px] w-[26px] text-amber-400" fill="currentColor" />
           </div>
-          <p className="mt-3.5 text-base font-semibold text-zinc-100">
+          <p className="mt-4 text-body font-semibold text-fg">
             喜欢 Marcel SSH 吗？
           </p>
-          <p className="mt-2 text-[13px] leading-[1.7] text-zinc-400">
+          <p className="mt-2 text-body leading-[1.7] text-fg-secondary">
             如果它让 SSH 连接变得更顺手，欢迎去 GitHub 点个 Star ——
             这是对独立开发者最大的支持。
           </p>
@@ -84,14 +84,14 @@ export default function StarPromptModal() {
         <div className="mt-4 flex flex-col gap-2">
           <Button
             variant="primary"
-            className="w-full !rounded-[10px] !py-2.5"
+            className="w-full !rounded-xl !py-3"
             onClick={handleStar}
           >
             去 GitHub 点个 Star
           </Button>
           <Button
             variant="secondary"
-            className="w-full !rounded-[10px] !py-2.5"
+            className="w-full !rounded-xl !py-3"
             onClick={handleSkip}
           >
             以后再说
@@ -100,7 +100,7 @@ export default function StarPromptModal() {
         <button
           type="button"
           onClick={handleNever}
-          className="mt-3 w-full text-center text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+          className="mt-3 w-full text-center text-meta text-fg-disabled hover:text-fg-secondary transition-colors"
         >
           不再提醒
         </button>

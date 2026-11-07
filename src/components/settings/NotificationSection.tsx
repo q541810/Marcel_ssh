@@ -53,7 +53,7 @@ function VolumeSlider({
           background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${value}%, var(--color-bg-tertiary) ${value}%, var(--color-bg-tertiary) 100%)`,
         }}
       />
-      <span className="text-xs text-[var(--color-text-secondary)] w-8 text-right tabular-nums">
+      <span className="text-meta text-[var(--color-text-secondary)] w-8 text-right tabular-nums">
         {value}
       </span>
     </div>

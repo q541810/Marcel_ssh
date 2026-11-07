@@ -24,11 +24,14 @@ import {
   toOrderEntries,
 } from '@/lib/connectionOrder';
 import { isDebugConnection } from '@/lib/debugServer';
+import { ChevronRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import ListPanel from '@/components/ui/ListPanel';
 import ContextMenu from '@/components/ui/ContextMenu';
 import ConnectionForm from './ConnectionForm';
 import RemotePlatformBadge from './RemotePlatformBadge';
+import StatusDot from './StatusDot';
+import type { SessionStatus } from '@/lib/types';
 import DeleteConnectionDialog from './DeleteConnectionDialog';
 import { openMemorySettings } from '@/lib/memoryNav';
 
@@ -77,8 +80,8 @@ const LIFT_MS = 150;
  * 早先是一根 2px 的 div，插进列表后会把后面的行整体推下去（线 + 两侧 gap ≈ 6px）——
  * 拖拽过程中每次落点变化都让列表抖一下，被拖的行也跟着漂（实测往上拖会漂 6px）。
  */
-const LINE_ABOVE = 'shadow-[0_-2px_0_0_#6366f1]';
-const LINE_BELOW = 'shadow-[0_2px_0_0_#6366f1]';
+const LINE_ABOVE = 'shadow-[0_-2px_0_0_var(--color-indigo-500)]';
+const LINE_BELOW = 'shadow-[0_2px_0_0_var(--color-indigo-500)]';
 
 /** 向上找可滚动的祖先，用于拖到列表边缘时自动滚动。 */
 function scrollableAncestor(el: HTMLElement | null): HTMLElement | null {
@@ -103,6 +106,18 @@ export default function ConnectionList() {
   const renameGroup = useConnectionStore((s) => s.renameGroup);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const setActiveConnection = useConnectionStore((s) => s.setActiveConnection);
+  const sessions = useSessionStore((s) => s.sessions);
+  /** 每条已保存连接的汇总状态（多开时 已连接 > 连接中 > 错误 > 断开），供状态点显示。 */
+  const statusByConfig = useMemo(() => {
+    const rank: Record<SessionStatus, number> = { connected: 3, connecting: 2, error: 1, disconnected: 0 };
+    const map = new Map<string, SessionStatus>();
+    for (const sess of Object.values(sessions ?? {})) {
+      if (!sess.configId) continue;
+      const cur = map.get(sess.configId);
+      if (cur === undefined || rank[sess.status] > rank[cur]) map.set(sess.configId, sess.status);
+    }
+    return map;
+  }, [sessions]);
   const connect = useSessionStore((s) => s.connect);
   const connectWithSavedPassword = useSessionStore((s) => s.connectWithSavedPassword);
   const connectWithSavedPassphrase = useSessionStore((s) => s.connectWithSavedPassphrase);
@@ -870,7 +885,7 @@ export default function ConnectionList() {
         {localError && (
           <div
             role="alert"
-            className="flex items-start justify-between gap-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs leading-relaxed text-red-300"
+            className="flex items-start justify-between gap-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-meta leading-relaxed text-red-300"
           >
             <span>{localError}</span>
             <button
@@ -889,7 +904,7 @@ export default function ConnectionList() {
           读回之后的再次刷新不回到转圈（与移动端同一口径）。
         */}
         {!loaded && connections.length === 0 && (
-          <p className="load-indicator-delayed text-sm text-zinc-500 text-center mt-4">
+          <p className="load-indicator-delayed text-body text-fg-tertiary text-center mt-4">
             加载中...
           </p>
         )}
@@ -898,10 +913,10 @@ export default function ConnectionList() {
             className={`text-center mt-6 px-2 ${revealOf('__empty__', 0).className}`}
             style={revealOf('__empty__', 0).style}
           >
-            <p className="text-sm text-zinc-500 mb-3">暂无已保存的连接</p>
+            <p className="text-body text-fg-secondary mb-3">暂无已保存的连接</p>
             <button
               onClick={openNewConnectionForm}
-              className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+              className="text-body text-indigo-400 hover:text-indigo-300 underline focus-ring rounded-md"
             >
               点击此处新建连接
             </button>
@@ -954,7 +969,7 @@ export default function ConnectionList() {
                   }}
                   onContextMenu={(e) => handleGroupContextMenu(e, group.name)}
                   title={isFiltering ? undefined : '点击折叠/展开；拖动调整分组顺序；右键重命名'}
-                  className={`flex items-center gap-1.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2 mb-1 ${
+                  className={`flex items-center gap-1 text-caption font-semibold text-fg-tertiary uppercase tracking-wider px-2 mb-1 ${
                     isFiltering ? '' : 'cursor-grab active:cursor-grabbing'
                   } ${
                     dragSubject?.kind === 'group' && dragSubject.name === group.name
@@ -963,15 +978,12 @@ export default function ConnectionList() {
                   } ${groupLine === 'above' ? LINE_ABOVE : ''}`}
                 >
                   {!isFiltering && (
-                    <svg
-                      className={`w-3 h-3 transition-transform duration-[280ms] ${isCollapsed ? '' : 'rotate-90'}`}
+                    <ChevronRight
+                      size={14}
+                      strokeWidth={1.5}
+                      className={`transition-transform duration-[280ms] ${isCollapsed ? '' : 'rotate-90'}`}
                       style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                    />
                   )}
                   {renamingGroup === group.name ? (
                     <input
@@ -990,21 +1002,21 @@ export default function ConnectionList() {
                       onClick={(e) => e.stopPropagation()}
                       onMouseDown={(e) => e.stopPropagation()}
                       autoFocus
-                      className="flex-1 bg-zinc-800 text-zinc-200 px-2 py-0.5 rounded normal-case tracking-normal text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="flex-1 bg-surface-raised text-fg px-2 py-0.5 rounded-md normal-case tracking-normal text-body focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   ) : (
                     <span>{group.name}</span>
                   )}
                 </h3>
                 <div
-                  className={`grid transition-all duration-[280ms] ${
+                  className={`grid transition-[grid-template-rows] duration-[280ms] ${
                     isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
                   }`}
                   style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
                 >
                   <div className="overflow-hidden">
                     <div
-                      className={`space-y-1 transition-all duration-[220ms] ${
+                      className={`space-y-0.5 transition-[opacity,transform] duration-[220ms] ${
                         isCollapsed ? '-translate-y-1 opacity-0' : 'translate-y-0 opacity-100'
                       }`}
                       style={{
@@ -1036,7 +1048,7 @@ export default function ConnectionList() {
                           onContextMenu={(e) => handleContextMenu(e, conn)}
                           onMouseDown={startPointerDrag({ kind: 'row', id: conn.id })}
                           className={`
-                    w-full text-left px-2 py-2 rounded-lg text-sm transition-colors border ${reveal.className}
+                    w-full h-8 text-left px-2 rounded-lg text-body transition-colors pressable focus-ring ${reveal.className}
                     ${
                       dragSubject?.kind === 'row' && dragSubject.id === conn.id
                         ? 'opacity-40 relative z-10'
@@ -1045,25 +1057,26 @@ export default function ConnectionList() {
                     ${line === 'above' ? LINE_ABOVE : line === 'below' ? LINE_BELOW : ''}
                     ${
                       activeConnectionId === conn.id
-                        ? 'bg-indigo-900/30 border-indigo-700'
-                        : 'bg-zinc-900/40 border-edge-subtle hover:border-edge'
+                        ? 'bg-state-selected'
+                        : 'hover:bg-state-soft'
                     }
                   `}
                         >
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <div className="min-w-0 flex-1 truncate font-medium text-zinc-200">
-                              {conn.name}
-                            </div>
+                          <div
+                            className="flex h-full min-w-0 items-center gap-2"
+                            title={
+                              conn.lastConnected
+                                ? `上次连接：${new Date(conn.lastConnected).toLocaleDateString()}`
+                                : undefined
+                            }
+                          >
+                            <StatusDot status={statusByConfig.get(conn.id) ?? 'disconnected'} />
+                            <span className="min-w-0 truncate text-body text-fg">{conn.name}</span>
                             <RemotePlatformBadge platform={conn.remotePlatform} />
+                            <span className="min-w-0 flex-1 truncate text-meta text-fg-tertiary">
+                              {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
+                            </span>
                           </div>
-                          <div className="text-xs text-zinc-500 truncate">
-                            {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
-                          </div>
-                          {conn.lastConnected && (
-                            <div className="text-xs text-zinc-600 mt-0.5">
-                              上次连接：{new Date(conn.lastConnected).toLocaleDateString()}
-                            </div>
-                          )}
                         </button>
                       );
                     })}

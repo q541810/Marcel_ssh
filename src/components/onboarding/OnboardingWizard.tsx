@@ -25,30 +25,30 @@ function WelcomeStep() {
         className="w-16 h-16 mx-auto mb-4 object-contain select-none"
         draggable="false"
       />
-      <h1 className="text-2xl font-bold text-zinc-100 mb-2">{APP_NAME}</h1>
-      <p className="text-zinc-400">小白也能上手的专业级 AI-Native SSH</p>
+      <h1 className="text-headline text-fg mb-2">{APP_NAME}</h1>
+      <p className="text-fg-secondary">小白也能上手的专业级 AI-Native SSH</p>
 
       <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-4">
+        <div className="rounded-xl border border-edge-subtle bg-surface/50 p-4">
           <div className="flex justify-center mb-2">
-            <Monitor className="w-7 h-7 text-zinc-300" />
+            <Monitor className="w-7 h-7 text-fg-secondary" />
           </div>
-          <div className="text-sm font-medium text-zinc-200">智能终端</div>
-          <div className="text-xs text-zinc-500 mt-1">多会话管理</div>
+          <div className="text-body font-medium text-fg">智能终端</div>
+          <div className="text-meta text-fg-tertiary mt-1">多会话管理</div>
         </div>
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-4">
+        <div className="rounded-xl border border-edge-subtle bg-surface/50 p-4">
           <div className="flex justify-center mb-2">
-            <Bot className="w-7 h-7 text-zinc-300" />
+            <Bot className="w-7 h-7 text-fg-secondary" />
           </div>
-          <div className="text-sm font-medium text-zinc-200">AI Agent</div>
-          <div className="text-xs text-zinc-500 mt-1">自动执行命令</div>
+          <div className="text-body font-medium text-fg">AI Agent</div>
+          <div className="text-meta text-fg-tertiary mt-1">自动执行命令</div>
         </div>
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-4">
+        <div className="rounded-xl border border-edge-subtle bg-surface/50 p-4">
           <div className="flex justify-center mb-2">
-            <FolderOpen className="w-7 h-7 text-zinc-300" />
+            <FolderOpen className="w-7 h-7 text-fg-secondary" />
           </div>
-          <div className="text-sm font-medium text-zinc-200">文件管理</div>
-          <div className="text-xs text-zinc-500 mt-1">SFTP 传输</div>
+          <div className="text-body font-medium text-fg">文件管理</div>
+          <div className="text-meta text-fg-tertiary mt-1">SFTP 传输</div>
         </div>
       </div>
     </div>
@@ -58,8 +58,8 @@ function WelcomeStep() {
 function ModelConfigStep() {
   return (
     <div>
-      <h2 className="text-lg font-semibold text-zinc-100 mb-1">配置 AI 模型</h2>
-      <p className="text-sm text-zinc-500 mb-6">设置 LLM 服务以启用 Agent 功能</p>
+      <h2 className="text-title text-fg mb-1">配置 AI 模型</h2>
+      <p className="text-body text-fg-tertiary mb-6">设置 LLM 服务以启用 Agent 功能</p>
       <ModelServiceSection />
     </div>
   );
@@ -68,8 +68,8 @@ function ModelConfigStep() {
 function AgentOptionsStep() {
   return (
     <div>
-      <h2 className="text-lg font-semibold text-zinc-100 mb-1">配置 Agent 行为</h2>
-      <p className="text-sm text-zinc-500 mb-6">控制 AI 如何执行命令</p>
+      <h2 className="text-title text-fg mb-1">配置 Agent 行为</h2>
+      <p className="text-body text-fg-tertiary mb-6">控制 AI 如何执行命令</p>
       <AgentPolicySection />
     </div>
   );
@@ -78,38 +78,38 @@ function AgentOptionsStep() {
 function TerminalTutorialStep() {
   return (
     <div>
-      <h2 className="text-lg font-semibold text-zinc-100 mb-1">终端操作指南</h2>
-      <p className="text-sm text-zinc-500 mb-6">快速掌握基本操作</p>
+      <h2 className="text-title text-fg mb-1">终端操作指南</h2>
+      <p className="text-body text-fg-tertiary mb-6">快速掌握基本操作</p>
 
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 divide-y divide-edge-subtle mb-4">
+      <div className="rounded-xl border border-edge-subtle bg-surface/50 divide-y divide-edge-subtle mb-4">
         <div className="px-6 py-4">
           <div className="flex items-center gap-6">
-            <div className="flex-shrink-0 w-32 text-sm font-medium text-zinc-200">Ctrl+C</div>
-            <div className="text-sm text-zinc-300">中断当前命令 / 复制选中文本</div>
+            <div className="flex-shrink-0 w-32 text-body font-medium text-fg">Ctrl+C</div>
+            <div className="text-body text-fg-secondary">中断当前命令 / 复制选中文本</div>
           </div>
         </div>
         <div className="px-6 py-4">
           <div className="flex items-center gap-6">
-            <div className="flex-shrink-0 w-32 text-sm font-medium text-zinc-200">Ctrl+V</div>
-            <div className="text-sm text-zinc-300">粘贴</div>
+            <div className="flex-shrink-0 w-32 text-body font-medium text-fg">Ctrl+V</div>
+            <div className="text-body text-fg-secondary">粘贴</div>
           </div>
         </div>
         <div className="px-6 py-4">
           <div className="flex items-center gap-6">
-            <div className="flex-shrink-0 w-32 text-sm font-medium text-zinc-200">右键</div>
-            <div className="text-sm text-zinc-300">粘贴</div>
+            <div className="flex-shrink-0 w-32 text-body font-medium text-fg">右键</div>
+            <div className="text-body text-fg-secondary">粘贴</div>
           </div>
         </div>
         <div className="px-6 py-4">
           <div className="flex items-center gap-6">
-            <div className="flex-shrink-0 w-32 text-sm font-medium text-zinc-200">Ctrl+D</div>
-            <div className="text-sm text-zinc-300">关闭当前会话</div>
+            <div className="flex-shrink-0 w-32 text-body font-medium text-fg">Ctrl+D</div>
+            <div className="text-body text-fg-secondary">关闭当前会话</div>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 p-6">
-        <div className="text-sm text-zinc-300 space-y-2">
+      <div className="rounded-xl border border-edge-subtle bg-surface/50 p-6">
+        <div className="text-body text-fg-secondary space-y-2">
           <p>• 点击 + 按钮创建新会话</p>
           <p>• 点击标签页切换会话</p>
           <p>• 每个会话独立连接</p>
@@ -208,7 +208,7 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
     <SearchRegistryProvider>
       <SettingsActionsProvider value={providerValue}>
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="modal-backdrop-enter absolute inset-0 bg-zinc-900/95 backdrop-blur-sm" />
+          <div className="modal-backdrop-enter absolute inset-0 bg-surface/95 backdrop-blur-sm" />
 
           <div className="modal-panel-enter relative w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
             {/* Progress bar */}
@@ -217,13 +217,13 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
                 <div key={step.id} className="flex items-center">
                   <div
                     className={`
-                      w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
-                      transition-all duration-300
+                      w-8 h-8 rounded-full flex items-center justify-center text-body font-medium
+                      transition duration-300
                       ${index === currentStep
                         ? 'bg-indigo-600 text-white scale-110'
                         : index < currentStep
                           ? 'bg-indigo-600/50 text-indigo-200'
-                          : 'bg-zinc-800 text-zinc-500'
+                          : 'bg-surface-raised text-fg-tertiary'
                       }
                     `}
                   >
@@ -236,7 +236,7 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
                   {index < STEPS.length - 1 && (
                     <div
                       className={`w-16 h-0.5 mx-2 transition-colors duration-300 ${
-                        index < currentStep ? 'bg-indigo-600/50' : 'bg-zinc-800'
+                        index < currentStep ? 'bg-indigo-600/50' : 'bg-surface-raised'
                       }`}
                     />
                   )}
@@ -247,14 +247,14 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
             {/* 翻页后左上角 logo + "新手引导"标题（welcome 页不显示）
                 不加 key：仅在首次从 welcome 进入步骤页时挂载一次，避免每页重播滑出动画 */}
             {currentStep > 0 && (
-              <div className="flex items-center gap-2.5 mb-5 flex-shrink-0">
+              <div className="flex items-center gap-3 mb-5 flex-shrink-0">
                 <img
                   src={APP_LOGO}
                   alt={`${APP_NAME} logo`}
                   className="w-8 h-8 object-contain select-none onboarding-logo-enter"
                   draggable="false"
                 />
-                <span className="text-base font-semibold text-zinc-100 onboarding-title-slide">新手引导</span>
+                <span className="text-body font-semibold text-fg onboarding-title-slide">新手引导</span>
               </div>
             )}
 
@@ -267,10 +267,10 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
 
             {/* Validation errors */}
             {validationErrors.length > 0 && (
-              <div className="mb-4 space-y-0.5 flex-shrink-0">
+              <div className="mb-4 space-y-1 flex-shrink-0">
                 {validationErrors.map((err, i) => (
-                  <div key={i} className="flex items-start gap-1.5 text-xs text-red-400">
-                    <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  <div key={i} className="flex items-start gap-2 text-meta text-red-400">
+                    <AlertCircle className="w-3 h-3 mt-1 flex-shrink-0" />
                     <span>{err}</span>
                   </div>
                 ))}

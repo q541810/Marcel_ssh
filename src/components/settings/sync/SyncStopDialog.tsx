@@ -62,13 +62,13 @@ export function SyncStopDialog({
         </>
       }
     >
-      <p className="text-sm leading-relaxed text-zinc-300">
+      <p className="text-body leading-relaxed text-fg-secondary">
         停止后，这台设备不再上传或接收改动。这台设备上现有的连接、设置等都会原样保留，其它设备也不受影响；
         以后想继续，随时可以重新开启或加入。
       </p>
       <SyncCheckbox variant={variant} checked={wipeRemote} onChange={setWipeRemote} tone="danger" disabled={working}>
         同时删除云端的同步数据
-        <span className="mt-0.5 block text-xs text-zinc-500">
+        <span className="mt-1 block text-meta text-fg-tertiary">
           删除后，其它设备也无法再通过这个位置同步。只在你打算彻底不用同步时勾选。
         </span>
       </SyncCheckbox>

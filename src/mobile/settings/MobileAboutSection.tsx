@@ -126,14 +126,14 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
       {/* App identity */}
       <div className="flex flex-col items-center py-4">
         <EasterEggLogo className="h-24 w-24 select-none object-contain" />
-        <div className="mt-2 text-base font-semibold text-zinc-100">
+        <div className="mt-2 text-title font-semibold text-fg">
           {APP_NAME}
         </div>
         <button
           type="button"
           onClick={handleVersionTap}
           aria-label="当前版本"
-          className="mt-0.5 min-h-9 rounded px-2 font-mono text-xs text-zinc-500 active:bg-state-soft focus-visible:outline-2 focus-visible:outline-indigo-400"
+          className="mt-0.5 min-h-9 rounded px-2 font-mono text-meta text-fg-tertiary active:bg-state-soft focus-visible:outline-2 focus-visible:outline-indigo-400"
         >
           {appVersion ? `v${appVersion}` : ''}
         </button>
@@ -145,24 +145,24 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
           type="button"
           onClick={() => void handleCheck()}
           disabled={checking}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid disabled:opacity-50"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
         >
           {checking && <Loader2 className="h-4 w-4 animate-spin" />}
           {checking ? '检查中…' : '检查更新'}
         </button>
         {result && !result.hasUpdate && (
-          <p className="mt-2 text-center text-sm text-emerald-400">
+          <p className="mt-2 text-center text-body text-emerald-400">
             已是最新版本
           </p>
         )}
         {error && (
-          <p className="mt-2 break-words text-center text-sm text-red-400">
+          <p className="mt-2 break-words text-center text-body text-red-400">
             {error}
           </p>
         )}
         {result?.hasUpdate && (
           <div className="mt-2 space-y-2 rounded-xl border border-indigo-800/60 bg-indigo-950/30 p-3">
-            <p className="text-sm text-zinc-200">
+            <p className="text-body text-fg">
               新版本{' '}
               <span className="font-medium text-indigo-300">
                 {result.latestVersion}
@@ -171,10 +171,10 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
             </p>
             {updateState.status === 'downloading' ? (
               /* 已在下载：后端对重复触发是幂等 no-op，这里不给按钮，改为展示进度 */
-              <p className="rounded-lg bg-indigo-500/10 px-3 py-2.5 text-center text-sm text-indigo-300">
+              <p className="rounded-lg bg-indigo-500/10 px-3 py-2.5 text-center text-body text-indigo-300">
                 正在后台下载 {updateState.version} ·{' '}
                 {updatePercent(updateState.downloaded, updateState.total)}%
-                <span className="mt-0.5 block text-[11px] text-zinc-500">
+                <span className="mt-0.5 block text-caption text-fg-tertiary">
                   下载在后台继续，离开这一页也不受影响。
                 </span>
               </p>
@@ -188,7 +188,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                     type="button"
                     disabled={installing}
                     onClick={() => void handleInstallNow()}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
                   >
                     {installing ? (
                       <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
@@ -197,7 +197,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                     )}
                     立即安装 {updateState.version}
                   </button>
-                  <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+                  <p className="text-center text-caption leading-relaxed text-fg-tertiary">
                     {capabilities?.installKind === 'apk'
                       ? '安装包已下载完成，点击后在系统安装界面确认即可。'
                       : updateMode === 'off'
@@ -212,7 +212,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                       type="button"
                       disabled={downloading}
                       onClick={() => void handleBackgroundDownload()}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+                      className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
                     >
                       {downloading ? (
                         <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
@@ -225,12 +225,12 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                       type="button"
                       disabled={installing}
                       onClick={() => void handleInstallNow()}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
                     >
                       先装 {updateState.version}
                     </button>
                   </div>
-                  <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+                  <p className="text-center text-caption leading-relaxed text-fg-tertiary">
                     已就绪的是旧版本 {updateState.version}；下载 {result.latestVersion}{' '}
                     完成后再安装才是最新版。
                   </p>
@@ -242,7 +242,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                   type="button"
                   disabled={downloading}
                   onClick={() => void handleBackgroundDownload()}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
                 >
                   {downloading ? (
                     <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
@@ -251,7 +251,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                   )}
                   后台下载
                 </button>
-                <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+                <p className="text-center text-caption leading-relaxed text-fg-tertiary">
                   下载完成后会提示你安装；也可以在下面把更新方式设为「自动更新」。
                 </p>
               </>
@@ -260,12 +260,12 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                 <button
                   type="button"
                   onClick={() => openExternalLink(result.releaseUrl)}
-                  className="w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+                  className="w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-body font-medium text-white active:bg-indigo-500"
                 >
                   去下载
                 </button>
                 {updateMode === 'off' && (
-                  <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+                  <p className="text-center text-caption leading-relaxed text-fg-tertiary">
                     当前更新方式是「关闭」，本机不下载也不缓存安装包；想在这里直接后台下载，把下面的更新方式改成「自动更新」或「仅提醒」。
                   </p>
                 )}
@@ -297,7 +297,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => void handleResetOnboarding()}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <RotateCcw className="h-4 w-4" />
           重新运行引导
@@ -309,7 +309,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => openExternalLink(SUPPORT_URL)}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <MessageCircle className="h-4 w-4" />加入交流群
         </button>
@@ -320,7 +320,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => openExternalLink(REPO_URL)}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <ExternalLink className="h-4 w-4" />在 GitHub 上查看
         </button>

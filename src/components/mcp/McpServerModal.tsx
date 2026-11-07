@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AlignLeft, PenLine } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -135,27 +136,23 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
       {/* ── Step: Choose ── */}
       {step === 'choose' && (
         <div className="p-6 space-y-4 text-center">
-          <p className="text-sm text-zinc-400">选择添加方式</p>
+          <p className="text-body text-fg-secondary">选择添加方式</p>
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => setStep('json')}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-edge bg-zinc-900/60 hover:border-indigo-500 hover:bg-zinc-900 transition-colors"
+              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-edge bg-surface/60 hover:border-indigo-500 hover:bg-surface transition-colors"
             >
-              <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h10m-6 6h12" />
-              </svg>
-              <span className="text-sm font-medium text-zinc-100">从 JSON 导入</span>
-              <span className="text-xs text-zinc-500">粘贴标准 mcpServers 配置</span>
+              <AlignLeft size={24} strokeWidth={1.5} className="text-indigo-400" />
+              <span className="text-body font-medium text-fg">从 JSON 导入</span>
+              <span className="text-meta text-fg-tertiary">粘贴标准 mcpServers 配置</span>
             </button>
             <button
               onClick={() => setStep('form')}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-edge bg-zinc-900/60 hover:border-indigo-500 hover:bg-zinc-900 transition-colors"
+              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-edge bg-surface/60 hover:border-indigo-500 hover:bg-surface transition-colors"
             >
-              <svg className="w-6 h-6 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              <span className="text-sm font-medium text-zinc-100">手动填写</span>
-              <span className="text-xs text-zinc-500">逐项输入名称和 URL</span>
+              <PenLine size={24} strokeWidth={1.5} className="text-fg-secondary" />
+              <span className="text-body font-medium text-fg">手动填写</span>
+              <span className="text-meta text-fg-tertiary">逐项输入名称和 URL</span>
             </button>
           </div>
         </div>
@@ -165,17 +162,17 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
       {step === 'json' && (
         <div className="p-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
-              粘贴 <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">mcpServers</code> JSON
+            <label className="block text-body font-medium text-fg-secondary mb-1">
+              粘贴 <code className="text-meta bg-surface-raised px-1 py-0.5 rounded">mcpServers</code> JSON
             </label>
             <textarea
               value={jsonText}
               onChange={(e) => { setJsonText(e.target.value); setJsonError(null); }}
               rows={8}
               placeholder={'{\n  "mcpServers": {\n    "my-server": {\n      "url": "https://...",\n      "headers": { "Authorization": "Bearer xxx" }\n    }\n  }\n}'}
-              className="w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
             />
-            {jsonError && <p className="text-xs text-red-400 mt-1">{jsonError}</p>}
+            {jsonError && <p className="text-meta text-red-400 mt-1">{jsonError}</p>}
           </div>
           <div className="flex justify-between">
             <Button variant="ghost" onClick={() => setStep('choose')}>返回</Button>
@@ -190,30 +187,30 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
           <Input label="名称" value={name} onChange={(e) => setName(e.target.value)} placeholder="My MCP Server" />
           <Input label="URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mcp.api-inference.modelscope.net/xxx/mcp" />
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Headers</label>
+            <label className="block text-body font-medium text-fg-secondary mb-1">Headers</label>
             <textarea
               value={headersText}
               onChange={(e) => setHeadersText(e.target.value)}
               rows={4}
               placeholder="Authorization: Bearer xxx\nX-Custom: value"
-              className="w-full rounded-lg bg-zinc-900 border border-edge px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
             />
           </div>
-          <label className="flex items-center justify-between rounded-lg bg-zinc-900/60 border border-edge px-3 py-2">
+          <label className="flex items-center justify-between rounded-lg bg-surface/60 border border-edge px-3 py-2">
             <span>
-              <span className="block text-sm text-zinc-200">启用</span>
-              <span className="block text-xs text-zinc-500">启用后 Agent 会发现并注册该 MCP 的工具</span>
+              <span className="block text-body text-fg">启用</span>
+              <span className="block text-meta text-fg-tertiary">启用后 Agent 会发现并注册该 MCP 的工具</span>
             </span>
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           </label>
-          <label className="flex items-center justify-between rounded-lg bg-zinc-900/60 border border-edge px-3 py-2">
+          <label className="flex items-center justify-between rounded-lg bg-surface/60 border border-edge px-3 py-2">
             <span>
-              <span className="block text-sm text-zinc-200">信任此 MCP</span>
-              <span className="block text-xs text-zinc-500">信任后工具风险降低；默认不信任，需要审批</span>
+              <span className="block text-body text-fg">信任此 MCP</span>
+              <span className="block text-meta text-fg-tertiary">信任后工具风险降低；默认不信任，需要审批</span>
             </span>
             <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
           </label>
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-body text-red-400">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             {!server && <Button variant="ghost" onClick={() => setStep('choose')}>返回</Button>}
             {server && <Button variant="ghost" onClick={closeModal}>取消</Button>}

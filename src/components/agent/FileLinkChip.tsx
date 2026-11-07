@@ -52,7 +52,7 @@ export default function FileLinkChip({ file, label, className = '' }: FileLinkCh
         <button
           {...common}
           className={`inline max-w-full touch-manipulation break-all rounded-sm text-left align-baseline font-mono text-[0.9em] [-webkit-touch-callout:none] ${
-            disabled ? 'cursor-not-allowed text-zinc-500' : 'cursor-pointer text-sky-300 hover:underline active:opacity-70'
+            disabled ? 'cursor-not-allowed text-fg-tertiary' : 'cursor-pointer text-sky-300 hover:underline active:opacity-70'
           } ${className}`}
         >
           {label ?? file.path}
@@ -67,7 +67,7 @@ export default function FileLinkChip({ file, label, className = '' }: FileLinkCh
         {...common}
         className={`inline-flex max-w-full min-w-0 touch-manipulation select-none items-center gap-1 rounded-md bg-state-soft px-1.5 py-px align-baseline font-mono text-[0.9em] [-webkit-touch-callout:none] transition-colors ${
           disabled
-            ? 'cursor-not-allowed text-zinc-500'
+            ? 'cursor-not-allowed text-fg-tertiary'
             : 'cursor-pointer text-sky-300 hover:bg-state-mid active:bg-state-strong'
         } ${className}`}
       >

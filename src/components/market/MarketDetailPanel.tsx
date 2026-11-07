@@ -87,7 +87,7 @@ function DetailIcon({ plugin }: { plugin: MarketPlugin }) {
 
   if (fallback || !plugin.icon) {
     return (
-      <span className="w-20 h-20 rounded-2xl bg-zinc-800/80 flex items-center justify-center text-zinc-500 flex-shrink-0 border border-edge/50">
+      <span className="w-20 h-20 rounded-2xl bg-surface-raised/80 flex items-center justify-center text-fg-tertiary flex-shrink-0 border border-edge/50">
         <Shield className="w-9 h-9" />
       </span>
     );
@@ -97,13 +97,13 @@ function DetailIcon({ plugin }: { plugin: MarketPlugin }) {
       <img
         src={plugin.icon.value}
         alt=""
-        className="w-20 h-20 rounded-2xl object-cover flex-shrink-0 bg-zinc-800 border border-edge/50"
+        className="w-20 h-20 rounded-2xl object-cover flex-shrink-0 bg-surface-raised border border-edge/50"
         onError={() => setFallback(true)}
       />
     );
   }
   return (
-    <span className="w-20 h-20 rounded-2xl bg-zinc-800/80 flex items-center justify-center flex-shrink-0 border border-edge/50 text-4xl">
+    <span className="w-20 h-20 rounded-2xl bg-surface-raised/80 flex items-center justify-center flex-shrink-0 border border-edge/50 text-4xl">
       {plugin.icon.value}
     </span>
   );
@@ -115,19 +115,19 @@ function ManifestSummary({ manifest }: { manifest: PluginManifest }) {
   const toolCount = manifest.agentTools?.length ?? 0;
   const injectionCount = manifest.injections?.length ?? 0;
   return (
-    <div className="flex items-center gap-4 text-xs text-zinc-500">
+    <div className="flex items-center gap-4 text-meta text-fg-tertiary">
       {viewCount > 0 && (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-2">
           <Eye className="w-3.5 h-3.5" /> {viewCount} 视图
         </span>
       )}
       {toolCount > 0 && (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-2">
           <Wrench className="w-3.5 h-3.5" /> {toolCount} 工具
         </span>
       )}
       {injectionCount > 0 && (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-2">
           <Syringe className="w-3.5 h-3.5" /> {injectionCount} 注入
         </span>
       )}
@@ -142,11 +142,11 @@ function CapabilityChip({ cap }: { cap: string }) {
     risk === 'high'
       ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
       : risk === 'medium'
-        ? 'text-zinc-300 bg-zinc-800 border-edge'
-        : 'text-zinc-500 bg-zinc-800/50 border-edge-subtle';
+        ? 'text-fg-secondary bg-surface-raised border-edge'
+        : 'text-fg-tertiary bg-surface-raised/50 border-edge-subtle';
   return (
     <span
-      className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${tone}`}
+      className={`inline-flex items-center gap-1 text-caption px-2 py-0.5 rounded-full border ${tone}`}
       title={risk === 'high' ? '高风险权限' : risk === 'medium' ? '中风险' : '低风险'}
     >
       {capabilityLabel(cap)}
@@ -332,7 +332,7 @@ export function MarketDetailPanel({
     <div className="flex flex-col h-full min-h-0">
       {/* ─── Header（吸顶，半透明材质，含返回按钮） ─── */}
       <div
-        className="flex-shrink-0 border-b border-edge-subtle bg-zinc-900/80 backdrop-blur-xl py-3"
+        className="flex-shrink-0 border-b border-edge-subtle bg-surface/80 backdrop-blur-xl py-3"
         style={{ paddingLeft: padX, paddingRight: padX }}
       >
         {/* 返回按钮行 */}
@@ -340,7 +340,7 @@ export function MarketDetailPanel({
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1 text-sm text-zinc-400 hover:text-zinc-200 transition-colors px-2 py-1 -ml-2 rounded-lg hover:bg-state-soft/60"
+            className="inline-flex items-center gap-1 text-body text-fg-secondary hover:text-fg transition-colors px-2 py-1 -ml-2 rounded-lg hover:bg-state-soft/60"
           >
             <ChevronLeft className="w-4 h-4" />
             返回插件市场
@@ -352,27 +352,27 @@ export function MarketDetailPanel({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1
-                className="text-lg font-semibold text-zinc-100"
+                className="text-title text-fg"
                 style={{ letterSpacing: '-0.01em' }}
               >
                 {plugin.name}
               </h1>
-              <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded font-mono tracking-wide">
+              <span className="text-caption text-fg-tertiary bg-surface-raised px-2 py-0.5 rounded font-mono tracking-wide">
                 v{plugin.version}
               </span>
               {uiInstalled && (
-                <span className="inline-flex items-center gap-0.5 text-[11px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                <span className="inline-flex items-center gap-1 text-caption text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
                   <Check className="w-3 h-3" />
                   已安装
                 </span>
               )}
               {incompatible && minRequired && (
-                <span className="text-[11px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                <span className="text-caption text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
                   需要应用 v{minRequired}
                 </span>
               )}
             </div>
-            <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2 flex-wrap">
+            <div className="text-meta text-fg-tertiary mt-1 flex items-center gap-2 flex-wrap">
               {plugin.publisher && <span>{plugin.publisher}</span>}
               {plugin.category && (
                 <>
@@ -383,7 +383,7 @@ export function MarketDetailPanel({
               {minRequired && !incompatible && (
                 <>
                   <span className="text-zinc-700">·</span>
-                  <span className="text-zinc-600">最低兼容 v{minRequired}</span>
+                  <span className="text-fg-disabled">最低兼容 v{minRequired}</span>
                 </>
               )}
             </div>
@@ -441,7 +441,7 @@ export function MarketDetailPanel({
         {/* 不兼容说明条 */}
         {incompatible && minRequired && (
           <div className="mt-3 rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2">
-            <p className="text-xs text-amber-400 leading-relaxed">
+            <p className="text-meta text-amber-400 leading-relaxed">
               此插件需要应用 v{minRequired} 及以上版本。升级应用后刷新插件市场将自动恢复可用。
             </p>
           </div>
@@ -453,7 +453,7 @@ export function MarketDetailPanel({
         <div className="py-5 space-y-5" style={{ paddingLeft: padX, paddingRight: padX }}>
           {/* 描述 */}
           {plugin.description && (
-            <p className="text-sm text-zinc-400 leading-relaxed">{plugin.description}</p>
+            <p className="text-body text-fg-secondary leading-relaxed">{plugin.description}</p>
           )}
 
           {/* 已安装提示 */}
@@ -461,8 +461,8 @@ export function MarketDetailPanel({
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
               <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <div className="flex-1">
-                <p className="text-sm text-emerald-300">此插件已安装</p>
-                <p className="text-xs text-emerald-400/70 mt-0.5">
+                <p className="text-body text-emerald-300">此插件已安装</p>
+                <p className="text-meta text-emerald-400/70 mt-1">
                   在插件设置中管理权限、配置和启用状态
                 </p>
               </div>
@@ -475,29 +475,29 @@ export function MarketDetailPanel({
 
           {/* 权限声明：全部默认收起，summary 显示高风险数提示 */}
           {plugin.capabilities.length > 0 && (
-            <details className="group rounded-lg border border-edge-subtle bg-zinc-900/40 overflow-hidden">
+            <details className="group rounded-lg border border-edge-subtle bg-surface/40 overflow-hidden">
               <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer list-none select-none hover:bg-state-soft/40 transition-colors">
-                <Shield className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-                <span className="text-sm font-medium text-zinc-300 flex-1">
+                <Shield className="w-3.5 h-3.5 text-fg-secondary flex-shrink-0" />
+                <span className="text-body font-medium text-fg-secondary flex-1">
                   权限声明
                 </span>
                 <span
-                  className={`text-xs ${
+                  className={`text-meta ${
                     high.length > 0
                       ? 'text-amber-400'
-                      : 'text-zinc-600'
+                      : 'text-fg-disabled'
                   }`}
                 >
                   {plugin.capabilities.length} 项
                   {high.length > 0 && ` · ${high.length} 高风险`}
                 </span>
-                <ChevronRight className="w-3.5 h-3.5 text-zinc-500 transition-transform group-open:rotate-90" />
+                <ChevronRight className="w-3.5 h-3.5 text-fg-tertiary transition-transform group-open:rotate-90" />
               </summary>
               <div className="px-3 py-2 space-y-2 border-t border-edge-subtle">
                 {high.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] text-amber-400/80 font-medium">高风险</p>
-                    <div className="flex flex-wrap gap-1.5">
+                  <div className="space-y-2">
+                    <p className="text-caption text-amber-400/80 font-medium">高风险</p>
+                    <div className="flex flex-wrap gap-2">
                       {high.map((cap) => (
                         <CapabilityChip key={cap} cap={cap} />
                       ))}
@@ -505,9 +505,9 @@ export function MarketDetailPanel({
                   </div>
                 )}
                 {medium.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] text-zinc-500 font-medium">中风险</p>
-                    <div className="flex flex-wrap gap-1.5">
+                  <div className="space-y-2">
+                    <p className="text-caption text-fg-tertiary font-medium">中风险</p>
+                    <div className="flex flex-wrap gap-2">
                       {medium.map((cap) => (
                         <CapabilityChip key={cap} cap={cap} />
                       ))}
@@ -515,16 +515,16 @@ export function MarketDetailPanel({
                   </div>
                 )}
                 {low.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] text-zinc-600 font-medium">低风险</p>
-                    <div className="flex flex-wrap gap-1.5">
+                  <div className="space-y-2">
+                    <p className="text-caption text-fg-disabled font-medium">低风险</p>
+                    <div className="flex flex-wrap gap-2">
                       {low.map((cap) => (
                         <CapabilityChip key={cap} cap={cap} />
                       ))}
                     </div>
                   </div>
                 )}
-                <p className="text-[11px] text-zinc-600 leading-relaxed pt-1">
+                <p className="text-caption text-fg-disabled leading-relaxed pt-1">
                   安装前请审查插件源代码，上架不代表官方背书。
                 </p>
               </div>
@@ -535,19 +535,19 @@ export function MarketDetailPanel({
           <div>
             {loading ? (
               <div className="space-y-3">
-                <div className="h-4 bg-zinc-800 rounded animate-pulse w-1/3" />
-                <div className="h-3 bg-zinc-800/70 rounded animate-pulse w-full" />
-                <div className="h-3 bg-zinc-800/70 rounded animate-pulse w-5/6" />
-                <div className="h-3 bg-zinc-800/70 rounded animate-pulse w-4/6" />
-                <div className="h-4 bg-zinc-800 rounded animate-pulse w-1/4 mt-4" />
-                <div className="h-3 bg-zinc-800/70 rounded animate-pulse w-full" />
-                <div className="h-3 bg-zinc-800/70 rounded animate-pulse w-3/4" />
+                <div className="h-4 bg-surface-raised rounded animate-pulse w-1/3" />
+                <div className="h-3 bg-surface-raised/70 rounded animate-pulse w-full" />
+                <div className="h-3 bg-surface-raised/70 rounded animate-pulse w-5/6" />
+                <div className="h-3 bg-surface-raised/70 rounded animate-pulse w-4/6" />
+                <div className="h-4 bg-surface-raised rounded animate-pulse w-1/4 mt-4" />
+                <div className="h-3 bg-surface-raised/70 rounded animate-pulse w-full" />
+                <div className="h-3 bg-surface-raised/70 rounded animate-pulse w-3/4" />
               </div>
             ) : error ? (
-              <div className="rounded-xl border border-edge-subtle bg-zinc-900/40 py-8 text-center">
-                <AlertTriangle className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
-                <p className="text-sm text-zinc-500 mb-1">详情加载失败</p>
-                <p className="text-xs text-zinc-600 mb-3 px-6">{error}</p>
+              <div className="rounded-xl border border-edge-subtle bg-surface/40 py-8 text-center">
+                <AlertTriangle className="w-6 h-6 text-fg-disabled mx-auto mb-2" />
+                <p className="text-body text-fg-tertiary mb-1">详情加载失败</p>
+                <p className="text-meta text-fg-disabled mb-3 px-6">{error}</p>
                 <div className="flex items-center justify-center gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setRetryKey((k) => k + 1)}>
                     <RotateCw className="w-3.5 h-3.5" />
@@ -564,7 +564,7 @@ export function MarketDetailPanel({
                 </div>
               </div>
             ) : detail.readme ? (
-              <div className="text-sm leading-relaxed text-zinc-100 break-words prose marcel-prose prose-sm max-w-none prose-p:my-2 prose-code:text-[var(--marcel-md-code-text)] prose-code:bg-zinc-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-edge prose-a:text-indigo-400 prose-headings:my-3 prose-headings:text-zinc-100 prose-headings:font-semibold prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-blockquote:border-l-edge-strong prose-blockquote:text-zinc-400 prose-blockquote:italic prose-img:rounded-lg prose-img:max-h-80 prose-img:object-contain prose-table:text-xs prose-th:border prose-th:border-edge prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-edge-subtle prose-td:px-2 prose-td:py-1">
+              <div className="text-read leading-relaxed text-fg break-words prose marcel-prose prose-sm max-w-none prose-p:my-2 prose-code:text-[var(--marcel-md-code-text)] prose-code:bg-surface-raised prose-code:px-2 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-pre:bg-surface-sunken prose-pre:border prose-pre:border-edge prose-a:text-indigo-400 prose-headings:my-3 prose-headings:text-fg prose-headings:font-semibold prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-edge-strong prose-blockquote:text-fg-secondary prose-blockquote:italic prose-img:rounded-lg prose-img:max-h-80 prose-img:object-contain prose-table:text-meta prose-th:border prose-th:border-edge prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-edge-subtle prose-td:px-2 prose-td:py-1">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkRepairCjkAutolinks]}
                   urlTransform={urlTransform}
@@ -606,8 +606,8 @@ export function MarketDetailPanel({
                 </ReactMarkdown>
               </div>
             ) : (
-              <div className="rounded-xl border border-edge-subtle bg-zinc-900/40 py-8 text-center">
-                <p className="text-sm text-zinc-500">此仓库没有 README</p>
+              <div className="rounded-xl border border-edge-subtle bg-surface/40 py-8 text-center">
+                <p className="text-body text-fg-tertiary">此仓库没有 README</p>
                 <Button
                   variant="secondary"
                   size="sm"
@@ -630,7 +630,7 @@ export function MarketDetailPanel({
         title="卸载插件"
         size="sm"
       >
-        <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+        <div className="px-4 py-3 text-body text-fg-secondary leading-relaxed">
           <p>
             确定卸载「{plugin.name}」？将删除插件目录及其全部数据
             （如记忆文件），重启应用后完全移除。

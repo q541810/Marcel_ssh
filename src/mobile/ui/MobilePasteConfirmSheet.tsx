@@ -34,14 +34,14 @@ export default function MobilePasteConfirmSheet({
             onClick={() => {
               if (text != null) onConfirm(text);
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="rounded-xl bg-indigo-600 px-4 py-3 text-body font-medium text-white active:bg-indigo-500"
           >
             确认粘贴
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-state-soft"
+            className="rounded-xl px-4 py-3 text-body text-fg-secondary active:bg-state-soft"
           >
             取消
           </button>
@@ -49,10 +49,10 @@ export default function MobilePasteConfirmSheet({
       }
     >
       <div className="flex flex-col gap-2 px-4 pb-3">
-        <p className="text-sm font-medium text-zinc-200">
+        <p className="text-body font-medium text-fg">
           您粘贴的内容中含有回车，可能会意外执行某些命令。
         </p>
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-surface-sunken p-3 text-meta text-fg-secondary">
           {text}
         </pre>
       </div>

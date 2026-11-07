@@ -29,11 +29,11 @@ import YegouApiBanner from '@/components/settings/YegouApiBanner';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 候选的选型提示是中文散文，不用渠道/模型字段那套等宽字体。 */
 const descriptionInputClass =
-  'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 空注册表兜底（settings 尚未初始化时）：用 lib/llmRegistry 的共享版。 */
 
@@ -73,10 +73,10 @@ export function MobileModelPickerSheet({
               onChange('');
               onClose();
             }}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm active:bg-state-soft"
+            className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-body active:bg-state-soft"
           >
-            <span className="text-zinc-200">{emptyLabel}</span>
-            {!value && <span className="text-xs text-indigo-400">当前</span>}
+            <span className="text-fg">{emptyLabel}</span>
+            {!value && <span className="text-meta text-indigo-400">当前</span>}
           </button>
         )}
         {/* 按提供商（渠道）分组 */}
@@ -87,11 +87,11 @@ export function MobileModelPickerSheet({
           return (
             <div key={ch.id} className="mt-1">
               <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                <span className="truncate text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <span className="truncate text-caption font-medium uppercase tracking-wide text-fg-tertiary">
                   {ch.name}
                 </span>
                 {channelDisabled && (
-                  <span className="flex-shrink-0 rounded bg-zinc-700 px-1 py-0.5 text-[10px] text-zinc-400">
+                  <span className="flex-shrink-0 rounded bg-zinc-700 px-1 py-0.5 text-caption text-fg-secondary">
                     已禁用
                   </span>
                 )}
@@ -113,14 +113,14 @@ export function MobileModelPickerSheet({
                         channelDisabled || occupiedHere ? "opacity-40" : ""
                       }`}
                     >
-                      <span className="min-w-0 truncate text-sm text-zinc-200">
+                      <span className="min-w-0 truncate text-body text-fg">
                         {modelLabel(m)}
                       </span>
                       {selected && (
-                        <span className="flex-shrink-0 text-xs text-indigo-400">当前</span>
+                        <span className="flex-shrink-0 text-meta text-indigo-400">当前</span>
                       )}
                       {occupiedHere && (
-                        <span className="flex-shrink-0 text-xs text-zinc-500">
+                        <span className="flex-shrink-0 text-meta text-fg-tertiary">
                           已用于其他候选
                         </span>
                       )}
@@ -132,7 +132,7 @@ export function MobileModelPickerSheet({
           );
         })}
         {models.length === 0 && (
-          <p className="py-6 text-center text-sm text-zinc-500">
+          <p className="py-6 text-center text-body text-fg-tertiary">
             还没有模型，请先在「渠道」中添加
           </p>
         )}
@@ -226,7 +226,7 @@ function MobileModelEditorSheet({
     <MobileSheet open={open} onClose={onClose} title={title}>
       <div className="space-y-3 px-4 pb-4">
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">API 模型名 *</label>
+          <label className="mb-1 block text-meta text-fg-secondary">API 模型名 *</label>
           <input
             type="text"
             value={modelName}
@@ -242,7 +242,7 @@ function MobileModelEditorSheet({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">展示名（可选）</label>
+          <label className="mb-1 block text-meta text-fg-secondary">展示名（可选）</label>
           <input
             type="text"
             value={displayName}
@@ -253,14 +253,14 @@ function MobileModelEditorSheet({
         </div>
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm text-zinc-200">视觉 / 支持图片</div>
-            <div className="text-[11px] text-zinc-500">模型支持多模态时开启</div>
+            <div className="text-body text-fg">视觉 / 支持图片</div>
+            <div className="text-caption text-fg-tertiary">模型支持多模态时开启</div>
           </div>
           <Toggle checked={vision} onChange={setVision} />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">
-            模型上下文窗口 (tokens) <span className="text-zinc-600">（0 = 跟随全局）</span>
+          <label className="mb-1 block text-meta text-fg-secondary">
+            模型上下文窗口 (tokens) <span className="text-fg-disabled">（0 = 跟随全局）</span>
           </label>
           <input
             type="number"
@@ -281,7 +281,7 @@ function MobileModelEditorSheet({
             type="button"
             onClick={() => setMoreOpen((o) => !o)}
             aria-expanded={moreOpen}
-            className="flex w-full items-center gap-2 py-1 text-sm font-medium text-zinc-200 active:text-zinc-100"
+            className="flex w-full items-center gap-2 py-1 text-body font-medium text-fg active:text-fg"
           >
             <svg
               className={`h-3.5 w-3.5 flex-shrink-0 transition-transform ${moreOpen ? 'rotate-90' : ''}`}
@@ -298,7 +298,7 @@ function MobileModelEditorSheet({
             {(extraBodyText.trim() !== '' ||
               effortsText.trim() !== '' ||
               demoteNonLeadingSystem) && (
-              <span className="text-[11px] font-normal text-zinc-500">
+              <span className="text-caption font-normal text-fg-tertiary">
                 已设置高级参数
               </span>
             )}
@@ -306,8 +306,8 @@ function MobileModelEditorSheet({
           {moreOpen && (
             <div className="mt-1 space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">
-                  思考强度档位 <span className="text-zinc-600">（从低到高，每行一个；留空不启用）</span>
+                <label className="mb-1 block text-meta text-fg-secondary">
+                  思考强度档位 <span className="text-fg-disabled">（从低到高，每行一个；留空不启用）</span>
                 </label>
                 <textarea
                   value={effortsText}
@@ -315,16 +315,16 @@ function MobileModelEditorSheet({
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
-                  className="w-full resize-y rounded-lg border border-edge bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+                  className="w-full resize-y rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
                 />
-                <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                <p className="mt-1 text-caption leading-relaxed text-fg-tertiary">
                   填写该模型支持的推理档位（如 low/medium/high、max）。填了之后，会话输入条模型名旁会出现
                   强度选择器，所选档位作为请求体顶层 reasoning_effort 透传。留空则该模型不参与强度选择。
                 </p>
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">
+                <label className="mb-1 block text-meta text-fg-secondary">
                   高级：自定义请求参数（可选）
                 </label>
                 <textarea
@@ -333,17 +333,17 @@ function MobileModelEditorSheet({
                   placeholder={`{\n  "thinking": { "type": "enabled" },\n  "top_p": 0.9\n}`}
                   spellCheck={false}
                   rows={4}
-                  className="w-full resize-y rounded-lg border border-edge bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+                  className="w-full resize-y rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
                 />
-                <p className="text-[11px] text-zinc-500">
+                <p className="text-caption text-fg-tertiary">
                   以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
                 </p>
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm text-zinc-200">非首位系统消息转为普通消息</div>
-                  <div className="text-[11px] leading-relaxed text-zinc-500">
+                  <div className="text-body text-fg">非首位系统消息转为普通消息</div>
+                  <div className="text-caption leading-relaxed text-fg-tertiary">
                     严格模板后端兼容：对话中后段的系统消息（如当前计划状态）会以普通消息身份发送，
                     并在开头注明「系统消息，非用户发言」；开启后每条多一行声明的开销
                   </div>
@@ -356,7 +356,7 @@ function MobileModelEditorSheet({
             </div>
           )}
         </div>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-body text-red-400">{error}</p>}
         <div className="flex gap-2 pt-1">
           {initial && (
             <button
@@ -365,7 +365,7 @@ function MobileModelEditorSheet({
                 onDeleted(initial.id);
                 onClose();
               }}
-              className="flex-shrink-0 rounded-lg bg-red-900/40 px-4 py-2.5 text-sm text-red-300 active:bg-red-900/60"
+              className="flex-shrink-0 rounded-lg bg-red-900/40 px-4 py-2.5 text-body text-red-300 active:bg-red-900/60"
             >
               删除
             </button>
@@ -373,7 +373,7 @@ function MobileModelEditorSheet({
           <button
             type="button"
             onClick={handleSave}
-            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-body font-medium text-white active:bg-indigo-500"
           >
             保存
           </button>
@@ -514,7 +514,7 @@ function MobileChannelEditorSheet({
     <MobileSheet open={open} onClose={onClose} title={isNew ? '添加渠道' : `编辑渠道`}>
       <div className="space-y-3 px-4 pb-4">
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">渠道名称 *</label>
+          <label className="mb-1 block text-meta text-fg-secondary">渠道名称 *</label>
           <input
             type="text"
             value={name}
@@ -527,7 +527,7 @@ function MobileChannelEditorSheet({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">Base URL</label>
+          <label className="mb-1 block text-meta text-fg-secondary">Base URL</label>
           <input
             type="text"
             value={baseUrl}
@@ -540,7 +540,7 @@ function MobileChannelEditorSheet({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-400">API Key</label>
+          <label className="mb-1 block text-meta text-fg-secondary">API Key</label>
           <input
             type="password"
             value={apiKeyInput || (hasKey && !apiKeyInput ? 'sk-******' : '')}
@@ -552,14 +552,14 @@ function MobileChannelEditorSheet({
             className={inputClass}
           />
           {hasKey && !apiKeyInput && (
-            <p className="mt-1 text-[11px] text-zinc-500">已保存密钥（掩码显示），留空不修改</p>
+            <p className="mt-1 text-caption text-fg-tertiary">已保存密钥（掩码显示），留空不修改</p>
           )}
         </div>
 
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm text-zinc-200">启用渠道</div>
-            <div className="text-[11px] text-zinc-500">禁用后该渠道所有模型不可用</div>
+            <div className="text-body text-fg">启用渠道</div>
+            <div className="text-caption text-fg-tertiary">禁用后该渠道所有模型不可用</div>
           </div>
           <Toggle checked={enabled} onChange={setEnabled} />
         </div>
@@ -567,10 +567,10 @@ function MobileChannelEditorSheet({
         <HeaderPairEditor pairs={headerPairs} onChange={setHeaderPairs} />
 
         {/* 模型列表 */}
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/40 px-3 py-3">
+        <div className="rounded-xl border border-edge-subtle bg-surface/40 px-3 py-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm font-medium text-zinc-200">
-              模型 <span className="text-zinc-500">（{models.length}）</span>
+            <span className="text-body font-medium text-fg">
+              模型 <span className="text-fg-tertiary">（{models.length}）</span>
             </span>
             <div className="flex gap-2">
               <button
@@ -580,21 +580,21 @@ function MobileChannelEditorSheet({
                   setFetchFilter('');
                   void fetchModels();
                 }}
-                className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-200 active:bg-state-mid"
+                className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
               >
                 获取列表
               </button>
               <button
                 type="button"
                 onClick={() => setModelEditor({ open: true })}
-                className="rounded-lg bg-indigo-600 px-3 py-2 text-xs text-white active:bg-indigo-500"
+                className="rounded-lg min-h-11 bg-indigo-600 px-3 py-2 text-body text-white active:bg-indigo-500"
               >
                 + 添加
               </button>
             </div>
           </div>
           {models.length === 0 ? (
-            <p className="py-3 text-center text-xs text-zinc-500">
+            <p className="py-3 text-center text-meta text-fg-tertiary">
               还没有模型。可「获取列表」从供应商拉取，或手动添加。
             </p>
           ) : (
@@ -602,22 +602,22 @@ function MobileChannelEditorSheet({
               {models.map((m) => (
                 <div key={m.id} className="flex items-center gap-2 py-2">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-zinc-200">
+                    <div className="truncate text-body text-fg">
                       {modelLabel(m)}
                       {m.vision && (
-                        <span className="ml-2 rounded bg-indigo-600/20 px-1.5 py-0.5 text-[10px] text-indigo-300">
+                        <span className="ml-2 rounded bg-indigo-600/20 px-1.5 py-0.5 text-caption text-indigo-300">
                           视觉
                         </span>
                       )}
                     </div>
                     {m.displayName && m.displayName !== m.modelName && (
-                      <div className="truncate font-mono text-[11px] text-zinc-500">{m.modelName}</div>
+                      <div className="truncate font-mono text-caption text-fg-tertiary">{m.modelName}</div>
                     )}
                   </div>
                   <button
                     type="button"
                     onClick={() => setModelEditor({ open: true, initial: m })}
-                    className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 active:bg-state-mid"
+                    className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg-secondary active:bg-state-mid"
                   >
                     编辑
                   </button>
@@ -627,7 +627,7 @@ function MobileChannelEditorSheet({
           )}
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-body text-red-400">{error}</p>}
 
         <div className="flex gap-2 pt-1">
           {!isNew && (
@@ -641,7 +641,7 @@ function MobileChannelEditorSheet({
                 if (channel) onDeleteChannel(channel);
                 onClose();
               }}
-              className="flex-shrink-0 rounded-lg bg-red-900/40 px-4 py-2.5 text-sm text-red-300 active:bg-red-900/60"
+              className="flex-shrink-0 rounded-lg bg-red-900/40 px-4 py-2.5 text-body text-red-300 active:bg-red-900/60"
             >
               {confirmDelete ? '确认删除渠道？' : '删除渠道'}
             </button>
@@ -649,7 +649,7 @@ function MobileChannelEditorSheet({
           <button
             type="button"
             onClick={handleSave}
-            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+            className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-body font-medium text-white active:bg-indigo-500"
           >
             保存渠道
           </button>
@@ -686,25 +686,25 @@ function MobileChannelEditorSheet({
             className={inputClass}
           />
           {fetchLoading && (
-            <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">
+            <div className="flex items-center justify-center gap-2 py-8 text-body text-fg-tertiary">
               <Loader2 className="h-4 w-4 animate-spin" />
               正在从供应商获取…
             </div>
           )}
           {!fetchLoading && fetchError && (
             <div className="space-y-3 py-4">
-              <p className="break-words text-sm text-red-400">{fetchError}</p>
+              <p className="break-words text-body text-red-400">{fetchError}</p>
               <button
                 type="button"
                 onClick={() => void fetchModels()}
-                className="w-full rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-state-mid"
+                className="w-full rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
               >
                 重试
               </button>
             </div>
           )}
           {!fetchLoading && !fetchError && filtered.length === 0 && (
-            <p className="py-8 text-center text-sm text-zinc-500">
+            <p className="py-8 text-center text-body text-fg-tertiary">
               {fetchedModels.length === 0 ? '供应商未返回任何模型' : '无匹配模型'}
             </p>
           )}
@@ -719,7 +719,7 @@ function MobileChannelEditorSheet({
                     // 预填模型名进入新建模型表单
                     setModelEditor({ open: true, initial: undefined, preset: m.id });
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-3 text-left font-mono text-sm text-zinc-200 active:bg-state-soft"
+                  className="flex w-full items-center gap-2 px-3 py-3 text-left font-mono text-body text-fg active:bg-state-soft"
                 >
                   <span className="min-w-0 flex-1 truncate">{m.id}</span>
                 </button>
@@ -815,14 +815,14 @@ export function MobileModelSection() {
         <button
           type="button"
           onClick={() => setSummarizerPicker(true)}
-          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <span className="truncate">
             {slots.summarizerModelId
               ? modelFullLabel(registry, slots.summarizerModelId)
               : '跟随会话模型'}
           </span>
-          <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+          <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
         </button>
       </MobileSettingRow>
 
@@ -832,7 +832,7 @@ export function MobileModelSection() {
       >
         <div className="mt-2 w-full space-y-2">
           {subagentChoices.length === 0 ? (
-            <p className="text-xs leading-relaxed text-zinc-500">
+            <p className="text-meta leading-relaxed text-fg-tertiary">
               清单为空：子agent 跟随当前会话的模型。添加候选后，主 agent 会按描述自行选型。
             </p>
           ) : (
@@ -849,21 +849,21 @@ export function MobileModelSection() {
               return (
               <div
                 key={i}
-                className="space-y-2 rounded-lg border border-edge-subtle bg-zinc-900/40 p-2"
+                className="space-y-2 rounded-lg border border-edge-subtle bg-surface/40 p-2"
               >
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setChoicePicker(i)}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2 text-sm text-zinc-100 active:bg-state-mid"
+                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
                   >
                     <span className="truncate">{triggerLabel}</span>
-                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
                   </button>
                   <button
                     type="button"
                     onClick={() => removeSubagentChoice(i)}
-                    className="flex-shrink-0 rounded-lg bg-zinc-800 px-2.5 py-2 text-xs text-zinc-300 active:bg-state-mid"
+                    className="flex-shrink-0 rounded-lg min-h-11 bg-surface-raised px-2.5 py-2 text-body text-fg-secondary active:bg-state-mid"
                   >
                     移除
                   </button>
@@ -884,17 +884,17 @@ export function MobileModelSection() {
               <button
                 type="button"
                 onClick={addSubagentChoice}
-                className="w-full rounded-lg border border-dashed border-edge px-3 py-2 text-sm text-zinc-400 active:bg-state-soft"
+                className="w-full rounded-lg border border-dashed border-edge px-3 py-2 text-body text-fg-secondary active:bg-state-soft"
               >
                 + 添加候选
               </button>
             ) : (
-              <p className="text-xs text-zinc-600">全部可用模型都已在清单里。</p>
+              <p className="text-meta text-fg-disabled">全部可用模型都已在清单里。</p>
             )
           ) : registry.models.length > 0 ? (
-            <p className="text-xs text-zinc-600">所有渠道均已禁用，启用后才能配置候选。</p>
+            <p className="text-meta text-fg-disabled">所有渠道均已禁用，启用后才能配置候选。</p>
           ) : (
-            <p className="text-xs text-zinc-600">先在下方添加渠道与模型，才能配置候选。</p>
+            <p className="text-meta text-fg-disabled">先在下方添加渠道与模型，才能配置候选。</p>
           )}
         </div>
       </MobileSettingRow>
@@ -924,7 +924,7 @@ export function MobileModelSection() {
           />
           {(() => {
             const hint = contextWindowHint(settings.agentModeSettings?.contextWindow);
-            return hint ? <p className="text-xs leading-relaxed text-zinc-500">{hint}</p> : null;
+            return hint ? <p className="text-meta leading-relaxed text-fg-tertiary">{hint}</p> : null;
           })()}
         </div>
       </MobileSettingRow>
@@ -936,7 +936,7 @@ export function MobileModelSection() {
       >
         <div className="mt-2 w-full space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-400">最大重试次数</span>
+            <span className="text-meta text-fg-secondary">最大重试次数</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -947,13 +947,13 @@ export function MobileModelSection() {
                 onChange={(e) => updateNetPolicy({ maxRetries: Number(e.target.value) })}
                 className="h-2 w-28 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.maxRetries} 次
               </span>
             </div>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-400">重试间隔</span>
+            <span className="text-meta text-fg-secondary">重试间隔</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -964,13 +964,13 @@ export function MobileModelSection() {
                 onChange={(e) => updateNetPolicy({ retryDelaySecs: Number(e.target.value) })}
                 className="h-2 w-28 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.retryDelaySecs}s
               </span>
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-zinc-400">重试条件（状态码/范围）</label>
+            <label className="mb-1 block text-meta text-fg-secondary">重试条件（状态码/范围）</label>
             <input
               type="text"
               value={netPolicy.retryHttpStatuses}
@@ -987,13 +987,13 @@ export function MobileModelSection() {
               className={inputClass}
             />
             {validateRetryHttpStatuses(netPolicy.retryHttpStatuses) && (
-              <p className="mt-1 text-xs text-red-400">
+              <p className="mt-1 text-meta text-red-400">
                 {validateRetryHttpStatuses(netPolicy.retryHttpStatuses)}
               </p>
             )}
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-400">首字超时（秒）</span>
+            <span className="text-meta text-fg-secondary">首字超时（秒）</span>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -1004,13 +1004,13 @@ export function MobileModelSection() {
                 onChange={(e) => updateNetPolicy({ firstByteTimeoutSecs: Number(e.target.value) })}
                 className="h-2 w-28 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
               />
-              <span className="w-12 text-right font-mono text-sm text-indigo-300">
+              <span className="w-12 text-right font-mono text-body text-indigo-300">
                 {netPolicy.firstByteTimeoutSecs}s
               </span>
             </div>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-400">超时自动重试</span>
+            <span className="text-meta text-fg-secondary">超时自动重试</span>
             <Toggle
               checked={netPolicy.retryOnTimeout}
               onChange={(v) => updateNetPolicy({ retryOnTimeout: v })}
@@ -1020,25 +1020,25 @@ export function MobileModelSection() {
       </MobileSettingRow>
 
       {/* ── 渠道列表 ── */}
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3">
+      <div className="rounded-xl border border-edge-subtle bg-surface px-3 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium text-zinc-100">渠道</div>
-            <div className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+            <div className="text-body font-medium text-fg">渠道</div>
+            <div className="mt-0.5 text-meta leading-relaxed text-fg-tertiary">
               OpenAI 兼容接入点（DeepSeek / 硅基流动 / Ollama / OpenRouter 等）
             </div>
           </div>
           <button
             type="button"
             onClick={() => setChannelEditor({ open: true })}
-            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white active:bg-indigo-500"
+            className="rounded-lg bg-indigo-600 px-3 py-2 text-body font-medium text-white active:bg-indigo-500"
           >
             + 添加
           </button>
         </div>
 
         {registry.channels.length === 0 ? (
-          <p className="py-4 text-center text-sm text-zinc-500">
+          <p className="py-4 text-center text-body text-fg-tertiary">
             还没有渠道，点击「添加」接入第一个模型服务
           </p>
         ) : (
@@ -1058,21 +1058,21 @@ export function MobileModelSection() {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm text-zinc-200">{ch.name}</span>
+                        <span className="truncate text-body text-fg">{ch.name}</span>
                         {!ch.enabled && (
-                          <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                          <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-caption text-fg-secondary">
                             已禁用
                           </span>
                         )}
                       </div>
-                      <div className="mt-0.5 truncate font-mono text-xs text-zinc-500">
+                      <div className="mt-0.5 truncate font-mono text-meta text-fg-tertiary">
                         {ch.baseUrl || <span className="text-amber-500/80">未填写 Base URL</span>}
                       </div>
-                      <div className="mt-0.5 text-[11px] text-zinc-600">
+                      <div className="mt-0.5 text-caption text-fg-disabled">
                         {models.length} 个模型 · {hasKey ? '已配置密钥' : '未配置密钥'}
                       </div>
                     </div>
-                    <ChevronDown className="h-4 w-4 flex-shrink-0 rotate-[-90deg] text-zinc-600" />
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 rotate-[-90deg] text-fg-disabled" />
                   </button>
                   {/* 手动排序（与桌面同语义：数组顺序 = 展示顺序） */}
                   {/* 每个按钮触控区 38×38，比图标本身大，便于手指点中 */}
@@ -1082,7 +1082,7 @@ export function MobileModelSection() {
                       onClick={() => updateRegistry(shiftChannel(registry, ch.id, -1))}
                       disabled={isFirst}
                       aria-label={`上移 ${ch.name}`}
-                      className="flex h-[38px] w-[38px] items-center justify-center rounded text-zinc-400 active:bg-state-mid disabled:opacity-30"
+                      className="flex h-[38px] w-[38px] items-center justify-center rounded text-fg-secondary active:bg-state-mid disabled:opacity-30"
                     >
                       <ChevronUp className="h-4 w-4" />
                     </button>
@@ -1091,7 +1091,7 @@ export function MobileModelSection() {
                       onClick={() => updateRegistry(shiftChannel(registry, ch.id, 1))}
                       disabled={isLast}
                       aria-label={`下移 ${ch.name}`}
-                      className="flex h-[38px] w-[38px] items-center justify-center rounded text-zinc-400 active:bg-state-mid disabled:opacity-30"
+                      className="flex h-[38px] w-[38px] items-center justify-center rounded text-fg-secondary active:bg-state-mid disabled:opacity-30"
                     >
                       <ChevronDown className="h-4 w-4" />
                     </button>

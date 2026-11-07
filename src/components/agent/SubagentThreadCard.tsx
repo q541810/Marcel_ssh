@@ -24,9 +24,9 @@ function useSubStepCount(subConversationId: string): number {
 /** 时间线上的一行文字：灰色标签 + 正文，和工具卡展开后的文字同一档（无气泡、无色块）。 */
 function Row({ label, text, testId }: { label: string; text: string; testId?: string }) {
   return (
-    <div className="min-w-0 text-[13px] leading-5" data-testid={testId}>
-      <span className="text-zinc-500">{label}：</span>
-      <span className="whitespace-pre-wrap break-words text-zinc-300 [overflow-wrap:anywhere]">{text}</span>
+    <div className="min-w-0 text-body leading-5" data-testid={testId}>
+      <span className="text-fg-tertiary">{label}：</span>
+      <span className="whitespace-pre-wrap break-words text-fg-secondary [overflow-wrap:anywhere]">{text}</span>
     </div>
   );
 }
@@ -36,13 +36,13 @@ function AskRow({ item }: { item: Extract<ThreadItem, { kind: 'ask' }> }) {
     <div className="min-w-0" data-testid="thread-ask">
       <Row label="问" text={item.question} />
       {item.context && (
-        <details className="text-[12px] text-zinc-500">
-          <summary className="cursor-pointer select-none py-0.5 hover:text-zinc-300 [@media(pointer:coarse)]:py-1.5">背景信息</summary>
-          <p className="whitespace-pre-wrap break-words pb-0.5 text-zinc-400 [overflow-wrap:anywhere]">{item.context}</p>
+        <details className="text-meta text-fg-tertiary">
+          <summary className="cursor-pointer select-none py-0.5 hover:text-fg-secondary [@media(pointer:coarse)]:py-1.5">背景信息</summary>
+          <p className="whitespace-pre-wrap break-words pb-0.5 text-fg-secondary [overflow-wrap:anywhere]">{item.context}</p>
         </details>
       )}
-      {item.state === 'waiting' && <div className="text-[12px] leading-5 text-zinc-500">等待回答</div>}
-      {item.state === 'unanswered' && <div className="text-[12px] leading-5 text-zinc-500">未回答</div>}
+      {item.state === 'waiting' && <div className="text-meta leading-5 text-fg-tertiary">等待回答</div>}
+      {item.state === 'unanswered' && <div className="text-meta leading-5 text-fg-tertiary">未回答</div>}
     </div>
   );
 }
@@ -55,14 +55,14 @@ function OutcomeRow({ item, steps }: { item: Extract<ThreadItem, { kind: 'outcom
           : '已取消';
   return (
     <div className="min-w-0">
-      <div className="text-[13px] leading-5 text-zinc-300">
+      <div className="text-body leading-5 text-fg">
         {label}
-        {steps > 0 && <span className="ml-1.5 text-zinc-500">已执行 {steps} 步</span>}
+        {steps > 0 && <span className="ml-1.5 text-fg-tertiary">已执行 {steps} 步</span>}
       </div>
       {item.state !== 'running' && item.result.trim() !== '' && (
-        <details className="text-[12px] text-zinc-500">
-          <summary className="cursor-pointer select-none py-0.5 hover:text-zinc-300 [@media(pointer:coarse)]:py-1.5">查看结果</summary>
-          <pre className="max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono leading-relaxed text-zinc-400 [overflow-wrap:anywhere]">{item.result}</pre>
+        <details className="text-meta text-fg-tertiary">
+          <summary className="cursor-pointer select-none py-0.5 hover:text-fg-secondary [@media(pointer:coarse)]:py-1.5">查看结果</summary>
+          <pre className="max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono leading-relaxed text-fg-secondary [overflow-wrap:anywhere]">{item.result}</pre>
         </details>
       )}
     </div>
@@ -73,13 +73,13 @@ function OutcomeRow({ item, steps }: { item: Extract<ThreadItem, { kind: 'outcom
 function trailingStatus(state: SubagentThread['state']) {
   switch (state) {
     case 'waiting':
-      return <span className="flex-shrink-0 whitespace-nowrap text-xs text-zinc-500">等待回答</span>;
+      return <span className="flex-shrink-0 whitespace-nowrap text-meta text-fg-tertiary">等待回答</span>;
     case 'unanswered':
-      return <span className="flex-shrink-0 whitespace-nowrap text-xs text-zinc-500">未回答</span>;
+      return <span className="flex-shrink-0 whitespace-nowrap text-meta text-fg-tertiary">未回答</span>;
     case 'failed':
-      return <span className="flex-shrink-0 whitespace-nowrap text-xs font-medium text-red-400">失败</span>;
+      return <span className="flex-shrink-0 whitespace-nowrap text-meta font-medium text-red-400">失败</span>;
     case 'cancelled':
-      return <span className="flex-shrink-0 whitespace-nowrap text-xs font-medium text-amber-400">已中断</span>;
+      return <span className="flex-shrink-0 whitespace-nowrap text-meta font-medium text-amber-400">已中断</span>;
     default:
       return undefined; // running 由转圈表示，completed 什么都不说
   }
@@ -113,7 +113,7 @@ function SubagentThreadCard({ message, thread, grouped }: Props) {
     <button
       type="button"
       onClick={() => void openSubConversation(thread.subConversationId)}
-      className="flex items-center gap-1.5 pt-0.5 text-xs font-medium text-sky-400 transition-colors hover:text-sky-300 [@media(pointer:coarse)]:min-h-8"
+      className="flex items-center gap-1.5 pt-0.5 text-meta font-medium text-sky-400 transition-colors hover:text-sky-300 [@media(pointer:coarse)]:min-h-8"
     >
       <Eye className="h-3.5 w-3.5" aria-hidden="true" />
       {watchLabel}

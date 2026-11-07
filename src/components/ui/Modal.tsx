@@ -1,5 +1,6 @@
 import { useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -64,7 +65,7 @@ export default function Modal({
     >
       {/* Backdrop */}
       <div
-        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
+        className={`absolute inset-0 bg-black/50 ${
           exiting ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
         }`}
         onClick={dismissible ? onClose : undefined}
@@ -75,21 +76,21 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         onAnimationEnd={presence.onAnimationEnd}
-        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-edge shadow-2xl max-h-[min(90vh,calc(100dvh-var(--ime-bottom,0px)-2rem))] flex flex-col ${
+        className={`relative w-full mx-4 rounded-2xl surface-glass max-h-[min(90vh,calc(100dvh-var(--ime-bottom,0px)-2rem))] flex flex-col ${
           exiting ? 'modal-panel-exit' : 'modal-panel-enter'
         } ${SIZE_CLASSES[size]} ${contentClassName}`}
       >
         {/* Header */}
         {title && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-edge flex-shrink-0">
-            <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
+          <div className="flex items-center justify-between px-4 py-3 flex-shrink-0">
+            <h2 className="text-title text-fg">{title}</h2>
             {dismissible && (
               <button
                 onClick={onClose}
-                className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
+                className="pressable focus-ring flex h-6 w-6 items-center justify-center rounded-md text-fg-secondary hover:bg-state-soft hover:text-fg"
                 aria-label="关闭"
               >
-                &times;
+                <X size={16} strokeWidth={1.5} />
               </button>
             )}
           </div>

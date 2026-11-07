@@ -88,16 +88,18 @@ export function Card({
   const layout = useSettingsLayout();
 
   return (
-    // 不能 overflow-hidden：卡片里最后一项的下拉列表会被卡片边缘裁掉。圆角改由首尾子元素自己带。
-    <div id={id} className="rounded-xl border border-edge-subtle bg-zinc-900/50">
-      <div className={`settings-card-header ${layout.mode === 'compact' ? 'px-5' : 'px-6'} py-4 border-b border-edge-subtle rounded-t-xl`}>
-        <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+    <div id={id}>
+      <div className={`settings-card-header px-1 pb-3`}>
+        <h3 className="flex items-center gap-2 text-title text-fg">
           {title}
           {badge}
         </h3>
-        {description && <p className="text-xs text-zinc-500 mt-1">{description}</p>}
+        {description && <p className="text-meta text-fg-secondary mt-1">{description}</p>}
       </div>
-      <div className="divide-y divide-edge-subtle [&>*:last-child]:rounded-b-xl">{children}</div>
+      {/* 不能 overflow-hidden：卡片里最后一项的下拉列表会被卡片边缘裁掉。圆角改由首尾子元素自己带。 */}
+      <div className="rounded-xl bg-surface-raised divide-y divide-edge-subtle [&>*:first-child]:rounded-t-xl [&>*:last-child]:rounded-b-xl">
+        {children}
+      </div>
     </div>
   );
 }
@@ -133,7 +135,7 @@ export function SettingItem({
 
   return (
     <div
-      className={`settings-item ${compact ? 'px-5 py-2.5 items-center' : 'px-6 py-4 items-start'} ${
+      className={`settings-item ${compact ? 'px-4 py-3 items-center' : 'px-4 py-3 items-start'} ${
         stacked ? 'flex flex-col gap-3' : 'flex gap-6'
       }`}
     >
@@ -141,9 +143,9 @@ export function SettingItem({
         className={`settings-label-column ${compact || stacked ? 'min-w-0' : 'flex-shrink-0'}`}
         style={!compact && !stacked ? { width: `${layout.labelWidth}px` } : undefined}
       >
-        <div className={`${compact ? 'text-[13px]' : 'text-sm'} font-medium text-zinc-200`}>{label}</div>
+        <div className={`text-body text-fg`}>{label}</div>
         {description && (
-          <div className={`${compact ? 'text-[11px] leading-4' : 'text-xs'} text-zinc-500 mt-0.5`}>
+          <div className={`text-meta text-fg-secondary mt-1`}>
             {description}
           </div>
         )}
@@ -168,8 +170,8 @@ export function Section({
 }) {
   return (
     <section id={id} className="mb-8 scroll-mt-8">
-      <h2 className="text-base font-semibold text-zinc-100 mb-1">{title}</h2>
-      {description && <p className="text-xs text-zinc-500 mb-3">{description}</p>}
+      <h2 className="text-title text-fg mb-1">{title}</h2>
+      {description && <p className="text-meta text-fg-tertiary mb-3">{description}</p>}
       <div className="space-y-3 mt-3">{children}</div>
     </section>
   );
@@ -186,7 +188,7 @@ export function Field({
 }) {
   return (
     <div className={`flex gap-4 ${alignTop ? 'items-start' : 'items-center'}`}>
-      <label className={`w-32 flex-shrink-0 text-sm text-zinc-300 ${alignTop ? 'pt-1.5' : ''}`}>
+      <label className={`w-32 flex-shrink-0 text-body text-fg-secondary ${alignTop ? 'pt-2' : ''}`}>
         {label}
       </label>
       <div className="flex-1 flex items-center gap-2 min-w-0">{children}</div>

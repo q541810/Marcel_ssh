@@ -50,24 +50,24 @@ function StatusBlock({ variant, status, now }: { variant: SyncVariant; status: S
   };
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-2 text-sm font-medium text-zinc-100" aria-live="polite">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-body font-medium text-fg" aria-live="polite">
         <StatusDot tone={view.tone} />
         <span>{view.title}</span>
       </div>
       {view.detail && (
-        <p className={`text-xs leading-relaxed ${view.tone === 'error' ? 'text-red-300' : 'text-zinc-400'}`}>
+        <p className={`text-meta leading-relaxed ${view.tone === 'error' ? 'text-red-300' : 'text-fg-secondary'}`}>
           {view.detail}
         </p>
       )}
-      {storageLine && <p className="break-all text-xs text-zinc-500">存放位置：{storageLine}</p>}
+      {storageLine && <p className="break-all text-meta text-fg-tertiary">存放位置：{storageLine}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <SyncButton variant={variant} kind={status.state === 'error' ? 'primary' : 'secondary'} loading={busy} onClick={() => void run()}>
           {status.state === 'error' ? '重试' : '立即同步'}
         </SyncButton>
       </div>
       {error && (
-        <p className="text-xs text-red-400" role="alert">
+        <p className="text-meta text-red-400" role="alert">
           {error}
         </p>
       )}
@@ -148,7 +148,7 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
             </SyncButton>
           </div>
         ) : (
-          <p className="text-xs text-zinc-500">正在读取同步状态…</p>
+          <p className="text-meta text-fg-tertiary">正在读取同步状态…</p>
         )}
       </SyncRow>
     );
@@ -165,7 +165,7 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
         >
           <div className="space-y-3">
             {notice && <Callout>{notice}</Callout>}
-            <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-400">
+            <ul className="space-y-2 text-meta leading-relaxed text-fg-secondary">
               <li>端到端加密：数据在你的设备上加密之后才上传，存储方只看得到一堆看不懂的密文。</li>
               <li>数据放在你自己选的地方（WebDAV 网盘，或你自己的服务器），没有我们的服务器。</li>
               <li>开启后可以按需同步对话与记忆、以及密码 / 私钥 / API Key 这类机密，机密档默认关闭。</li>

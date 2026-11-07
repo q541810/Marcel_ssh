@@ -51,7 +51,7 @@ function TextPreview({
   const activePage = Math.min(page, pages - 1);
   const start = pageBoundary(content, activePage * TEXT_PAGE_SIZE);
   const end = pageBoundary(content, (activePage + 1) * TEXT_PAGE_SIZE);
-  const actionClass = `inline-flex shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-state-soft active:bg-state-soft disabled:opacity-30 ${mobile ? "h-12 w-12" : "h-9 w-9"}`;
+  const actionClass = `inline-flex shrink-0 items-center justify-center rounded-lg text-fg-secondary hover:bg-state-soft active:bg-state-soft disabled:opacity-30 ${mobile ? "h-12 w-12" : "h-9 w-9"}`;
 
   useLayoutEffect(() => {
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
@@ -63,19 +63,19 @@ function TextPreview({
         ref={scrollerRef}
         tabIndex={0}
         aria-label="文本附件内容"
-        className="min-h-0 flex-1 overflow-auto overscroll-contain bg-zinc-950 p-4 focus-visible:outline-offset-[-2px]"
+        className="min-h-0 flex-1 overflow-auto overscroll-contain bg-surface-sunken p-4 focus-visible:outline-offset-[-2px]"
       >
         {content.length === 0 ? (
-          <p className="text-sm text-zinc-400">文件内容为空</p>
+          <p className="text-read text-fg-secondary">文件内容为空</p>
         ) : (
-          <pre className="m-0 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-zinc-200 [overflow-wrap:anywhere] [tab-size:2]">
+          <pre className="m-0 whitespace-pre-wrap break-words font-mono text-read leading-relaxed text-fg [overflow-wrap:anywhere] [tab-size:2]">
             {content.slice(start, end)}
           </pre>
         )}
       </div>
       {pages > 1 && (
         <div className="flex shrink-0 items-center gap-2 border-t border-edge-subtle px-3 py-2">
-          <div className="min-w-0 flex-1 text-xs leading-relaxed text-zinc-400">
+          <div className="min-w-0 flex-1 text-meta leading-relaxed text-fg-secondary">
             <div role="status">
               第 {activePage + 1} / {pages} 段
             </div>
@@ -115,7 +115,7 @@ function PreviewNotice({
   return (
     <div
       role={error ? "alert" : "status"}
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm leading-relaxed text-zinc-300"
+      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-read leading-relaxed text-fg-secondary"
     >
       {error ? (
         <AlertCircle aria-hidden className="h-6 w-6 text-red-300" />
@@ -189,11 +189,11 @@ function PreviewDialog({
         <div className="min-w-0 flex-1 py-1">
           <h2
             id={titleId}
-            className="break-words text-sm font-semibold leading-relaxed text-zinc-100 [overflow-wrap:anywhere]"
+            className="break-words text-read font-semibold leading-relaxed text-fg [overflow-wrap:anywhere]"
           >
             {name}
           </h2>
-          <p className="mt-0.5 text-xs text-zinc-400">
+          <p className="mt-0.5 text-meta text-fg-secondary">
             {item.kind === "image" ? "图片预览" : "文本预览"}
             {hasSize ? ` · ${formatSize(item.size!)}` : ""}
           </p>
@@ -203,7 +203,7 @@ function PreviewDialog({
           type="button"
           onClick={requestClose}
           aria-label="关闭附件预览"
-          className={`inline-flex shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-state-mid hover:text-zinc-100 active:bg-state-mid ${mobile ? "h-12 w-12" : "h-9 w-9"}`}
+          className={`inline-flex shrink-0 items-center justify-center rounded-lg text-fg-secondary hover:bg-state-mid hover:text-fg active:bg-state-mid ${mobile ? "h-12 w-12" : "h-9 w-9"}`}
         >
           <X aria-hidden className="h-5 w-5" />
         </button>

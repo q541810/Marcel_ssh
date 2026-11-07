@@ -48,19 +48,19 @@ export function SettingsSidebar({
 
   return (
     <div
-      className="settings-sidebar flex-shrink-0 bg-zinc-950 border-r border-edge-subtle flex flex-col"
+      className="settings-sidebar flex-shrink-0 bg-surface-sunken border-r border-edge-subtle flex flex-col"
       style={{ width: `${layout.sidebarWidth}px` }}
     >
       <div className={`settings-sidebar-padding ${layout.mode === 'wide' ? 'p-5' : 'p-4'}`}>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fg-tertiary" />
           <input
             ref={inputRef}
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Ctrl+F 搜索"
-            className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-900 border border-edge-subtle text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="w-full pl-9 pr-3 h-8 rounded-lg bg-surface border border-edge-subtle text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           />
         </div>
       </div>
@@ -68,7 +68,7 @@ export function SettingsSidebar({
         {groupSettingsPages(SETTINGS_CATEGORIES).map(({ group, pages }) => (
           <div key={group.id} className="space-y-1 [&:not(:first-child)]:mt-3">
             {group.title && (
-              <div className="px-3 pb-0.5 pt-1 text-[11px] font-medium tracking-wide text-zinc-500">
+              <div className="px-3 pb-1 pt-1 text-caption font-medium tracking-wide text-fg-tertiary">
                 {group.title}
               </div>
             )}
@@ -79,10 +79,10 @@ export function SettingsSidebar({
                   onChange(cat.id);
                   onSearchChange('');
                 }}
-                className={`w-full flex items-center gap-3 px-3 ${layout.mode === 'wide' ? 'py-2.5' : 'py-2'} rounded-lg text-sm transition-colors ${
+                className={`w-full flex items-center gap-3 px-3 h-8 rounded-lg text-body transition-colors pressable focus-ring ${
                   activeCategory === cat.id && !searchQuery
-                    ? 'bg-state-selected text-zinc-100'
-                    : 'text-zinc-400 hover:bg-state-soft/60 hover:text-zinc-200'
+                    ? 'bg-state-selected text-fg'
+                    : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
                 }`}
               >
                 {cat.icon}
@@ -95,30 +95,30 @@ export function SettingsSidebar({
       {!searchQuery && (
         <div className="border-t border-edge-subtle px-4 py-3 space-y-2">
           {(saving || savedNotice || saveError || validationErrors.length > 0 || dirty) && (
-            <div className="text-xs">
+            <div className="text-meta">
               {saving && (
-                <div className="flex items-center gap-1.5 text-zinc-400">
+                <div className="flex items-center gap-2 text-fg-secondary">
                   <Loader2 className="w-3 h-3 animate-spin" />
                   保存中...
                 </div>
               )}
               {savedNotice && (
-                <div className="flex items-center gap-1.5 text-emerald-400">
+                <div className="flex items-center gap-2 text-emerald-400">
                   <Check className="w-3 h-3" />
                   {savedNotice}
                 </div>
               )}
               {saveError && (
-                <div className="flex items-center gap-1.5 text-red-400">
+                <div className="flex items-center gap-2 text-red-400">
                   <AlertCircle className="w-3 h-3" />
                   {saveError}
                 </div>
               )}
               {validationErrors.length > 0 && (
-                <div className="space-y-0.5">
+                <div className="space-y-1">
                   {validationErrors.map((err, i) => (
-                    <div key={i} className="flex items-start gap-1.5 text-red-400">
-                      <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    <div key={i} className="flex items-start gap-2 text-red-400">
+                      <AlertCircle className="w-3 h-3 mt-1 flex-shrink-0" />
                       <span>{err}</span>
                     </div>
                   ))}

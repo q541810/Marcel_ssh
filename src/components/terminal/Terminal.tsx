@@ -306,24 +306,24 @@ export default function Terminal() {
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
-    <div ref={terminalRootRef} data-region="terminal" className="flex flex-col flex-1 h-full bg-zinc-900">
+    <div ref={terminalRootRef} data-region="terminal" className="flex flex-col flex-1 h-full bg-surface">
       {/* overflow-hidden：过渡期间终端内容带着位移，不能越过终端区盖住正在滑动的面板 */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <div ref={wrapperRef} className="absolute inset-0" />
         <TerminalZoomHint />
         {!hasSessions && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/95 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-surface/95 z-10">
             <div className="text-center">
-              <div className="text-zinc-400 text-lg mb-2">未连接</div>
-              <p className="text-zinc-500 text-sm">
+              <div className="text-fg-secondary text-lg mb-2">未连接</div>
+              <p className="text-fg-tertiary text-read">
                 从侧边栏选择一个连接或使用快速连接来启动会话。
               </p>
             </div>
           </div>
         )}
         {hasSessions && !activeSessionId && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/90 z-10">
-            <div className="text-zinc-400">请选择一个会话</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-surface/90 z-10">
+            <div className="text-fg-secondary">请选择一个会话</div>
           </div>
         )}
       </div>
@@ -348,7 +348,7 @@ export default function Terminal() {
               style={{ touchAction: 'none' }}
             />
             <div
-              className="bg-zinc-900"
+              className="bg-surface"
               style={{ height: `${panelHeight - 4}px` }}
             >
               {displayTab === 'quick-command' && (

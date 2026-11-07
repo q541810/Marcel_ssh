@@ -59,8 +59,8 @@ function InjectionDetail({
   const anyError = (status?.injections ?? []).some((i) => i.error);
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-meta text-fg-tertiary">
         <Syringe className="w-3.5 h-3.5" />
         <span>{injectionCount} 个注入</span>
         {anyError && (
@@ -76,20 +76,20 @@ function InjectionDetail({
         return (
           <div
             key={inj.id}
-            className="rounded-md bg-zinc-800/60 px-2 py-1.5 text-[11px] text-zinc-400"
+            className="rounded-md bg-surface-raised/60 px-2 py-2 text-caption text-fg-secondary"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="truncate font-mono">{inj.id}</span>
-              <span className={st?.active && !err ? 'text-emerald-400' : err ? 'text-red-400' : 'text-zinc-500'}>
+              <span className={st?.active && !err ? 'text-emerald-400' : err ? 'text-red-400' : 'text-fg-tertiary'}>
                 {st?.active && !err ? '运行中' : err ? '错误' : '未激活'}
               </span>
             </div>
-            <div className="text-zinc-600 mt-0.5">
+            <div className="text-fg-disabled mt-1">
               {inj.styles.length} CSS / {inj.scripts.length} JS · targets: {inj.matches.join(', ') || '*'}
             </div>
             {err && (
-              <div className="mt-1.5 space-y-1">
-                <pre className="whitespace-pre-wrap break-all text-red-400 font-mono text-[10px] max-h-24 overflow-y-auto">
+              <div className="mt-2 space-y-1">
+                <pre className="whitespace-pre-wrap break-all text-red-400 font-mono text-caption max-h-24 overflow-y-auto">
                   {err}
                 </pre>
                 <button
@@ -99,7 +99,7 @@ function InjectionDetail({
                       console.error('retry injection failed:', e);
                     });
                   }}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-700 text-zinc-200 hover:bg-state-strong transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-700 text-fg hover:bg-state-strong transition-colors"
                 >
                   <RotateCw className="w-3 h-3" />
                   重试
@@ -150,11 +150,11 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
       {declared.map((cap) => (
         <div key={cap} className="flex items-center justify-between py-1">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm text-zinc-300">
+            <span className="text-body text-fg-secondary">
               {capabilityLabel(cap)}
             </span>
             {capabilityLabel(cap) !== cap && (
-              <code className="text-[11px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">{cap}</code>
+              <code className="text-caption text-fg-disabled bg-surface-raised px-2 py-0.5 rounded flex-shrink-0">{cap}</code>
             )}
           </div>
           <Toggle
@@ -338,24 +338,24 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
 
   return (
     <>
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 overflow-hidden">
+      <div className="rounded-xl border border-edge-subtle bg-surface/50 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-edge-subtle">
           <div className="flex items-center gap-3 min-w-0">
-            <Puzzle className="w-5 h-5 text-zinc-500 flex-shrink-0" />
+            <Puzzle className="w-5 h-5 text-fg-tertiary flex-shrink-0" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-100 truncate">{manifest.name}</span>
+                <span className="text-body font-semibold text-fg truncate">{manifest.name}</span>
                 {hasUpdate ? (
-                  <span className="text-[11px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded flex items-center gap-1 flex-shrink-0">
+                  <span className="text-caption bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded flex items-center gap-1 flex-shrink-0">
                     v{manifest.version} <span className="text-emerald-500">→</span> v{updateInfo.marketVersion}
                   </span>
                 ) : (
-                  <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
+                  <span className="text-caption text-fg-tertiary bg-surface-raised px-2 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
                 )}
               </div>
               {manifest.publisher && (
-                <div className="text-xs text-zinc-500 mt-0.5">{manifest.publisher}</div>
+                <div className="text-meta text-fg-tertiary mt-1">{manifest.publisher}</div>
               )}
             </div>
           </div>
@@ -394,7 +394,7 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
               配置
             </Button>
             {minRequired && (
-              <span className={`text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 ${incompatible ? 'text-amber-400 bg-amber-500/10' : 'text-zinc-500 bg-zinc-800'}`}>
+              <span className={`text-caption px-2 py-0.5 rounded flex-shrink-0 ${incompatible ? 'text-amber-400 bg-amber-500/10' : 'text-fg-tertiary bg-surface-raised'}`}>
                 最低兼容 v{minRequired}
               </span>
             )}
@@ -409,7 +409,7 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       {/* 卸载完成提示 */}
       {uninstallDone && (
         <div className="px-5 py-3 border-b border-edge-subtle bg-emerald-500/5">
-          <p className="text-xs text-emerald-400 leading-relaxed">
+          <p className="text-meta text-emerald-400 leading-relaxed">
             已卸载，重启应用后完全移除
           </p>
         </div>
@@ -418,28 +418,28 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       {/* 更新完成提示 */}
       {updateDone && (
         <div className="px-5 py-3 border-b border-edge-subtle bg-emerald-500/5">
-          <p className="text-xs text-emerald-400 leading-relaxed">
+          <p className="text-meta text-emerald-400 leading-relaxed">
             已更新至 v{updateInfo?.marketVersion}，重启应用后生效
           </p>
         </div>
       )}
       {updateError && !updateDone && (
         <div className="px-5 py-3 border-b border-edge-subtle bg-red-500/5">
-          <p className="text-xs text-red-400 leading-relaxed break-all">{updateError}</p>
+          <p className="text-meta text-red-400 leading-relaxed break-all">{updateError}</p>
         </div>
       )}
 
       {/* Description */}
       {manifest.description && (
         <div className="px-5 py-3 border-b border-edge-subtle">
-          <p className="text-sm text-zinc-400 leading-relaxed">{manifest.description}</p>
+          <p className="text-body text-fg-secondary leading-relaxed">{manifest.description}</p>
         </div>
       )}
 
       {/* Incompatibility explanation */}
       {incompatible && minRequired && (
         <div className="px-5 py-3 border-b border-edge-subtle bg-amber-500/5">
-          <p className="text-xs text-amber-400 leading-relaxed">
+          <p className="text-meta text-amber-400 leading-relaxed">
             此插件需要应用 v{minRequired} 及以上版本，当前版本无法启用。
             升级应用后刷新将自动恢复可用。
           </p>
@@ -448,27 +448,27 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
 
       {/* Capabilities summary */}
       <div className="px-5 py-3 space-y-3">
-        <div className="flex items-center gap-4 text-xs text-zinc-500">
+        <div className="flex items-center gap-4 text-meta text-fg-tertiary">
           {viewCount > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Eye className="w-3.5 h-3.5" />
               <span>{viewCount} 个视图</span>
             </div>
           )}
           {toolCount > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Wrench className="w-3.5 h-3.5" />
               <span>{toolCount} 个工具</span>
             </div>
           )}
           {capCount > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Shield className="w-3.5 h-3.5" />
               <span>{capCount} 个权限</span>
             </div>
           )}
           {injectionCount > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <Syringe className="w-3.5 h-3.5" />
               <span>{injectionCount} 个注入</span>
             </div>
@@ -477,11 +477,11 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
 
         {/* Views detail */}
         {viewCount > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {manifest.views.map((v) => (
               <span
                 key={v.id}
-                className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded-full"
+                className="inline-flex items-center gap-1 text-caption text-fg-secondary bg-surface-raised px-2 py-0.5 rounded-full"
               >
                 {MOUNT_LABELS[v.mount] ?? v.mount}：{v.title}
               </span>
@@ -491,11 +491,11 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
 
         {/* Agent tools detail */}
         {toolCount > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {manifest.agentTools.map((t) => (
               <span
                 key={t.name}
-                className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded-full"
+                className="inline-flex items-center gap-1 text-caption text-fg-secondary bg-surface-raised px-2 py-0.5 rounded-full"
               >
                 <Wrench className="w-3 h-3" />
                 {t.name}
@@ -513,7 +513,7 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
             <button
               type="button"
               onClick={() => setShowCapabilities(!showCapabilities)}
-              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="flex items-center gap-1 text-meta text-fg-tertiary hover:text-fg-secondary transition-colors"
             >
               {showCapabilities
                 ? <ChevronDown className="w-3.5 h-3.5" />
@@ -546,7 +546,7 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       title="重启提示"
       size="sm"
     >
-      <div className="px-4 py-3 text-sm text-zinc-300">
+      <div className="px-4 py-3 text-body text-fg-secondary">
         <p>
           {restartHintKind === 'enable'
             ? '某些插件启用后视图或功能不会立即生效，重启应用可以解决。'
@@ -570,13 +570,13 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       title="卸载插件"
       size="sm"
     >
-      <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+      <div className="px-4 py-3 text-body text-fg-secondary leading-relaxed">
         <p>
           确定卸载「{manifest.name}」？将删除插件目录及其全部数据
           （如记忆文件），重启应用后完全移除。
         </p>
         {uninstallError && (
-          <p className="mt-2 text-xs text-red-400">{uninstallError}</p>
+          <p className="mt-2 text-meta text-red-400">{uninstallError}</p>
         )}
       </div>
       <div className="flex justify-end gap-2 px-4 py-3 border-t border-edge">
@@ -604,11 +604,11 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       title="更新插件"
       size="sm"
     >
-      <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+      <div className="px-4 py-3 text-body text-fg-secondary leading-relaxed">
         <p>
           确定将「{manifest.name}」从 v{manifest.version} 更新至 v{updateInfo?.marketVersion}？
         </p>
-        <p className="mt-2 text-xs text-zinc-400">
+        <p className="mt-2 text-meta text-fg-secondary">
           将用新版本覆盖插件文件，个人数据（如记忆、配置）会保留，旧版多余文件会被清理。重启后生效。
         </p>
       </div>
@@ -686,7 +686,7 @@ export function PluginSection() {
         >
           <div className="flex items-center gap-2 min-w-0">
             <span
-              className="text-xs text-zinc-500 font-mono cursor-pointer hover:text-zinc-300 transition-colors select-all"
+              className="text-meta text-fg-tertiary font-mono cursor-pointer hover:text-fg-secondary transition-colors select-all"
               title="点击复制路径"
               onClick={handleCopy}
             >
@@ -734,7 +734,7 @@ export function PluginSection() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4 text-sm text-red-400">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4 text-body text-red-400">
           加载失败：{error}
         </div>
       )}
@@ -742,9 +742,9 @@ export function PluginSection() {
       {/* Update summary + manual check */}
       {!loading && !error && manifests.length > 0 && (
         <div className="flex items-center justify-between px-1">
-          <div className="text-xs text-zinc-500">
+          <div className="text-meta text-fg-tertiary">
             {marketLoading ? (
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-2">
                 <RotateCw className="w-3 h-3 animate-spin" />
                 正在检查更新…
               </span>
@@ -771,10 +771,10 @@ export function PluginSection() {
 
       {/* Plugin cards */}
       {!loading && !error && manifests.length === 0 && (
-        <div className="rounded-xl border border-edge-subtle bg-zinc-900/50 px-6 py-12 text-center">
+        <div className="rounded-xl border border-edge-subtle bg-surface/50 px-6 py-12 text-center">
           <Puzzle className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
-          <p className="text-sm text-zinc-500">暂无已安装插件</p>
-          <p className="text-xs text-zinc-600 mt-1">将插件放入上方目录后重启应用</p>
+          <p className="text-body text-fg-tertiary">暂无已安装插件</p>
+          <p className="text-meta text-fg-disabled mt-1">将插件放入上方目录后重启应用</p>
         </div>
       )}
 
@@ -798,7 +798,7 @@ export function PluginSection() {
         title="重启提示"
         size="sm"
       >
-        <div className="px-4 py-3 text-sm text-zinc-300">
+        <div className="px-4 py-3 text-body text-fg-secondary">
           <p>
             {globalRestartHint?.kind === 'enable'
               ? `插件「${globalRestartHint?.name}」已启用，某些视图或功能不会立即生效，重启应用可以解决。`

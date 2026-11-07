@@ -1,3 +1,5 @@
+import { ArrowUp, X } from 'lucide-react';
+
 type SendControlButtonProps = {
   isRunning: boolean;
   isCompacting: boolean;
@@ -39,13 +41,13 @@ export function SendControlButton({
       }
       disabled={disabled}
       className={`
-              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-all duration-150 active:scale-95
+              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-colors duration-120 pressable
               ${
                 isRunning
                   ? "bg-red-600 hover:bg-red-500 text-white"
                   : isCompacting
                     ? "bg-violet-600 hover:bg-violet-500 text-white"
-                    : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                    : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-state-mid disabled:text-fg-tertiary disabled:cursor-not-allowed"
               }
             `}
       title={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
@@ -68,56 +70,20 @@ export function SendControlButton({
           />
         </svg>
       ) : isCompacting ? (
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M6 6l12 12M18 6L6 18"
-          />
-        </svg>
+        <X size={16} strokeWidth={1.5} />
       ) : (
-        <svg
-          className="w-[18px] h-[18px]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 19V5m-7 7l7-7 7 7"
-          />
-        </svg>
+        <ArrowUp size={18} strokeWidth={1.5} />
       )}
     </button>
     {isRunning && canQueue && (
       <button
         type="button"
         onClick={onSend}
-        className="flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all duration-150 active:scale-95"
+        className="flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors duration-120 pressable"
         title="加入队列（当前任务完成后自动发送）"
         aria-label="加入队列"
       >
-        <svg
-          className="w-[18px] h-[18px]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 19V5m-7 7l7-7 7 7"
-          />
-        </svg>
+        <ArrowUp size={18} strokeWidth={1.5} />
       </button>
     )}
     </>

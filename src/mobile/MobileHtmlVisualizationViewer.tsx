@@ -58,12 +58,12 @@ export default function MobileHtmlVisualizationViewer({
         <button
           type="button"
           onClick={requestClose}
-          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-zinc-300 transition-colors duration-100 active:bg-white/10"
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-fg-secondary transition-colors duration-100 active:bg-white/10"
           aria-label="返回"
         >
           <ChevronLeft aria-hidden="true" className="h-5 w-5" />
         </button>
-        <div className="min-w-0 flex-1 truncate pr-3 text-sm font-medium text-zinc-100">
+        <div className="min-w-0 flex-1 truncate pr-3 text-body font-medium text-fg">
           {title}
         </div>
       </header>

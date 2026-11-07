@@ -1,3 +1,4 @@
+import { ArrowRight, Check, ChevronDown } from 'lucide-react';
 import { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
@@ -164,13 +165,13 @@ export default function MultiHostPicker() {
         }}
         disabled={disabled}
         className={[
-          'group flex h-7 max-w-[11rem] items-center gap-1.5 rounded-lg border px-2 text-xs font-medium',
-          'transition-all duration-150 active:scale-[0.97]',
+          'group flex h-7 max-w-[11rem] items-center gap-1.5 rounded-lg border px-2 text-meta font-medium',
+          'transition-colors duration-120 pressable',
           disabled
-            ? 'cursor-not-allowed border-edge-subtle text-zinc-600'
+            ? 'cursor-not-allowed border-edge-subtle text-fg-disabled'
             : open
               ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-200'
-              : 'border-transparent text-zinc-400 hover:border-edge hover:bg-state-soft/70 hover:text-zinc-200',
+              : 'border-transparent text-fg-secondary hover:border-edge hover:bg-state-soft/70 hover:text-fg',
         ].join(' ')}
         title={
           currentLabel
@@ -182,7 +183,7 @@ export default function MultiHostPicker() {
       >
         <span
           className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-            isCurrentOnline ? 'bg-emerald-400' : 'bg-zinc-600'
+            isCurrentOnline ? 'bg-emerald-400' : 'bg-state-strong'
           }`}
         />
         <span className="min-w-0 flex-1 truncate">
@@ -190,30 +191,18 @@ export default function MultiHostPicker() {
         </span>
         {selected.length > 0 && (
           <span
-            className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none ${
+            className={`flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-caption font-semibold leading-none ${
               disabled
-                ? 'bg-zinc-700 text-zinc-500'
+                ? 'bg-state-mid text-fg-tertiary'
                 : 'bg-indigo-500 text-white'
             }`}
           >
             {selected.length}
           </span>
         )}
-        <svg
-          className={`h-3 w-3 flex-shrink-0 transition-transform duration-200 ${
+        <ChevronDown className={`h-3 w-3 flex-shrink-0 transition-transform duration-200 ${
             open ? 'rotate-180' : ''
-          }`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+          }`} strokeWidth={1.5} />
       </button>
 
       {presence.mounted &&
@@ -230,7 +219,7 @@ export default function MultiHostPicker() {
                 ? { top: pos.top }
                 : { bottom: pos.bottom ?? 0 }),
             }}
-            className={`fixed z-[100] flex flex-col overflow-hidden rounded-xl border border-edge/80 bg-zinc-800/95 shadow-2xl backdrop-blur-md ${
+            className={`fixed z-[100] flex flex-col overflow-hidden rounded-xl surface-glass ${
               presence.phase === 'exit'
                 ? 'mobile-popover-exit'
                 : 'mobile-popover-enter'
@@ -238,8 +227,8 @@ export default function MultiHostPicker() {
           >
           {/* ── 标题 ── */}
           <div className="flex items-center justify-between border-b border-edge/60 px-3 py-2">
-            <span className="text-xs font-semibold text-zinc-200">目标机器</span>
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-meta font-semibold text-fg">目标机器</span>
+            <span className="text-caption text-fg-tertiary">
               当前机 + {selected.length} 台可跨机
             </span>
           </div>
@@ -248,30 +237,18 @@ export default function MultiHostPicker() {
           <div className="px-1.5 pt-1.5">
             <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-2">
               <div className="flex items-center gap-2">
-                <svg
-                  className="h-4 w-4 flex-shrink-0 text-indigo-300"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 12h14M12 5l7 7-7 7"
-                  />
-                </svg>
+                <ArrowRight className="h-4 w-4 flex-shrink-0 text-indigo-300" strokeWidth={1.5} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-xs font-semibold text-indigo-100">
+                    <span className="truncate text-meta font-semibold text-indigo-100">
                       {currentLabel || '未连接服务器'}
                     </span>
-                    <span className="flex h-[15px] flex-shrink-0 items-center rounded bg-indigo-500/25 px-1 text-[9px] font-semibold tracking-wide text-indigo-200">
+                    <span className="flex h-[15px] flex-shrink-0 items-center rounded bg-indigo-500/25 px-1 text-caption font-semibold tracking-wide text-indigo-200">
                       当前
                     </span>
                   </span>
                   {currentConn ? (
-                    <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
+                    <span className="mt-0.5 block truncate text-caption text-indigo-300/70">
                       {currentConn.group || '未分组'} ·{' '}
                       {formatConnLabel(
                         currentConn.username,
@@ -281,7 +258,7 @@ export default function MultiHostPicker() {
                       )}
                     </span>
                   ) : (
-                    <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
+                    <span className="mt-0.5 block truncate text-caption text-indigo-300/70">
                       临时连接（未保存）· 仅当前机器可执行
                     </span>
                   )}
@@ -300,7 +277,7 @@ export default function MultiHostPicker() {
                   />
                 </svg>
               </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-indigo-200/60">
+              <p className="mt-1.5 text-caption leading-relaxed text-indigo-200/60">
                 Agent 默认在这台机器上执行；始终可用，无需勾选。
               </p>
             </div>
@@ -309,17 +286,17 @@ export default function MultiHostPicker() {
           {/* ── 可跨机目标 ── */}
           <div className="px-3 pb-1 pt-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              <span className="text-caption font-semibold uppercase tracking-wide text-fg-tertiary">
                 可跨机目标
               </span>
-              <span className="text-[10px] text-zinc-600">
+              <span className="text-caption text-fg-disabled">
                 勾选后 Agent 可携 host 操作
               </span>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
             {others.length === 0 && (
-              <div className="px-2 py-4 text-center text-xs text-zinc-500">
+              <div className="px-2 py-4 text-center text-meta text-fg-tertiary">
                 暂无其他已保存连接，请先在连接列表添加机器
               </div>
             )}
@@ -330,10 +307,10 @@ export default function MultiHostPicker() {
                   key={conn.id}
                   type="button"
                   onClick={() => toggle(conn.id)}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-100 active:scale-[0.99] ${
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-100 pressable ${
                     active
                       ? 'bg-indigo-500/10 text-indigo-100'
-                      : 'text-zinc-300 hover:bg-state-mid/50'
+                      : 'text-fg-secondary hover:bg-state-mid/50'
                   }`}
                 >
                   <span
@@ -344,26 +321,14 @@ export default function MultiHostPicker() {
                     }`}
                   >
                     {active && (
-                      <svg
-                        className="h-2.5 w-2.5 scale-in text-white"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={3.5}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
+                      <Check className="h-2.5 w-2.5 scale-in text-white" strokeWidth={1.5} />
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">
+                    <span className="block truncate text-meta font-medium">
                       {conn.name}
                     </span>
-                    <span className="block truncate text-[10px] text-zinc-500">
+                    <span className="block truncate text-caption text-fg-tertiary">
                       {conn.group || '未分组'} ·{' '}
                       {formatConnLabel(
                         conn.username,
@@ -378,7 +343,7 @@ export default function MultiHostPicker() {
             })}
           </div>
 
-          <div className="border-t border-edge/60 bg-zinc-900/40 px-3 py-2 text-[10px] leading-relaxed text-zinc-500">
+          <div className="border-t border-edge/60 bg-surface/40 px-3 py-2 text-caption leading-relaxed text-fg-tertiary">
             Agent 的 bash / 传输 / 子agent 可用 host 指定这些机器；未勾选的不在
             集合内，即使在线也会被拒绝。当前机器始终可执行。
           </div>

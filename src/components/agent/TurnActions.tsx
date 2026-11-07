@@ -1,3 +1,4 @@
+import { Check, ChevronDown, Copy, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import ContextMenu from '@/components/ui/ContextMenu';
 import MobileSheet from '@/mobile/ui/MobileSheet';
@@ -161,7 +162,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
   return (
     <div
       data-testid="turn-actions"
-      className={`mt-1 flex w-max max-w-full items-center gap-2 text-[11px] text-zinc-500 transition-all duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${visibility}`}
+      className={`mt-1 flex w-max max-w-full items-center gap-2 text-caption text-fg-tertiary transition duration-200 ease-standard focus-within:opacity-100 focus-within:translate-y-0 ${visibility}`}
     >
       <button
         type="button"
@@ -169,54 +170,20 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
         aria-haspopup="menu"
         aria-label={label}
         title={label}
-        className="flex items-center gap-0.5 rounded p-1 text-zinc-500 transition-colors hover:bg-state-soft hover:text-zinc-200"
+        className="flex items-center gap-0.5 rounded p-1 text-fg-tertiary transition-colors hover:bg-state-soft hover:text-fg"
       >
         <span className="relative block h-3.5 w-3.5">
-          <svg
-            className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-120 ${
+          <Copy className={`absolute inset-0 h-3.5 w-3.5 transition duration-120 ${
               status === 'idle' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-            />
-          </svg>
-          <svg
-            className={`absolute inset-0 h-3.5 w-3.5 text-green-400 transition-all duration-120 ${
+            }`} strokeWidth={1.5} />
+          <Check className={`absolute inset-0 h-3.5 w-3.5 text-emerald-400 transition duration-120 ${
               status === 'copied' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          <svg
-            className={`absolute inset-0 h-3.5 w-3.5 text-red-400 transition-all duration-120 ${
+            }`} strokeWidth={1.5} />
+          <X className={`absolute inset-0 h-3.5 w-3.5 text-red-400 transition duration-120 ${
               status === 'failed' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+            }`} strokeWidth={1.5} />
         </span>
-        <svg
-          className="h-2.5 w-2.5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
-        </svg>
+        <ChevronDown className="h-2.5 w-2.5" strokeWidth={1.5} aria-hidden="true" />
       </button>
 
       {onFork && (
@@ -235,7 +202,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
           }
           data-testid="turn-fork"
           className={`flex items-center gap-1 rounded p-1 transition-colors hover:bg-state-soft disabled:cursor-wait ${
-            forkStatus === 'failed' ? 'text-red-400' : 'text-zinc-500 hover:text-zinc-200'
+            forkStatus === 'failed' ? 'text-red-400' : 'text-fg-tertiary hover:text-fg'
           }`}
         >
           <svg
@@ -289,8 +256,8 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
                 }}
                 className="flex min-h-12 w-full flex-col items-start justify-center rounded-xl px-3 py-2 text-left active:bg-state-mid"
               >
-                <span className="text-[15px] text-zinc-100">{option.label}</span>
-                <span className="text-xs text-zinc-500">{option.description}</span>
+                <span className="text-read text-fg">{option.label}</span>
+                <span className="text-meta text-fg-tertiary">{option.description}</span>
               </button>
             ))}
           </div>

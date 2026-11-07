@@ -25,7 +25,7 @@ export function QuestionSourceLine({
   return (
     <div
       data-testid="question-source"
-      className={`flex min-w-0 items-center gap-2 text-[12px] leading-5 text-zinc-500 ${className}`}
+      className={`flex min-w-0 items-center gap-2 text-meta leading-5 text-fg-tertiary ${className}`}
     >
       <GitBranch className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate" title={title}>来自子 Agent「{title}」的问题</span>
@@ -33,8 +33,8 @@ export function QuestionSourceLine({
         <button
           type="button"
           onClick={() => void openSubagentQuestionContext(source)}
-          className={`flex-shrink-0 text-zinc-400 transition-colors ${
-            mobile ? 'py-1 active:text-zinc-200' : 'hover:text-zinc-200'
+          className={`flex-shrink-0 text-fg-secondary transition-colors ${
+            mobile ? 'py-1 active:text-fg' : 'hover:text-fg'
           }`}
         >
           查看它的上下文 →

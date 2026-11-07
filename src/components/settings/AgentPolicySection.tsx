@@ -148,9 +148,9 @@ export function AgentPolicySection() {
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
             />
-            {check.error && <p className="text-xs text-red-400">{check.error}</p>}
+            {check.error && <p className="text-meta text-red-400">{check.error}</p>}
             {check.results && (
               <CommandCheckResultCard
                 results={check.results}
@@ -234,17 +234,17 @@ export function AgentPolicySection() {
           className="flex w-full items-center gap-6 px-6 py-4 text-left transition-colors hover:bg-state-soft active:bg-state-mid"
         >
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-zinc-200">内置风险规则</span>
-            <span className="mt-0.5 block text-xs text-zinc-500">
+            <span className="block text-body font-medium text-fg">内置风险规则</span>
+            <span className="mt-1 block text-meta text-fg-tertiary">
               rm -rf /、pkill、curl | sh 等 {catalog?.rules.length ?? ''} 条
             </span>
           </span>
           {modifiedCount > 0 && (
-            <span className="rounded-full border border-indigo-700/50 bg-indigo-500/10 px-2 py-px text-xs text-indigo-200">
+            <span className="rounded-full border border-indigo-700/50 bg-indigo-500/10 px-2 py-px text-meta text-indigo-200">
               已改 {modifiedCount}
             </span>
           )}
-          <ChevronRight className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+          <ChevronRight className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
         </button>
         <SettingItem
           id="cmd-model-approval"
@@ -348,7 +348,7 @@ export function AgentLimitsSection() {
               onChange={(e) => update({ commandTimeoutSecs: Number(e.target.value) })}
               className="flex-1 accent-indigo-500"
             />
-            <span className="text-sm font-mono text-zinc-300 w-16 text-right">
+            <span className="text-body font-mono text-fg-secondary w-16 text-right">
               {settings.commandTimeoutSecs ?? 120}s
             </span>
           </div>

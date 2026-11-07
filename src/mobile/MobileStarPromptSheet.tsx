@@ -48,14 +48,14 @@ export default function MobileStarPromptSheet() {
           <button
             type="button"
             onClick={handleStar}
-            className="w-full rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="w-full rounded-xl bg-indigo-600 px-3 py-3 text-body font-medium text-white active:bg-indigo-500"
           >
             去 GitHub 点个 Star
           </button>
           <button
             type="button"
             onClick={handleSkip}
-            className="w-full rounded-xl bg-zinc-800 px-3 py-3 text-sm font-medium text-zinc-200 active:bg-state-mid"
+            className="w-full rounded-xl bg-surface-raised px-3 py-3 text-body font-medium text-fg active:bg-state-mid"
           >
             以后再说
           </button>
@@ -67,8 +67,8 @@ export default function MobileStarPromptSheet() {
           <Star className="h-8 w-8 text-amber-400" fill="currentColor" />
         </div>
         <div>
-          <p className="text-base font-semibold text-zinc-100">喜欢 Marcel SSH 吗？</p>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+          <p className="text-title font-semibold text-fg">喜欢 Marcel SSH 吗？</p>
+          <p className="mt-2 text-body leading-relaxed text-fg-secondary">
             如果它让 SSH 连接变得更顺手，欢迎去 GitHub 点个 Star ——
             这是对独立开发者最大的支持。
           </p>
@@ -76,7 +76,7 @@ export default function MobileStarPromptSheet() {
         <button
           type="button"
           onClick={handleNever}
-          className="text-xs text-zinc-600 active:text-zinc-400"
+          className="text-meta text-fg-disabled active:text-fg-secondary"
         >
           不再提醒
         </button>

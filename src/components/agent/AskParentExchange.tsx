@@ -38,37 +38,37 @@ function AskParentExchange({ message, grouped }: ToolViewProps) {
         busy={waiting}
         expanded={expanded}
         onToggle={() => !waiting && setExpanded((v) => !v)}
-        trailing={failed ? <span className="flex-shrink-0 text-xs text-zinc-500">未回答</span> : undefined}
+        trailing={failed ? <span className="flex-shrink-0 text-meta text-fg-tertiary">未回答</span> : undefined}
       >
         {(expanded || waiting) && (
-          <div className="ml-3 min-w-0 space-y-1 border-l border-edge/50 py-1.5 pl-3 pr-1.5 text-[13px] leading-5">
+          <div className="ml-3 min-w-0 space-y-1 border-l border-edge/50 py-1.5 pl-3 pr-1.5 text-body leading-5">
             <div className="min-w-0">
-              <span className="text-zinc-500">问：</span>
-              <span className="whitespace-pre-wrap break-words text-zinc-300 [overflow-wrap:anywhere]">
+              <span className="text-fg-tertiary">问：</span>
+              <span className="whitespace-pre-wrap break-words text-fg-secondary [overflow-wrap:anywhere]">
                 {question || '（问题内容缺失）'}
               </span>
             </div>
             {context && (
-              <div className="min-w-0 text-[12px]">
+              <div className="min-w-0 text-meta">
                 <button
                   type="button"
                   aria-expanded={showContext}
                   onClick={() => setShowContext((v) => !v)}
-                  className="text-zinc-500 transition-colors hover:text-zinc-300 [@media(pointer:coarse)]:min-h-8"
+                  className="text-fg-tertiary transition-colors hover:text-fg-secondary [@media(pointer:coarse)]:min-h-8"
                 >
                   背景信息 {showContext ? '▾' : '▸'}
                 </button>
                 {showContext && (
-                  <p className="whitespace-pre-wrap break-words text-zinc-400 [overflow-wrap:anywhere]">{context}</p>
+                  <p className="whitespace-pre-wrap break-words text-fg-secondary [overflow-wrap:anywhere]">{context}</p>
                 )}
               </div>
             )}
             {waiting ? (
-              <div className="text-[12px] text-zinc-500" data-testid="ask-parent-waiting">等待主 Agent 回答…</div>
+              <div className="text-meta text-fg-tertiary" data-testid="ask-parent-waiting">等待主 Agent 回答…</div>
             ) : answer ? (
               <div className="min-w-0">
-                <span className="text-zinc-500">{failed ? '未回答：' : '答：'}</span>
-                <span className="whitespace-pre-wrap break-words text-zinc-300 [overflow-wrap:anywhere]">{answer}</span>
+                <span className="text-fg-tertiary">{failed ? '未回答：' : '答：'}</span>
+                <span className="whitespace-pre-wrap break-words text-fg-secondary [overflow-wrap:anywhere]">{answer}</span>
               </div>
             ) : null}
           </div>

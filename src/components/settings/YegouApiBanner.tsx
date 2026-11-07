@@ -20,17 +20,17 @@ export default function YegouApiBanner({ className = '' }: Props) {
       type="button"
       onClick={() => openExternalLink(YEGOU_API_URL)}
       title="野构 API — 低价国模，0.09 倍率"
-      className={`flex w-full items-center justify-end gap-2 rounded-xl border border-edge-subtle bg-zinc-900/40 px-4 py-2 text-right transition-colors hover:border-zinc-600 hover:bg-zinc-900/70 ${className}`}
+      className={`flex w-full items-center justify-end gap-2 rounded-xl border border-edge-subtle bg-surface/40 px-4 py-2 text-right transition-colors hover:border-zinc-600 hover:bg-surface/70 ${className}`}
     >
       <img
         src="/yegou-api-icon.png"
         alt=""
         aria-hidden="true"
-        className="h-4 w-4 shrink-0 rounded-[3px] object-cover"
+        className="h-4 w-4 shrink-0 rounded-sm object-cover"
       />
-      <span className="text-xs text-zinc-400">野构 API</span>
-      <span className="text-[11px] text-zinc-600">低价国模</span>
-      <span className="text-xs font-medium text-amber-500/90">0.09 倍率</span>
+      <span className="text-meta text-fg-secondary">野构 API</span>
+      <span className="text-caption text-fg-disabled">低价国模</span>
+      <span className="text-meta font-medium text-amber-500/90">0.09 倍率</span>
       <svg
         aria-hidden="true"
         viewBox="0 0 24 24"
@@ -39,7 +39,7 @@ export default function YegouApiBanner({ className = '' }: Props) {
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="h-3.5 w-3.5 shrink-0 text-zinc-600"
+        className="h-3.5 w-3.5 shrink-0 text-fg-disabled"
       >
         <path d="M9 18l6-6-6-6" />
       </svg>

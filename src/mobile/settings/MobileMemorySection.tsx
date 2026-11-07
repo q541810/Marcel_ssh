@@ -52,15 +52,15 @@ export function MobileMemorySection() {
         <button
           type="button"
           onClick={() => setModelPicker(true)}
-          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <span className="truncate">{memoryModelId ? modelFullLabel(registry, memoryModelId) : '跟随会话模型'}</span>
-          <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+          <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
         </button>
       </MobileSettingRow>
 
       <SectionTitle title="整理助手" />
-      <div className="rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3">
+      <div className="rounded-xl border border-edge-subtle bg-surface px-3 py-3">
         <MemoryAssistantLauncher focus={manager.focus} mobile />
       </div>
 
@@ -83,7 +83,7 @@ export function MobileMemorySection() {
 function SectionTitle({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <div className="mt-3 flex items-center justify-between px-1">
-      <h2 className="text-xs font-medium text-zinc-500">{title}</h2>
+      <h2 className="text-meta font-medium text-fg-tertiary">{title}</h2>
       {action}
     </div>
   );
@@ -117,7 +117,7 @@ function MobileManage({ manager }: { manager: MemoryManager }) {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="-mr-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-indigo-300 active:bg-state-soft"
+            className="-mr-1 flex items-center gap-1 rounded-lg min-h-11 px-2 py-1.5 text-body text-indigo-300 active:bg-state-soft"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden />
             新增
@@ -134,45 +134,45 @@ function MobileManage({ manager }: { manager: MemoryManager }) {
               role="tab"
               aria-selected={active}
               onClick={() => setFilter(c.filter)}
-              className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition active:scale-[0.97] ${
-                active ? 'border-indigo-500/60 bg-indigo-500/15 text-zinc-100' : 'border-edge-subtle bg-zinc-900 text-zinc-400'
+              className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-meta pressable ${
+                active ? 'border-indigo-500/60 bg-indigo-500/15 text-fg' : 'border-edge-subtle bg-surface text-fg-secondary'
               }`}
             >
               {c.label}
-              {c.count > 0 && <span className="tabular-nums text-zinc-500">{c.count}</span>}
+              {c.count > 0 && <span className="tabular-nums text-fg-tertiary">{c.count}</span>}
               {c.fresh && <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" aria-label="有新的" />}
             </button>
           );
         })}
       </div>
 
-      <label className="flex items-center gap-2 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-2.5 focus-within:border-indigo-500/70">
-        <Search className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
+      <label className="flex items-center gap-2 rounded-xl border border-edge-subtle bg-surface px-3 py-2.5 focus-within:border-indigo-500/70">
+        <Search className="h-4 w-4 shrink-0 text-fg-tertiary" aria-hidden />
         <input
           value={manager.query}
           onChange={(e) => manager.setQuery(e.target.value)}
           placeholder="搜索标题或内容"
-          className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent text-body text-fg placeholder:text-fg-tertiary focus:outline-none"
         />
       </label>
 
       <MobileFilterHeader manager={manager} />
 
       {manager.undo && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-edge bg-zinc-800 px-3 py-2 text-xs">
-          <span className="min-w-0 truncate text-zinc-300">{manager.undo.text}</span>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised px-3 py-2 text-meta">
+          <span className="min-w-0 truncate text-fg-secondary">{manager.undo.text}</span>
           <button type="button" onClick={() => void manager.undoLast()}
             className="shrink-0 rounded-lg px-2.5 py-1.5 font-medium text-indigo-300 active:bg-indigo-500/10">
             撤销
           </button>
         </div>
       )}
-      {manager.actionError && <p className="px-1 text-xs text-red-400">{manager.actionError}</p>}
+      {manager.actionError && <p className="px-1 text-meta text-red-400">{manager.actionError}</p>}
 
       {!manager.loaded ? (
-        <p className="py-8 text-center text-sm text-zinc-500">{manager.loadError ?? '读取中…'}</p>
+        <p className="py-8 text-center text-body text-fg-tertiary">{manager.loadError ?? '读取中…'}</p>
       ) : manager.items.length === 0 ? (
-        <p className="px-2 py-8 text-center text-sm leading-relaxed text-zinc-500">
+        <p className="px-2 py-8 text-center text-body leading-relaxed text-fg-tertiary">
           {manager.query.trim()
             ? `没有匹配「${manager.query.trim()}」的记忆`
             : '这里还没有记忆。和 Agent 聊的时候它会记下值得记住的东西；也可以点「新增」手动写，或者让整理助手从以前的会话里整理。'}
@@ -188,7 +188,7 @@ function MobileManage({ manager }: { manager: MemoryManager }) {
       <MobileSheet open={!!actionsFor} onClose={() => setActionsFor(null)} title={actionsFor?.title}>
         {actionsFor && (
           <div className="flex flex-col gap-1 px-4 pb-4">
-            <p className="whitespace-pre-wrap break-words pb-2 text-sm leading-relaxed text-zinc-400">{actionsFor.content}</p>
+            <p className="whitespace-pre-wrap break-words pb-2 text-body leading-relaxed text-fg-secondary">{actionsFor.content}</p>
             <SheetAction onClick={() => { const m = actionsFor; setActionsFor(null); setEditing(m); }}>编辑</SheetAction>
             <SheetAction onClick={() => { const m = actionsFor; setActionsFor(null); void manager.togglePin(m); }}>
               {actionsFor.pinned ? '取消置顶' : '置顶'}
@@ -228,13 +228,13 @@ function MobileFilterHeader({ manager }: { manager: MemoryManager }) {
   }
   if (!text && !clearable) return null;
   return (
-    <div className="flex items-center justify-between gap-3 px-1 text-xs text-zinc-500">
+    <div className="flex items-center justify-between gap-3 px-1 text-meta text-fg-tertiary">
       <span className="min-w-0">{text}</span>
       {clearable && (
         <button
           type="button"
           onClick={() => void manager.clearScope(clearable!)}
-          className="shrink-0 rounded-lg px-2.5 py-1.5 text-zinc-400 active:bg-red-500/10 active:text-red-300"
+          className="shrink-0 rounded-lg px-2.5 py-1.5 text-fg-secondary active:bg-red-500/10 active:text-red-300"
         >
           清空 {clearable.label}
         </button>
@@ -250,16 +250,16 @@ function MobileItem({ item, showScope, onOpen }: { item: MemoryItem; showScope: 
       <button
         type="button"
         onClick={onOpen}
-        className="w-full rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-left transition-transform duration-100 active:scale-[0.99]"
+        className="w-full rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-left pressable"
       >
         <div className="flex min-w-0 items-center gap-2">
           {item.pinned && <Pin className="h-3 w-3 shrink-0 text-indigo-400" aria-label="置顶" />}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{item.title}</span>
-          {item.isNew && <span className="shrink-0 rounded bg-indigo-500/20 px-1.5 py-px text-[11px] text-indigo-300">新</span>}
-          <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-px text-[11px] text-zinc-400">{KIND_LABELS[item.kind]}</span>
+          <span className="min-w-0 flex-1 truncate text-body font-medium text-fg">{item.title}</span>
+          {item.isNew && <span className="shrink-0 rounded bg-indigo-500/20 px-1.5 py-px text-caption text-indigo-300">新</span>}
+          <span className="shrink-0 rounded bg-surface-raised px-1.5 py-px text-caption text-fg-secondary">{KIND_LABELS[item.kind]}</span>
         </div>
-        <p className="mt-1 line-clamp-2 break-words text-xs leading-relaxed text-zinc-400">{item.content}</p>
-        <div className="mt-1 text-[11px] text-zinc-600">
+        <p className="mt-1 line-clamp-2 break-words text-meta leading-relaxed text-fg-secondary">{item.content}</p>
+        <div className="mt-1 text-caption text-fg-disabled">
           {showScope && <>{scopeLabel(scopeOf(item), connections)} · </>}
           {SOURCE_LABELS[item.source]}记的 · {relativeTime(item.updatedAt)}
         </div>
@@ -273,7 +273,7 @@ function SheetAction({ children, onClick, danger = false }: { children: ReactNod
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-xl px-4 py-3 text-left text-sm active:bg-state-soft ${danger ? 'text-red-400' : 'text-zinc-200'}`}
+      className={`rounded-xl px-4 py-3 text-left text-body active:bg-state-soft ${danger ? 'text-red-400' : 'text-fg'}`}
     >
       {children}
     </button>

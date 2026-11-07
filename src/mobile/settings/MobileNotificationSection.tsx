@@ -31,8 +31,8 @@ export function MobileNotificationSection() {
   if (!bridgeAvailable) {
     return (
       <div className="flex flex-col items-center py-8 text-center">
-        <AlertCircle className="w-6 h-6 mb-2 text-zinc-600" />
-        <p className="text-sm text-zinc-500">
+        <AlertCircle className="w-6 h-6 mb-2 text-fg-disabled" />
+        <p className="text-body text-fg-tertiary">
           通知仅在 Android 端可用
         </p>
       </div>
@@ -50,7 +50,7 @@ export function MobileNotificationSection() {
       {!permissionGranted && (
         <div className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-          <p className="flex-1 text-xs leading-relaxed text-amber-300">
+          <p className="flex-1 text-meta leading-relaxed text-amber-300">
             系统通知权限未授予，Agent 事件提醒无法弹出。请到系统设置 → 应用 → Marcel SSH → 通知 中开启。
           </p>
         </div>
@@ -112,7 +112,7 @@ export function MobileNotificationSection() {
               <button
                 type="button"
                 onClick={openLiveActivitySettings}
-                className="rounded-md border border-edge-subtle px-2 py-1 text-xs text-zinc-200"
+                className="rounded-md border border-edge-subtle px-2 py-1 text-meta text-fg"
               >
                 去开启
               </button>
@@ -127,7 +127,7 @@ export function MobileNotificationSection() {
         }
       />
 
-      <p className="mt-2 px-1 text-xs leading-relaxed text-zinc-500">
+      <p className="mt-2 px-1 text-meta leading-relaxed text-fg-tertiary">
         仅在 App 切到后台时弹出系统通知（无声横幅 + 振动）。前台不打扰。本配置独立于桌面端，设备本地生效。
       </p>
     </div>

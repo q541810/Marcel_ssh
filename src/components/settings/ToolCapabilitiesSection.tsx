@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Check } from 'lucide-react';
 import type {
   ExperimentalSettings,
   FetchApiProtocol,
@@ -74,9 +75,9 @@ function MachinePicker({
   );
 
   return (
-    <div className="flex flex-col gap-1.5 w-full max-h-56 overflow-y-auto">
+    <div className="flex flex-col gap-2 w-full max-h-56 overflow-y-auto">
       {connections.length === 0 && (
-        <div className="text-xs text-zinc-500 py-2">
+        <div className="text-meta text-fg-tertiary py-2">
           暂无已保存的连接。请先在连接列表添加机器。
         </div>
       )}
@@ -87,10 +88,10 @@ function MachinePicker({
             key={conn.id}
             type="button"
             onClick={() => toggle(conn.id)}
-            className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors ${
+            className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
               active
                 ? 'border-indigo-500 bg-indigo-500/10 text-indigo-100'
-                : 'border-edge bg-zinc-800/40 text-zinc-300 hover:border-edge-strong'
+                : 'border-edge bg-surface-raised/40 text-fg-secondary hover:border-edge-strong'
             }`}
           >
             <span
@@ -99,14 +100,12 @@ function MachinePicker({
               }`}
             >
               {active && (
-                <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
+                <Check size={12} strokeWidth={2} className="text-white" />
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{conn.name}</span>
-              <span className="block truncate text-[11px] text-zinc-500">
+              <span className="block truncate text-body font-medium">{conn.name}</span>
+              <span className="block truncate text-caption text-fg-tertiary">
                 {conn.group || '未分组'} ·{' '}
                 {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
               </span>
@@ -134,7 +133,7 @@ function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placehol
         }}
         placeholder={hasKey ? '已保存，输入新 Key 可覆盖' : placeholder}
         autoComplete="off"
-        className="flex-1 rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+        className="flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
       />
       {hasKey && (
         <Button
@@ -270,13 +269,13 @@ export function ToolCapabilitiesSection() {
                         placeholder={CUSTOM_URL_PLACEHOLDER}
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                        className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
                       />
                       {customForm.check.error && (
-                        <p className="text-xs text-red-400">{customForm.check.error}</p>
+                        <p className="text-meta text-red-400">{customForm.check.error}</p>
                       )}
                       {customForm.check.warning && (
-                        <p className="text-xs text-amber-300/90">{customForm.check.warning}</p>
+                        <p className="text-meta text-amber-300/90">{customForm.check.warning}</p>
                       )}
                     </div>
                   </SettingItem>
@@ -410,13 +409,13 @@ export function ToolCapabilitiesSection() {
                     placeholder={CUSTOM_FETCH_URL_PLACEHOLDER}
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full rounded-lg bg-zinc-800 border border-edge px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
                   />
                   {customFetchForm.check.error && (
-                    <p className="text-xs text-red-400">{customFetchForm.check.error}</p>
+                    <p className="text-meta text-red-400">{customFetchForm.check.error}</p>
                   )}
                   {customFetchForm.check.warning && (
-                    <p className="text-xs text-amber-300/90">{customFetchForm.check.warning}</p>
+                    <p className="text-meta text-amber-300/90">{customFetchForm.check.warning}</p>
                   )}
                 </div>
               </SettingItem>
