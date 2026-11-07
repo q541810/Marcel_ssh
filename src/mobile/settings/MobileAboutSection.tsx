@@ -145,7 +145,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
           type="button"
           onClick={() => void handleCheck()}
           disabled={checking}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
         >
           {checking && <Loader2 className="h-4 w-4 animate-spin" />}
           {checking ? '检查中…' : '检查更新'}
@@ -225,7 +225,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
                       type="button"
                       disabled={installing}
                       onClick={() => void handleInstallNow()}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
                     >
                       先装 {updateState.version}
                     </button>
@@ -297,7 +297,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => void handleResetOnboarding()}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <RotateCcw className="h-4 w-4" />
           重新运行引导
@@ -309,7 +309,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => openExternalLink(SUPPORT_URL)}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <MessageCircle className="h-4 w-4" />加入交流群
         </button>
@@ -320,7 +320,7 @@ export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }
         <button
           type="button"
           onClick={() => openExternalLink(REPO_URL)}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <ExternalLink className="h-4 w-4" />在 GitHub 上查看
         </button>

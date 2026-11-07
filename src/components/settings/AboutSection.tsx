@@ -136,7 +136,7 @@ export default function AboutSection() {
           <button
             type="button"
             onClick={handleVersionTap}
-            className="rounded px-1 text-left text-body text-fg-secondary transition-colors hover:bg-state-soft hover:text-fg focus-visible:outline-2 focus-visible:outline-indigo-400"
+            className="-mx-1 rounded-md px-1 text-left text-body text-fg-secondary transition-colors hover:bg-fill-soft hover:text-fg focus-ring"
             title="版本信息"
           >
             {appVersion}

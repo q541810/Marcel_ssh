@@ -72,7 +72,7 @@ export function CommandCheckResultCard({
               onClick={() => onJump(hit.ruleId)}
               title="去规则里看"
               aria-label={`${hit.title}：${RULE_LEVEL_LABELS[hit.level]}，去规则里看`}
-              className={`inline-flex items-center gap-2 rounded-full border border-edge-strong bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid ${
+              className={`inline-flex items-center gap-2 rounded-full border border-edge-strong bg-fill text-fg hover:bg-fill-strong active:bg-state-mid ${
                 compact ? 'px-3 py-2 text-meta' : 'px-3 py-0.5 text-meta'
               }`}
             >

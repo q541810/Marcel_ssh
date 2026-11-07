@@ -1382,7 +1382,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 if (e.key === 'Enter') handleRename();
                 if (e.key === 'Escape') setRenameTarget(null);
               }}
-              className="w-full rounded-md bg-surface border border-edge px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500 mb-3"
+              className="w-full rounded-md bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500 mb-3"
               autoFocus
             />
             <div className="flex justify-end gap-2">

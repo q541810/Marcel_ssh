@@ -37,6 +37,14 @@
      深色下它和卡片、最淡边框同色，控件会隐形。描边用 border-edge（不是 edge-subtle）。 */
   --color-field: color-mix(in oklab, var(--color-zinc-950) 55%, var(--color-zinc-900));
 
+  /* 填充 3 档：用主文字色按比例调出的半透明灰（同 Apple 的 fill 系列）。放在任何面上都比底色深/亮
+     一级，所以次要按钮、菜单行悬停/选中、分段控件底都用它——别再用 surface-raised / state-soft
+     当按钮或悬停底：它们和卡片、玻璃浮层同色，放上去就隐形。
+     soft 悬停 / 默认 次要按钮底 / strong 次要按钮悬停与按下 */
+  --color-fill-soft: color-mix(in oklab, var(--color-fg) 7%, transparent);
+  --color-fill: color-mix(in oklab, var(--color-fg) 11%, transparent);
+  --color-fill-strong: color-mix(in oklab, var(--color-fg) 16%, transparent);
+
   /* 字号阶梯 6 档（禁用 9/10px）。手机端在下方整体上调一档 */
   --text-caption: 11px;
   --text-caption--line-height: 16px;
@@ -138,6 +146,18 @@ html[data-marcel-platform='mobile'] {
 @media (prefers-reduced-motion: reduce) {
   .pressable:active:not(:disabled) {
     transform: none;
+  }
+}
+
+/* 连续曲率圆角（squircle）：圆角从直边平滑过渡出去，不像普通圆弧那样在切点处突然拐弯——
+   Apple 全系统的按钮、卡片、图标都是这种角。所有 rounded-* 工具类（胶囊 rounded-full 除外，
+   胶囊两端必须是正半圆）统一套上；同样的半径值 squircle 看起来更「方」，所以支持时整档半径
+   放大约 1.5 倍，视觉圆润度与原来相当、但角的过渡顺滑。不支持 corner-shape 的旧内核退回普通圆角。 */
+@supports (corner-shape: squircle) {
+  [class*='rounded']:not([class*='rounded-full']),
+  .surface-glass,
+  .squircle {
+    corner-shape: squircle;
   }
 }
 
@@ -295,6 +315,17 @@ html[data-marcel-theme='light'] .hljs-deletion {
   /* Markdown 内容色：写死的暗色粉（prose-code:text-pink-300）在白底上不可读，
      收进变量按明暗翻转；引用 zinc/indigo 调色板变量，自定义主题也能跟着走。 */
   --marcel-md-code-text: var(--color-pink-300, #f9a8d4);
+}
+
+/* 连续曲率圆角下的半径阶梯（见上方 corner-shape 规则）：必须写在默认阶梯之后才盖得住 */
+@supports (corner-shape: squircle) {
+  :root {
+    --radius-sm: 6px;
+    --radius-md: 9px;
+    --radius-lg: 12px;
+    --radius-xl: 18px;
+    --radius-2xl: 24px;
+  }
 }
 
 html[data-marcel-theme='light'] {
@@ -1477,7 +1508,7 @@ html[data-marcel-theme='light'] .marcel-code-block {
 
 .mobile-popover-enter {
   transform-origin: bottom left;
-  animation: mobilePopoverEnter 200ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+  animation: mobilePopoverEnter 200ms var(--ease-emphasized) both;
 }
 
 @keyframes mobileFullscreenEnter {

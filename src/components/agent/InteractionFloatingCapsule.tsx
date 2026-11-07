@@ -99,7 +99,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
             <button
               type="button"
               onClick={(e) => onNavigateToContext(e)}
-              className="px-2 py-1.5 rounded-xl bg-surface-raised hover:bg-state-mid pressable text-indigo-300 text-meta font-medium border border-edge transition-colors flex items-center gap-1"
+              className="px-2 py-1.5 rounded-xl bg-fill hover:bg-fill-strong pressable text-indigo-300 text-meta font-medium border border-edge transition-colors flex items-center gap-1"
               title="切换到该任务所在的会话"
             >
               <span>跳转</span>
@@ -113,7 +113,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
                 e.stopPropagation();
                 onReject();
               }}
-              className="p-2 rounded-xl bg-surface-raised hover:bg-red-950/80 hover:text-red-200 hover:border-red-500/40 text-fg-secondary border border-edge pressable transition-colors"
+              className="p-2 rounded-xl bg-fill hover:bg-red-950/80 hover:text-red-200 hover:border-red-500/40 text-fg-secondary border border-edge pressable transition-colors"
               title="拒绝"
               aria-label="拒绝"
             >
@@ -142,7 +142,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
               e.stopPropagation();
               onExpand();
             }}
-            className="p-2 rounded-xl bg-surface-raised hover:bg-state-mid text-fg-secondary hover:text-fg border border-edge pressable transition-colors"
+            className="p-2 rounded-xl bg-fill hover:bg-fill-strong text-fg-secondary hover:text-fg border border-edge pressable transition-colors"
             title="展开弹窗"
             aria-label="展开"
           >

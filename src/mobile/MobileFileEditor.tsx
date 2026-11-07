@@ -312,7 +312,7 @@ export default function MobileFileEditor({
               setCloseConfirmOpen(false);
               requestClose();
             }}
-            className="rounded-xl bg-surface-raised px-4 py-3 text-body text-red-300 active:bg-state-mid"
+            className="rounded-xl bg-fill px-4 py-3 text-body text-red-300 active:bg-state-mid"
           >
             放弃修改
           </button>

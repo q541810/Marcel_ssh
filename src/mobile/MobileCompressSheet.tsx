@@ -225,7 +225,7 @@ export default function MobileCompressSheet({
             <button
               type="button"
               onClick={handleClose}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               {isFinished ? '关闭' : '取消'}
             </button>
@@ -263,7 +263,7 @@ export default function MobileCompressSheet({
                 className={`rounded-lg px-3 py-2 text-meta ${
                   format === f
                     ? 'bg-indigo-600 text-white'
-                    : 'bg-surface-raised text-fg-secondary active:bg-state-mid'
+                    : 'bg-fill text-fg-secondary active:bg-state-mid'
                 } disabled:opacity-50`}
               >
                 {f}

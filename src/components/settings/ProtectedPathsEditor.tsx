@@ -205,7 +205,7 @@ export function ProtectedPathsEditor({
             type="button"
             onClick={() => void add()}
             disabled={!draft.trim()}
-            className="flex-shrink-0 rounded-lg bg-surface-raised px-4 py-3 text-body text-fg active:bg-state-mid disabled:opacity-40"
+            className="flex-shrink-0 rounded-lg bg-fill px-4 py-3 text-body text-fg active:bg-state-mid disabled:opacity-40"
           >
             添加
           </button>

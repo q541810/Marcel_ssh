@@ -44,7 +44,7 @@ export default function MobileFileLinkSheet({
                 onClose();
                 onCopyRelative(c);
               }}
-              className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
+              className="rounded-xl bg-fill px-4 py-3 text-left text-body text-fg active:bg-state-mid"
             >
               {c.label}
               <span className="mt-0.5 block break-all font-mono text-caption text-fg-tertiary">{c.text}</span>
@@ -79,7 +79,7 @@ export default function MobileFileLinkSheet({
                 onClose();
                 onSelect(item.id as FileActionId);
               }}
-              className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
+              className="rounded-xl bg-fill px-4 py-3 text-left text-body text-fg active:bg-state-mid"
             >
               {item.label}{item.children ? ' ›' : ''}
               {item.hint && (

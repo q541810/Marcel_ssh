@@ -256,7 +256,7 @@ export default function MobileChatHistorySheet({
                   type="button"
                   disabled={matchIndex <= 0}
                   onClick={() => goMatch(-1)}
-                  className="rounded-lg bg-surface-raised px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
+                  className="rounded-lg bg-fill px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
                   aria-label="上一条匹配"
                 >
                   ▲
@@ -265,7 +265,7 @@ export default function MobileChatHistorySheet({
                   type="button"
                   disabled={matchIndex >= activeMatchIds.length - 1}
                   onClick={() => goMatch(1)}
-                  className="rounded-lg bg-surface-raised px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
+                  className="rounded-lg bg-fill px-3.5 py-1 text-body text-fg active:bg-state-mid disabled:opacity-30"
                   aria-label="下一条匹配"
                 >
                   ▼
@@ -457,7 +457,7 @@ export default function MobileChatHistorySheet({
                           }
                           className={`w-full rounded-lg px-3 py-2.5 text-left text-body ${
                             expanded
-                              ? 'bg-surface-raised text-fg'
+                              ? 'bg-fill text-fg'
                               : 'bg-surface-raised/60 text-fg-secondary active:bg-state-soft'
                           }`}
                         >
@@ -625,7 +625,7 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={cancelRename}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -670,7 +670,7 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={() => setDeleteTarget(null)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>

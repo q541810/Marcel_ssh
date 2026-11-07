@@ -336,7 +336,7 @@ export default function MobileConnectionForm({
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+            className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
           >
             取消
           </button>
@@ -463,7 +463,7 @@ export default function MobileConnectionForm({
                 <button
                   type="button"
                   onClick={() => setKeyManagerTarget('main')}
-                  className="shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+                  className="shrink-0 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
                 >
                   选择 / 导入…
                 </button>
@@ -500,7 +500,7 @@ export default function MobileConnectionForm({
                 <button
                   type="button"
                   onClick={() => setSecretDirty(true)}
-                  className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
+                  className="rounded-lg min-h-11 bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
                 >
                   修改
                 </button>
@@ -559,7 +559,7 @@ export default function MobileConnectionForm({
                   <button
                     type="button"
                     onClick={() => setLoginPasswordDirty(true)}
-                    className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
+                    className="rounded-lg min-h-11 bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
                   >
                     修改
                   </button>
@@ -760,7 +760,7 @@ export default function MobileConnectionForm({
                       <button
                         type="button"
                         onClick={() => setKeyManagerTarget('jump')}
-                        className="shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+                        className="shrink-0 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
                       >
                         选择 / 导入…
                       </button>

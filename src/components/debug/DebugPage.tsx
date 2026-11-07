@@ -235,7 +235,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
             type="button"
             onClick={() => void reloadPlugins()}
             disabled={pluginReloading}
-            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:cursor-wait disabled:opacity-60"
+            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-fill px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-fill-strong focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:cursor-wait disabled:opacity-60"
           >
             <PlugZap className="h-4 w-4" aria-hidden="true" />
             {pluginReloading ? "正在尝试热重载…" : "尝试热重载插件"}
@@ -261,7 +261,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           <button
             type="button"
             onClick={() => setErrorPreviewOpen(true)}
-            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-state-mid focus-visible:outline-2 focus-visible:outline-indigo-400"
+            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-edge bg-fill px-3 py-2 text-body font-medium text-fg transition-colors hover:bg-fill-strong focus-visible:outline-2 focus-visible:outline-indigo-400"
           >
             <Eye className="h-4 w-4" aria-hidden="true" />
             预览错误界面

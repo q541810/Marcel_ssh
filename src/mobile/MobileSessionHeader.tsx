@@ -73,7 +73,7 @@ export default function MobileSessionHeader({
         <button
           type="button"
           onClick={() => setForwardOpen(true)}
-          className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
+          className="flex h-11 w-11 items-center justify-center rounded-lg bg-fill text-fg-secondary pressable active:bg-state-mid"
           aria-label="端口转发"
         >
           <ArrowLeftRight size={16} strokeWidth={1.5} />
@@ -84,7 +84,7 @@ export default function MobileSessionHeader({
         <button
           type="button"
           onClick={() => onReconnect(session.id)}
-          className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
+          className="flex h-11 w-11 items-center justify-center rounded-lg bg-fill text-fg-secondary pressable active:bg-state-mid"
           aria-label="重连"
         >
           <RefreshCw size={16} strokeWidth={1.5} />
@@ -94,7 +94,7 @@ export default function MobileSessionHeader({
       <button
         type="button"
         onClick={() => onDisconnect(session.id)}
-        className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised text-fg-secondary pressable active:bg-state-mid"
+        className="flex h-11 w-11 items-center justify-center rounded-lg bg-fill text-fg-secondary pressable active:bg-state-mid"
         aria-label="断开"
       >
         <X size={16} strokeWidth={1.5} />

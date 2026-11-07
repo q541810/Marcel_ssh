@@ -207,7 +207,7 @@ export default memo(function AgentTranscript({
                 onClick={() => scrollToBottom('smooth')}
                 title="回到底部"
                 aria-label="回到底部"
-                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-surface-raised/95 text-fg shadow-raised backdrop-blur-sm transition-colors hover:bg-state-mid"
+                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-surface-raised/95 text-fg shadow-raised backdrop-blur-sm transition-colors hover:bg-fill-strong"
               >
                 <ArrowDown className="h-4 w-4" />
               </button>

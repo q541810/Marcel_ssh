@@ -59,8 +59,8 @@ export default function SkillImportProgressBar({ progress, onCancel, touch = fal
           type='button'
           onClick={onCancel}
           className={
-            'shrink-0 rounded-md border border-edge-strong bg-surface-raised text-meta font-medium text-fg ' +
-            'transition-colors hover:bg-state-mid active:bg-state-strong ' +
+            'shrink-0 rounded-md border border-edge-strong bg-fill text-meta font-medium text-fg ' +
+            'transition-colors hover:bg-fill-strong active:bg-state-strong ' +
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ' +
             (touch ? 'min-h-11 px-4' : 'h-7 px-3')
           }

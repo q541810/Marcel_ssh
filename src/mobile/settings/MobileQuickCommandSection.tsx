@@ -314,7 +314,7 @@ export function MobileQuickCommandSection() {
             <button
               type="button"
               onClick={() => setForm(null)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>

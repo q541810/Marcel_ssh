@@ -55,7 +55,7 @@ export default function MobileStarPromptSheet() {
           <button
             type="button"
             onClick={handleSkip}
-            className="w-full rounded-xl bg-surface-raised px-3 py-3 text-body font-medium text-fg active:bg-state-mid"
+            className="w-full rounded-xl bg-fill px-3 py-3 text-body font-medium text-fg active:bg-state-mid"
           >
             以后再说
           </button>

@@ -46,13 +46,13 @@ export default function Toggle({ checked, onChange, disabled = false, label, ari
           relative inline-flex ${s.track} flex-shrink-0 items-center rounded-full
           pressable focus-ring
           disabled:opacity-50 disabled:cursor-not-allowed
-          ${checked ? 'bg-indigo-600' : 'bg-state-strong'}
+          ${checked ? 'bg-indigo-600' : 'bg-fill-strong'}
         `}
       >
         <span
           className={`
             pointer-events-none absolute inline-block ${s.knob} rounded-full
-            bg-white shadow ring-0
+            bg-white shadow-raised ring-0
             ${checked ? s.checkedLeft : s.uncheckedLeft} transition-[left] duration-200 ease-standard
           `}
         />

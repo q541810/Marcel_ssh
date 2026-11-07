@@ -33,7 +33,7 @@ export default function AssistantModelPicker({ mobile = false }: { mobile?: bool
             type="button"
             disabled={running}
             onClick={() => setSheet(true)}
-            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 text-left text-body text-fg active:bg-state-mid disabled:opacity-50"
+            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-fill px-3 text-left text-body text-fg active:bg-state-mid disabled:opacity-50"
           >
             <span className="truncate">
               {label || '尚未配置模型'}

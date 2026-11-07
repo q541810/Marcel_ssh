@@ -45,7 +45,7 @@ export default function SegmentedControl<T extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="inline-flex gap-0.5 rounded-lg border border-edge-subtle bg-surface-raised p-0.5"
+      className="inline-flex gap-0.5 rounded-lg bg-fill-soft p-0.5"
     >
       {options.map((option, index) => {
         const active = option.value === value;
@@ -75,8 +75,8 @@ export default function SegmentedControl<T extends string>({
               disabled:text-fg-disabled disabled:cursor-not-allowed
               ${
                 active
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-fg-secondary hover:bg-state-soft hover:text-fg'
+                  ? 'bg-fill-strong text-fg shadow-raised'
+                  : 'text-fg-secondary hover:bg-fill-soft hover:text-fg'
               }`}
           >
             {option.label}

@@ -69,7 +69,7 @@ export default function MobileQuickCommandBar({
             className={`flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-meta pressable disabled:opacity-50 ${
               running
                 ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
-                : 'border-edge bg-surface-raised text-fg active:bg-state-mid'
+                : 'border-edge bg-fill text-fg active:bg-state-mid'
             }`}
           >
             {running && <Loader2 className="h-3 w-3 animate-spin" />}

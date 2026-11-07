@@ -52,7 +52,7 @@ export function MobileMemorySection() {
         <button
           type="button"
           onClick={() => setModelPicker(true)}
-          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <span className="truncate">{memoryModelId ? modelFullLabel(registry, memoryModelId) : '跟随会话模型'}</span>
           <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />

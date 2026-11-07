@@ -859,7 +859,7 @@ export default function MobileFilesHost({
             className={`rounded-lg px-2.5 py-1.5 text-meta active:opacity-80 ${
               showHidden
                 ? 'bg-indigo-600/30 text-indigo-200'
-                : 'bg-surface-raised text-fg active:bg-state-mid'
+                : 'bg-fill text-fg active:bg-state-mid'
             }`}
             aria-label={showHidden ? '隐藏点文件' : '显示点文件'}
             aria-pressed={showHidden}
@@ -871,7 +871,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
+            className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
             aria-label="刷新"
           >
             刷新
@@ -887,7 +887,7 @@ export default function MobileFilesHost({
           <button
             type="button"
             onClick={() => setShowNewMenu(true)}
-            className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg active:bg-state-mid"
+            className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg active:bg-state-mid"
           >
             新建
           </button>
@@ -900,7 +900,7 @@ export default function MobileFilesHost({
             className={`rounded-lg px-2.5 py-1.5 text-meta active:opacity-80 ${
               selectMode
                 ? 'bg-indigo-600/30 text-indigo-200'
-                : 'bg-surface-raised text-fg active:bg-state-mid'
+                : 'bg-fill text-fg active:bg-state-mid'
             }`}
             aria-pressed={selectMode}
           >
@@ -1396,7 +1396,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setShowNewFolder(false)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1472,7 +1472,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => void runDelete(deleteConfirm, true)}
-              className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
+              className="rounded-xl bg-fill px-4 py-3 text-left active:bg-state-mid"
             >
               <span className="block text-body font-medium text-red-400">
                 快速删除
@@ -1505,7 +1505,7 @@ export default function MobileFilesHost({
               setNewFolderName('');
               setShowNewFolder(true);
             }}
-            className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
+            className="rounded-xl bg-fill px-4 py-3 text-left text-body text-fg active:bg-state-mid"
           >
             新建文件夹
           </button>
@@ -1516,7 +1516,7 @@ export default function MobileFilesHost({
               setNewFileName('');
               setShowNewFile(true);
             }}
-            className="rounded-xl bg-surface-raised px-4 py-3 text-left text-body text-fg active:bg-state-mid"
+            className="rounded-xl bg-fill px-4 py-3 text-left text-body text-fg active:bg-state-mid"
           >
             新建文件
           </button>
@@ -1539,7 +1539,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setShowNewFile(false)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1593,7 +1593,7 @@ export default function MobileFilesHost({
                 joinRemotePath(currentPath, stem),
               );
             }}
-            className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
+            className="rounded-xl bg-fill px-4 py-3 text-left active:bg-state-mid"
           >
             <span className="block text-body font-medium text-fg">
               解压到同名子文件夹
@@ -1610,7 +1610,7 @@ export default function MobileFilesHost({
               if (!extractEntry) return;
               void handleExtract(extractEntry, currentPath);
             }}
-            className="rounded-xl bg-surface-raised px-4 py-3 text-left active:bg-state-mid"
+            className="rounded-xl bg-fill px-4 py-3 text-left active:bg-state-mid"
           >
             <span className="block text-body font-medium text-fg">
               解压到当前目录
@@ -1650,7 +1650,7 @@ export default function MobileFilesHost({
             <button
               type="button"
               onClick={() => setRenameEntry(null)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>
@@ -1777,7 +1777,7 @@ function SheetAction({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-xl bg-surface-raised px-4 py-3 text-left text-body active:bg-state-mid disabled:opacity-40 ${
+      className={`rounded-xl bg-fill px-4 py-3 text-left text-body active:bg-state-mid disabled:opacity-40 ${
         danger ? 'text-red-400' : 'text-fg'
       }`}
     >

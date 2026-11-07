@@ -60,7 +60,7 @@ export function ToolApprovalEditor({
           onClick={onOpenCommandRules}
           title="命令要不要问你，由命令确认方式和命令规则决定，点这里去看"
           aria-label={`${COMMAND_TOOL.label}：按命令规则`}
-          className={`inline-flex max-w-full items-center gap-2 rounded-lg border border-edge bg-surface-raised px-3 text-fg-secondary transition-colors hover:bg-state-mid active:bg-state-mid ${chipHeight}`}
+          className={`inline-flex max-w-full items-center gap-2 rounded-lg border border-edge bg-fill px-3 text-fg-secondary transition-colors hover:bg-fill-strong active:bg-state-mid ${chipHeight}`}
         >
           {COMMAND_TOOL.label}
           <ChevronRight className="-mr-1 h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" />
@@ -82,7 +82,7 @@ export function ToolApprovalEditor({
               className={`inline-flex max-w-full items-center gap-2 rounded-lg border px-3 transition-colors ${chipHeight} ${
                 selected
                   ? 'border-indigo-500 bg-indigo-500/10 text-fg'
-                  : 'border-edge bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid'
+                  : 'border-edge bg-fill text-fg hover:bg-fill-strong active:bg-state-mid'
               }`}
             >
               <span

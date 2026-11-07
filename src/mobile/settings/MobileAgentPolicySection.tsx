@@ -180,7 +180,7 @@ export function MobileAgentPolicySection() {
                 <button
                   type="button"
                   onClick={() => setApprovalModelPickerOpen(true)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none active:bg-state-mid"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-fill px-3 py-2.5 text-body text-fg outline-none active:bg-state-mid"
                 >
                   <span className="truncate">
                     {settings.llmRegistry?.slots?.modelApprovalModelId

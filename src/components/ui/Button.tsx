@@ -14,10 +14,10 @@ const disabledBase = 'disabled:bg-state-soft disabled:text-fg-disabled disabled:
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary: `bg-indigo-600 text-white hover:bg-indigo-500 ${disabledBase}`,
-  secondary: `bg-surface-raised text-fg border border-edge-subtle hover:bg-state-mid disabled:bg-surface-raised disabled:text-fg-disabled`,
+  secondary: `bg-fill text-fg hover:bg-fill-strong active:bg-fill-strong disabled:bg-fill-soft disabled:text-fg-disabled`,
   danger: `bg-red-600 text-white hover:bg-red-500 ${disabledBase}`,
   ghost:
-    'bg-transparent text-fg-secondary hover:bg-state-soft hover:text-fg disabled:bg-transparent disabled:text-fg-disabled',
+    'bg-transparent text-fg-secondary hover:bg-fill-soft hover:text-fg disabled:bg-transparent disabled:text-fg-disabled',
 };
 
 const sizeStyles: Record<ButtonSize, string> = {

@@ -13,7 +13,7 @@
 
 import { exists, stat } from '@tauri-apps/plugin-fs';
 import { collectPlatformHints, isMobilePlatform } from '@/platform';
-import { currentMobileTab, requestMobileTab } from '@/mobile/tabs';
+import { currentMobileTab, requestMobileTab, type MobileTabId } from '@/mobile/tabs';
 import { isBottomPanelMounted, requestBottomTab } from '@/lib/bottomPanelNav';
 import { requestOpenAgentPanel } from '@/lib/agentPanelNav';
 import { DEFAULT_WORKSPACE_LAYOUT, dockPanelOf } from '@/lib/workspaceLayout';
@@ -213,6 +213,7 @@ function deliverToFileManager(
   sessionId: string,
   info: { path: string; isDir: boolean; size: number },
   intent: FileNavIntent,
+  opts: { followUp?: boolean; returnTo?: MobileTabId | null } = {},
 ): void {
   const mobile = isMobileShell();
   // 手机：记下用户从哪一页来，文件页据此提供「返回」（桌面对话就在旁边，不需要）
@@ -221,8 +222,11 @@ function deliverToFileManager(
     sessionId,
     ...info,
     intent,
-    returnTo: origin && origin !== 'files' ? origin : null,
+    returnTo: opts.returnTo !== undefined ? opts.returnTo : origin && origin !== 'files' ? origin : null,
   });
+  // 跟进请求（确认完路径后补发的「打开它」）只更新待办，不再切面板 / 页签：
+  // 用户这几百毫秒里可能已经去了别处，不该被硬拽回来。
+  if (opts.followUp) return;
   useSessionStore.getState().setActiveSession(sessionId);
   if (mobile) {
     requestMobileTab('files');
@@ -233,6 +237,9 @@ function deliverToFileManager(
   if (!isBottomPanelMounted()) requestOpenAgentPanel();
   requestBottomTab('file-manager');
 }
+
+/** 最近一次「去文件管理器」的点击序号：后台确认完才补发的后续，只在它仍是最新一次时才算数。 */
+let navToken = 0;
 
 async function runLocal(action: FileActionId, ref: FileRef): Promise<void> {
   try {
@@ -279,41 +286,54 @@ export async function runFileAction(
   }
 
   const sessionId = machine.sessionId as string;
+
+  // 进终端目录：要先知道它是不是目录（文件就进它的父目录），没有界面可先跳，仍先确认。
+  if (action === 'cd') {
+    const info = await statRemotePath(sessionId, ref.path, ref.isDir);
+    if (info.exists === false) {
+      notify(`这个路径在 ${machine.label} 上不存在：${ref.path}`);
+      return;
+    }
+    const dir = info.isDir ? ref.path : fileParentDir(ref.path);
+    useSessionStore.getState().setActiveSession(sessionId);
+    const error = await cdInTerminal(sessionId, dir);
+    if (error) notify(error);
+    else if (isMobileShell()) requestMobileTab('terminal');
+    return;
+  }
+
+  // 其余动作都要去文件管理器：**先跳**。点下去的那一刻就切过去、开始进目录，用户立刻看到界面在动；
+  // 「路径在不在 / 是不是目录 / 多大」在后台并行确认（文件管理器自己也在列同一个父目录，
+  // 两条请求并行而不是串行），不再有「点了没反应」的停顿。
+  const token = ++navToken;
+  const mobile = isMobileShell();
+  const origin = mobile ? currentMobileTab() : null;
+  const returnTo = origin && origin !== 'files' ? origin : null;
+  deliverToFileManager(sessionId, { path: ref.path, isDir: ref.isDir ?? false, size: 0 }, 'reveal');
+
   const info = await statRemotePath(sessionId, ref.path, ref.isDir);
   if (info.exists === false) {
     notify(`这个路径在 ${machine.label} 上不存在：${ref.path}`);
     return;
   }
-  const target = { path: ref.path, isDir: info.isDir, size: info.size };
-
-  switch (action) {
-    case 'cd': {
-      const dir = info.isDir ? ref.path : fileParentDir(ref.path);
-      useSessionStore.getState().setActiveSession(sessionId);
-      const error = await cdInTerminal(sessionId, dir);
-      if (error) notify(error);
-      else if (isMobileShell()) requestMobileTab('terminal');
-      return;
-    }
-    case 'reveal':
-      deliverToFileManager(sessionId, target, 'reveal');
-      return;
-    case 'editor':
-      deliverToFileManager(sessionId, target, info.isDir ? 'reveal' : 'editor');
-      return;
-    case 'preview':
-      deliverToFileManager(sessionId, target, info.isDir ? 'reveal' : 'preview');
-      return;
-    case 'open': {
-      // 目录与打不开的类型（二进制）在文件管理里显示；文本 / 图片直接打开
-      const toOpen =
-        !info.isDir && defaultFileAction({ side: 'remote', path: ref.path, isDir: false }) === 'open';
-      deliverToFileManager(sessionId, target, toOpen ? 'auto' : 'reveal');
-      return;
-    }
-    default:
-      return;
-  }
+  // 只是定位，或确认下来是目录：已经带用户到了，没有后续
+  if (action === 'reveal' || info.isDir) return;
+  // 确认的这段时间里用户又点了别的链接：这次的后续作废，不抢走新的那次
+  if (token !== navToken) return;
+  // 默认打开：打不开的类型（二进制）停在定位；文本 / 图片直接打开
+  const intent: FileNavIntent | null =
+    action === 'open'
+      ? defaultFileAction({ side: 'remote', path: ref.path, isDir: false }) === 'open'
+        ? 'auto'
+        : null
+      : action === 'editor' || action === 'preview'
+        ? action
+        : null;
+  if (!intent) return;
+  deliverToFileManager(sessionId, { path: ref.path, isDir: false, size: info.size }, intent, {
+    followUp: true,
+    returnTo,
+  });
 }
 
 /** 左键点击链接 / 芯片：做默认动作。 */

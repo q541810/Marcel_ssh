@@ -210,7 +210,7 @@ export default function PortForwardView({ sessionId, touch = false }: PortForwar
                         <button
                           type="button"
                           onClick={() => void forwardAndMaybeOpen(s.targetHost, s.port, false)}
-                          className={`${btn} flex-shrink-0 bg-surface-raised text-fg transition-colors hover:bg-state-mid`}
+                          className={`${btn} flex-shrink-0 bg-fill text-fg transition-colors hover:bg-fill-strong`}
                         >
                           转发
                         </button>

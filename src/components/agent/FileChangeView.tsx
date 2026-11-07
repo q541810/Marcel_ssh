@@ -241,7 +241,7 @@ function MatchNavBar({
         type="button"
         disabled={activeIndex <= 0}
         onClick={() => onGo(activeIndex - 1)}
-        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-surface-raised hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
+        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-fill hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="上一处"
       >
         ‹
@@ -254,7 +254,7 @@ function MatchNavBar({
         type="button"
         disabled={activeIndex >= count - 1}
         onClick={() => onGo(activeIndex + 1)}
-        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-surface-raised hover:bg-state-mid disabled:opacity-30 disabled:cursor-not-allowed"
+        className="px-1.5 py-0.5 rounded text-caption text-fg-secondary bg-fill hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="下一处"
       >
         ›
@@ -269,7 +269,7 @@ function MatchNavBar({
               className={`min-w-[1.25rem] h-5 px-1 rounded text-caption font-mono transition-colors ${
                 i === activeIndex
                   ? 'bg-indigo-600 text-white'
-                  : 'bg-surface-raised text-fg-secondary hover:bg-state-mid hover:text-fg'
+                  : 'bg-fill text-fg-secondary hover:bg-fill-strong hover:text-fg'
               }`}
             >
               {i + 1}

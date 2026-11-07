@@ -145,7 +145,7 @@ function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placehol
         <button
           type="button"
           onClick={() => void clearToolApiKey(slot).then((cleared) => cleared && setDraft(''))}
-          className="flex-shrink-0 rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="flex-shrink-0 rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           清除
         </button>

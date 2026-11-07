@@ -258,7 +258,7 @@ export function UiThemeEditor({
                     zones: deriveNeutralRamp(value.zones),
                   })
                 }
-                className="rounded-md border border-edge bg-surface-raised px-2 py-1 text-caption text-fg-secondary hover:bg-state-mid"
+                className="rounded-md border border-edge bg-fill px-2 py-1 text-caption text-fg-secondary hover:bg-fill-strong"
                 title="以当前「外框 / 卡片 / 标题」为锚点，自动生成其余中性色"
               >
                 按三档自动铺满
@@ -322,7 +322,7 @@ export function UiThemeEditor({
               <button
                 type="button"
                 onClick={() => setTerminal(deriveTerminalColors(value.zones))}
-                className="flex-shrink-0 rounded-md border border-edge bg-surface-raised px-2 py-1 text-caption text-fg-secondary hover:bg-state-mid"
+                className="flex-shrink-0 rounded-md border border-edge bg-fill px-2 py-1 text-caption text-fg-secondary hover:bg-fill-strong"
                 title="用当前界面的背景、文字与语义色生成一套终端配色"
               >
                 从界面配色生成
@@ -339,7 +339,7 @@ export function UiThemeEditor({
                     className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-meta transition-colors ${
                       selected
                         ? "border-indigo-500 bg-indigo-500/10 text-indigo-200"
-                        : "border-edge bg-surface-raised text-fg-secondary hover:bg-state-mid active:bg-state-mid"
+                        : "border-edge bg-fill text-fg-secondary hover:bg-fill-strong active:bg-state-mid"
                     }`}
                   >
                     <span

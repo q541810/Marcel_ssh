@@ -57,7 +57,7 @@ export default function MobileKeepAliveTipCard({
           <button
             type="button"
             onClick={onIgnore}
-            className="pressable flex-1 rounded-lg min-h-11 border border-edge bg-surface-raised px-3 py-2 text-body font-medium text-fg-secondary active:bg-state-mid"
+            className="pressable flex-1 rounded-lg min-h-11 border border-edge bg-fill px-3 py-2 text-body font-medium text-fg-secondary active:bg-state-mid"
           >
             忽略
           </button>

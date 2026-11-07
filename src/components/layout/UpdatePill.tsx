@@ -162,7 +162,7 @@ export default function UpdatePill() {
                 ? 'border border-indigo-500/30 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25'
                 : state.status === 'failed'
                   ? 'border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
-                  : 'border border-edge-subtle bg-surface-raised text-fg-secondary hover:bg-state-mid'
+                  : 'border border-edge-subtle bg-fill text-fg-secondary hover:bg-fill-strong'
             }`}
             title={pillText}
           >

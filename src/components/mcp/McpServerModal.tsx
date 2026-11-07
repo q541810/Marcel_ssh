@@ -170,7 +170,7 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
               onChange={(e) => { setJsonText(e.target.value); setJsonError(null); }}
               rows={8}
               placeholder={'{\n  "mcpServers": {\n    "my-server": {\n      "url": "https://...",\n      "headers": { "Authorization": "Bearer xxx" }\n    }\n  }\n}'}
-              className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
             />
             {jsonError && <p className="text-meta text-red-400 mt-1">{jsonError}</p>}
           </div>
@@ -193,7 +193,7 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
               onChange={(e) => setHeadersText(e.target.value)}
               rows={4}
               placeholder="Authorization: Bearer xxx\nX-Custom: value"
-              className="w-full rounded-lg bg-surface border border-edge px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-3 py-2 text-meta text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 font-mono"
             />
           </div>
           <label className="flex items-center justify-between rounded-lg bg-surface/60 border border-edge px-3 py-2">

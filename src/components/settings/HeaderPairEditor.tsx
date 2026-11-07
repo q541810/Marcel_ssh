@@ -37,7 +37,7 @@ export default function HeaderPairEditor({ pairs, onChange, disabled }: Props) {
         <button
           type="button"
           onClick={() => setShow((v) => !v)}
-          className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors"
+          className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
         >
           {show ? '收起' : count > 0 ? `编辑（${count}）` : '添加'}
         </button>

@@ -584,7 +584,7 @@ export default function MobileAgentHost({
               setHistoryBrowserOpen(true);
             }
           }}
-          className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg pressable active:bg-state-mid"
+          className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg pressable active:bg-state-mid"
         >
           历史
         </button>
@@ -672,7 +672,7 @@ export default function MobileAgentHost({
                   className={
                     "rounded-lg px-2 py-1 text-meta font-medium " +
                     (historyMode === "active"
-                      ? "bg-surface-raised text-fg"
+                      ? "bg-fill text-fg"
                       : "text-fg-secondary active:bg-state-soft/60")
                   }
                 >
@@ -870,7 +870,7 @@ export default function MobileAgentHost({
             <button
               type="button"
               onClick={() => setRenameTargetId(null)}
-              className="flex-1 rounded-xl bg-surface-raised px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
+              className="flex-1 rounded-xl bg-fill px-4 py-2.5 text-body font-medium text-fg-secondary active:bg-state-mid"
             >
               取消
             </button>

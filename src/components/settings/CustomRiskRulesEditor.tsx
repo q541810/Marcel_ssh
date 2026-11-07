@@ -128,8 +128,8 @@ export function CustomRiskRulesEditor({
                 selected
                   ? 'border-indigo-500 bg-indigo-500/10 text-fg'
                   : invalid && rule.enabled
-                    ? 'border-dashed border-amber-700/60 bg-surface-raised text-fg-secondary hover:bg-state-mid'
-                    : 'border-edge bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid'
+                    ? 'border-dashed border-amber-700/60 bg-fill text-fg-secondary hover:bg-fill-strong'
+                    : 'border-edge bg-fill text-fg hover:bg-fill-strong active:bg-state-mid'
               } ${rule.enabled ? '' : 'opacity-50'}`}
             >
               <span

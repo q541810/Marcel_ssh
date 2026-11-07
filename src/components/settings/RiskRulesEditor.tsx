@@ -143,7 +143,7 @@ function ListEditor({
           type="button"
           onClick={add}
           disabled={!draft.trim()}
-          className={`flex-shrink-0 rounded-lg bg-surface-raised text-fg hover:bg-state-mid active:bg-state-mid disabled:opacity-40 ${
+          className={`flex-shrink-0 rounded-lg bg-fill text-fg hover:bg-fill-strong active:bg-state-mid disabled:opacity-40 ${
             compact ? 'px-4 py-3 text-body' : 'px-3 py-2 text-meta'
           }`}
         >
@@ -268,7 +268,7 @@ function RuleRow({
                     type="button"
                     onClick={() => onTryExample(ex)}
                     title="拿去测试命令里试一下"
-                    className="rounded-md border border-edge bg-surface-raised px-2 py-0.5 font-mono text-caption text-fg-secondary hover:border-indigo-500/60 hover:text-fg active:text-fg"
+                    className="rounded-md border border-edge bg-fill px-2 py-0.5 font-mono text-caption text-fg-secondary hover:border-indigo-500/60 hover:text-fg active:text-fg"
                   >
                     {ex}
                   </button>
@@ -398,7 +398,7 @@ export function RiskRulesEditor({
         <button
           type="button"
           onClick={retry}
-          className="rounded-lg bg-surface-raised px-3 py-2 text-meta text-fg hover:bg-state-mid"
+          className="rounded-lg bg-fill px-3 py-2 text-meta text-fg hover:bg-fill-strong"
         >
           重试
         </button>

@@ -175,7 +175,7 @@ function ManageBody({ manager }: { manager: MemoryManager }) {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="flex items-center gap-1 rounded-lg bg-surface-raised px-3 py-2 text-body text-fg hover:bg-state-mid transition"
+            className="flex items-center gap-1 rounded-lg bg-fill px-3 py-2 text-body text-fg hover:bg-fill-strong transition"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden />
             新增

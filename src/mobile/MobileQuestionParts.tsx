@@ -84,7 +84,7 @@ export function MobileQuestionFooter({ form, className = '' }: { form: QuestionF
         <button
           type="button"
           onClick={form.prev}
-          className="rounded-xl bg-surface-raised px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
+          className="rounded-xl bg-fill px-4 py-3 text-body text-fg-secondary active:bg-state-mid"
         >
           上一题
         </button>

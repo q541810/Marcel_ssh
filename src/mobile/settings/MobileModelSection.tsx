@@ -580,7 +580,7 @@ function MobileChannelEditorSheet({
                   setFetchFilter('');
                   void fetchModels();
                 }}
-                className="rounded-lg min-h-11 bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
+                className="rounded-lg min-h-11 bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
               >
                 获取列表
               </button>
@@ -617,7 +617,7 @@ function MobileChannelEditorSheet({
                   <button
                     type="button"
                     onClick={() => setModelEditor({ open: true, initial: m })}
-                    className="rounded-lg min-h-11 bg-surface-raised px-2.5 py-1.5 text-body text-fg-secondary active:bg-state-mid"
+                    className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg-secondary active:bg-state-mid"
                   >
                     编辑
                   </button>
@@ -697,7 +697,7 @@ function MobileChannelEditorSheet({
               <button
                 type="button"
                 onClick={() => void fetchModels()}
-                className="w-full rounded-lg bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+                className="w-full rounded-lg bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
               >
                 重试
               </button>
@@ -815,7 +815,7 @@ export function MobileModelSection() {
         <button
           type="button"
           onClick={() => setSummarizerPicker(true)}
-          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg active:bg-state-mid"
+          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-edge bg-fill px-3 py-2.5 text-body text-fg active:bg-state-mid"
         >
           <span className="truncate">
             {slots.summarizerModelId
@@ -855,7 +855,7 @@ export function MobileModelSection() {
                   <button
                     type="button"
                     onClick={() => setChoicePicker(i)}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-fg active:bg-state-mid"
+                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-edge bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
                   >
                     <span className="truncate">{triggerLabel}</span>
                     <ChevronDown className="h-4 w-4 flex-shrink-0 text-fg-tertiary" />
@@ -863,7 +863,7 @@ export function MobileModelSection() {
                   <button
                     type="button"
                     onClick={() => removeSubagentChoice(i)}
-                    className="flex-shrink-0 rounded-lg min-h-11 bg-surface-raised px-2.5 py-2 text-body text-fg-secondary active:bg-state-mid"
+                    className="flex-shrink-0 rounded-lg min-h-11 bg-fill px-2.5 py-2 text-body text-fg-secondary active:bg-state-mid"
                   >
                     移除
                   </button>

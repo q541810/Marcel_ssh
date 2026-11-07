@@ -231,7 +231,7 @@ export default function NetworkPanel({ sessionId }: NetworkPanelProps) {
           type="button"
           onClick={loadData}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md bg-surface-raised px-2 py-1 text-meta text-fg hover:bg-state-mid disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-md bg-fill px-2 py-1 text-meta text-fg hover:bg-fill-strong disabled:opacity-40"
         >
           {loading && (
             <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">

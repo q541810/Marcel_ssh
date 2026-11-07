@@ -191,7 +191,7 @@ export function ModelServiceSection() {
                 <button
                   type="button"
                   onClick={() => removeSubagentChoice(i)}
-                  className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors flex-shrink-0"
+                  className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-fill hover:bg-fill-strong transition-colors flex-shrink-0"
                   title="移除该候选"
                 >
                   移除
@@ -397,7 +397,7 @@ export function ModelServiceSection() {
                   <button
                     type="button"
                     onClick={() => setChannelEditor({ open: true, channel: ch })}
-                    className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-surface-raised hover:bg-state-mid transition-colors flex-shrink-0"
+                    className="px-3 py-2 rounded-lg text-meta text-fg-secondary bg-fill hover:bg-fill-strong transition-colors flex-shrink-0"
                   >
                     编辑
                   </button>
