@@ -1437,15 +1437,14 @@ html[data-marcel-theme='light'] .marcel-code-block {
   }
 }
 
-/* 页面整张被甩出屏幕：朝手指来的方向飞走（--back-dir），倾斜继续加深。
-   时长 --back-ms 由 backPreview 按松手速度算，曲线与它的 FLING_EASING 一致，
-   起步速度 ≈ 手指松开时的速度。 */
+/* 浮起的卡片在原地继续缩小、淡出（不往侧边飞），倾斜回正。 */
 @keyframes mobileFullscreenBackExit {
   to {
+    opacity: 0;
     transform: perspective(1000px)
-      translate3d(calc(var(--back-dir, 1) * 108vw), var(--back-y, 0px), 0)
-      rotateX(var(--back-rx, 0deg)) rotateY(calc(var(--back-ry, 0deg) * 1.3))
-      scale(calc(var(--back-s, 1) * 0.94));
+      translate3d(var(--back-x, 0px), var(--back-y, 0px), 0)
+      rotateX(0deg) rotateY(0deg)
+      scale(calc(var(--back-s, 1) * 0.8));
   }
 }
 
@@ -1455,7 +1454,7 @@ html[data-marcel-theme='light'] .marcel-code-block {
 }
 
 [data-back='page'].mobile-fullscreen-exit {
-  animation: mobileFullscreenBackExit var(--back-ms, 280ms) cubic-bezier(0.25, 0.8, 0.3, 1) both;
+  animation: mobileFullscreenBackExit 260ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
 [data-back='fade'].mobile-backdrop-exit {

@@ -43,10 +43,10 @@ export interface BackGestureFrame {
   dx: number;
   /** Vertical finger travel since the gesture began, in CSS px. */
   dy: number;
-  /** Absolute finger Y in CSS px (viewport), for tilting toward the finger. */
+  /** Absolute finger X in CSS px (viewport), for tilting where the finger presses. */
+  x: number;
+  /** Absolute finger Y in CSS px (viewport), for tilting where the finger presses. */
   y: number;
-  /** Inward finger speed, CSS px per second (for flinging the layer out on commit). */
-  velocity: number;
 }
 
 /**
@@ -187,8 +187,6 @@ function queueNativeSync(): void {
  */
 const SMOOTH_TAU_MS = 14;
 const SETTLE_EPSILON = 0.002;
-/** Samples closer together than this are merged (a burst would spike the speed). */
-const VELOCITY_MIN_DT_MS = 6;
 
 interface GestureSession {
   entry: BackEntry;
@@ -200,10 +198,6 @@ interface GestureSession {
   current: BackGestureFrame;
   raf: number | null;
   lastT: number;
-  /** Last raw sample used for the speed estimate. */
-  sampleT: number;
-  sampleDx: number;
-  velocity: number;
 }
 
 /** Native reports Y in physical px; the page works in CSS px. */
@@ -253,20 +247,23 @@ function tick(now: number): void {
   cur.progress += (tgt.progress - cur.progress) * k;
   cur.dx += (tgt.dx - cur.dx) * k;
   cur.dy += (tgt.dy - cur.dy) * k;
+  cur.x += (tgt.x - cur.x) * k;
   cur.y += (tgt.y - cur.y) * k;
   cur.edge = tgt.edge;
   const settled =
     Math.abs(tgt.progress - cur.progress) < SETTLE_EPSILON &&
     Math.abs(tgt.dx - cur.dx) < 0.5 &&
     Math.abs(tgt.dy - cur.dy) < 0.5 &&
+    Math.abs(tgt.x - cur.x) < 0.5 &&
     Math.abs(tgt.y - cur.y) < 0.5;
   if (settled) {
     cur.progress = tgt.progress;
     cur.dx = tgt.dx;
     cur.dy = tgt.dy;
+    cur.x = tgt.x;
     cur.y = tgt.y;
   }
-  s.entry.preview?.update({ ...cur, velocity: s.velocity });
+  s.entry.preview?.update({ ...cur });
   if (!settled) s.raf = requestAnimationFrame(tick);
 }
 
@@ -302,28 +299,25 @@ function startGesture(edge: number, physicalY: number, physicalX?: number): void
   });
   if (!top?.preview || reduced) return;
   const e = normalizeEdge(edge);
-  const frame = (): BackGestureFrame => ({
-    progress: 0,
-    edge: e,
-    dx: 0,
-    dy: 0,
-    y,
-    velocity: 0,
-  });
+  const startX = optionalCssPx(physicalX);
+  const x = startX ?? edgeX(e, 0);
+  const frame = (): BackGestureFrame => ({ progress: 0, edge: e, dx: 0, dy: 0, x, y });
   session = {
     entry: top,
     edge: e,
     startY: y,
-    startX: optionalCssPx(physicalX),
+    startX,
     target: frame(),
     current: frame(),
     raf: null,
     lastT: 0,
-    sampleT: performance.now(),
-    sampleDx: 0,
-    velocity: 0,
   };
   top.preview.start(e);
+}
+
+/** X of the screen edge a swipe starts from, plus `inset` px inward. */
+function edgeX(edge: BackEdge, inset: number): number {
+  return edge === 'left' ? inset : (window.innerWidth || 0) - inset;
 }
 
 /**
@@ -352,16 +346,9 @@ function progressGesture(
   const e = normalizeEdge(edge);
   const p = Math.min(Math.max(progress, 0), 1);
   const dx = inwardTravel(s, e, p, optionalCssPx(physicalX));
-  const now = performance.now();
-  const dt = now - s.sampleT;
-  if (dt >= VELOCITY_MIN_DT_MS) {
-    const v = ((dx - s.sampleDx) / dt) * 1000;
-    // Light EMA: responsive to a flick at the end, not to one noisy sample.
-    s.velocity = s.velocity * 0.4 + v * 0.6;
-    s.sampleT = now;
-    s.sampleDx = dx;
-  }
-  s.target = { progress: p, edge: e, dx, dy: y - s.startY, y, velocity: s.velocity };
+  // Derived from dx rather than the raw X, so the fallback path stays consistent.
+  const x = (s.startX ?? edgeX(e, 0)) + (e === 'left' ? dx : -dx);
+  s.target = { progress: p, edge: e, dx, dy: y - s.startY, x, y };
   ensureLoop(s);
 }
 

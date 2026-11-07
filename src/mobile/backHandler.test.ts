@@ -147,7 +147,7 @@ describe("predictive back gesture", () => {
     expect(last.dy).toBeCloseTo(50, 0);
   });
 
-  it("follows the raw finger X inward (dx) and estimates its speed", () => {
+  it("follows the raw finger X inward (dx) and reports where the finger is", () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const { preview, frames } = makePreview();
     registerBackHandler(() => {}, preview);
@@ -158,7 +158,7 @@ describe("predictive back gesture", () => {
     flushFrames(40);
     const last = frames[frames.length - 1];
     expect(last.dx).toBeCloseTo(100, 0);
-    expect(last.velocity).toBeGreaterThan(0);
+    expect(last.x).toBeCloseTo(290, 0);
   });
 
   it("falls back to progress × width when native sends no X or a frozen X", () => {
