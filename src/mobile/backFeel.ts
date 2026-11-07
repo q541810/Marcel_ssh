@@ -33,7 +33,7 @@ export const DEFAULT_BACK_FEEL: Readonly<BackFeel> = Object.freeze({
   pitch: 13,
   shift: 0.085,
   lift: 0,
-  flight: 0.8,
+  flight: 0.46,
 });
 
 /** Slider ranges for the debug panel (label, min, max, step, unit). */
