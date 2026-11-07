@@ -25,6 +25,15 @@ export function ease(t: number): number {
   return 1 - (1 - c) * (1 - c);
 }
 
+/**
+ * Front-loaded response 0 … 1 for a share `t` of the way: the first stretch
+ * does most of the work, the middle slows, the end hardly moves. `k` = 1 is
+ * even; higher is more front-loaded (1 − (1 − t)ᵏ).
+ */
+export function frontLoaded(t: number, k: number): number {
+  return 1 - Math.pow(1 - clamp(t, 0, 1), Math.max(1, k));
+}
+
 export function smoothstep(t: number): number {
   const c = clamp(t, 0, 1);
   return c * c * (3 - 2 * c);

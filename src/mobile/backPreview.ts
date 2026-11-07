@@ -10,8 +10,8 @@
  *   `pageMotion.ts`: the page lifts off into a card held by the finger
  *   ({@link cardPose}, defined here) and, on release, flies back into the
  *   control it was opened from.
- * - **sheet** (`MobileSheet`): sinks, tips back and turns toward the swipe;
- *   thrown down on commit (back the way it came in) while its backdrop clears.
+ * - **sheet** (`MobileSheet`) lives in `sheetMotion.ts`: it simply sinks back
+ *   the way it came, and its backdrop clears with it.
  * - **peek** (in-page navigation such as "up one folder", the tab fallback):
  *   the held card, gentler; on commit the old content is thrown off and the
  *   previous content turns in from the other side.
@@ -37,6 +37,7 @@ import { getBackFeel, type BackFeel } from './backFeel';
 import {
   clamp,
   ease,
+  frontLoaded,
   hermite as hermiteOf,
   keyframes,
   Recorder,
@@ -61,14 +62,12 @@ const EDGE_MARGIN_PX = 12;
  * reversed and the layer settles back.
  */
 const COMMIT_GRACE_MS = 220;
-/** Sheet commit: the throw back down, ms (inside useAnimatedPresence's 400ms fallback). */
-const SHEET_THROW_MS = 320;
 /** Peek commit: the old content's throw (short — the new content follows). */
 const PEEK_THROW_MS = 150;
 /** Response of the settle spring, s (≈ 380ms to rest when critically damped). */
 const SPRING_RESPONSE = 0.37;
 
-type SurfaceKind = 'sheet' | 'fade' | 'peek';
+type SurfaceKind = 'peek';
 
 export interface Pose extends Channels {
   /** translate, px */
@@ -359,7 +358,7 @@ export function cardPose(frame: BackGestureFrame, feel: BackFeel, amp: number): 
   // quick at the start, easing through the middle, hardly any change at the
   // end — a modest swipe already shows nearly the whole effect, instead of
   // needing a long, fast one to get there.
-  const reach = 1 - Math.pow(1 - t, Math.max(1, feel.follow));
+  const reach = frontLoaded(t, feel.follow);
   const s = 1 - feel.shrink * amp * reach;
   const ry = dir * feel.turn * amp * ease(t / 0.55);
   const roomX = Math.max(0, (w * (1 - s)) / 2 + tiltInset((w * s) / 2, ry) - EDGE_MARGIN_PX);
@@ -385,54 +384,6 @@ function throwTarget(p: Pose, dir: number, feel: BackFeel, amp: number): Pose {
     rx: p.rx * 1.25,
     ry: dir * 60 * amp,
     o: p.o,
-  };
-}
-
-/** Bottom sheet: sink, tip back, turn toward the swipe; thrown down on commit. */
-export function sheetBackPreview(
-  getSheet: () => HTMLElement | null,
-  getBackdrop: () => HTMLElement | null,
-): BackPreview {
-  const sheet = new Surface(getSheet, 'sheet', '50% 100%');
-  const backdrop = new Surface(getBackdrop, 'fade');
-  let feel = getBackFeel();
-  let dir = 1;
-  let height = 400;
-  return {
-    start(edge) {
-      feel = getBackFeel();
-      dir = direction(edge);
-      sheet.begin();
-      backdrop.begin();
-      // One layout read per gesture: how far the sheet may sink.
-      height = sheet.element?.getBoundingClientRect().height || height;
-    },
-    update(frame) {
-      dir = direction(frame.edge);
-      const e = travel(frame, 0.5);
-      sheet.set({
-        x: dir * e * 24,
-        y: e * Math.min(height * 0.25, 180),
-        s: 1 - e * 0.1,
-        // The top edge falls away; the side the finger heads for sinks.
-        rx: e * feel.pitch * 0.7,
-        ry: dir * e * feel.turn * 0.35,
-        o: 1,
-      });
-      backdrop.set({ ...REST, o: 1 - e * 0.6 });
-    },
-    cancel() {
-      sheet.release();
-      backdrop.release();
-    },
-    commit() {
-      const ms = SHEET_THROW_MS;
-      const from = sheet.pose;
-      const to = { ...from, y: height + 48, rx: from.rx + 10 };
-      sheet.throwOff(hermite(from, sheet.velocity(), to, ms), ms);
-      const fade = backdrop.pose;
-      backdrop.throwOff(hermite(fade, backdrop.velocity(), { ...fade, o: 0 }, ms), ms);
-    },
   };
 }
 

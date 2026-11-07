@@ -532,6 +532,12 @@ class PageCard {
     this.stop();
     this.rec.reset();
     this.blend.from(shown, first);
+    // Stopping the flight uncovers the inline pose (its end): keep showing where
+    // the card was until the finger's first frame arrives.
+    if (shown) {
+      this.last = shown;
+      this.write(shown);
+    }
   }
 
   set(c: Card): void {
@@ -726,6 +732,7 @@ class Underlay {
     this.stop();
     this.rec.reset();
     this.blend.from(shown, first);
+    if (shown) this.apply(shown);
   }
 
   set(p: Under): void {
