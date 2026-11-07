@@ -500,7 +500,7 @@ export default function MobileConnectionForm({
                 <button
                   type="button"
                   onClick={() => setSecretDirty(true)}
-                  className="rounded-lg min-h-11 bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
+                  className="rounded-lg bg-fill px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
                 >
                   修改
                 </button>
@@ -523,7 +523,7 @@ export default function MobileConnectionForm({
                       }
                     })()
                   }
-                  className="rounded-lg min-h-11 px-3 py-2 text-body text-red-400/80 active:bg-state-soft"
+                  className="rounded-lg px-3 py-1.5 text-caption text-red-400/80 active:bg-state-soft hit-area"
                 >
                   清除
                 </button>
@@ -559,7 +559,7 @@ export default function MobileConnectionForm({
                   <button
                     type="button"
                     onClick={() => setLoginPasswordDirty(true)}
-                    className="rounded-lg min-h-11 bg-fill px-3 py-2 text-body text-fg active:bg-state-mid"
+                    className="rounded-lg bg-fill px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
                   >
                     修改
                   </button>
@@ -578,7 +578,7 @@ export default function MobileConnectionForm({
                         }
                       })()
                     }
-                    className="rounded-lg min-h-11 px-3 py-2 text-body text-red-400/80 active:bg-state-soft"
+                    className="rounded-lg px-3 py-1.5 text-caption text-red-400/80 active:bg-state-soft hit-area"
                   >
                     清除
                   </button>

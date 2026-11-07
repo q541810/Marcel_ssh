@@ -117,7 +117,7 @@ function MobileManage({ manager }: { manager: MemoryManager }) {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="-mr-1 flex items-center gap-1 rounded-lg min-h-11 px-2 py-1.5 text-body text-indigo-300 active:bg-state-soft"
+            className="-mr-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-caption text-indigo-300 active:bg-state-soft hit-area"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden />
             新增

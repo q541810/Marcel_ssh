@@ -307,7 +307,7 @@ export default function MobileConnectionList({
           <button
             type="button"
             onClick={openNewForm}
-            className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 bg-indigo-600 px-3 py-2 text-body font-medium text-white active:bg-indigo-500"
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-caption font-medium text-white active:bg-indigo-500 hit-area"
           >
             <Plus className="h-3.5 w-3.5" />
             新建

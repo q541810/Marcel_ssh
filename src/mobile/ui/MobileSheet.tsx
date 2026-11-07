@@ -272,7 +272,7 @@ export default function MobileSheet({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="-mr-2 flex min-h-11 items-center rounded-lg px-3 text-body text-fg-secondary pressable active:bg-state-soft"
+                  className="-mr-2 flex items-center rounded-lg px-3 text-caption text-fg-secondary pressable active:bg-state-soft hit-area"
                 >
                   关闭
                 </button>

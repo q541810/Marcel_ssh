@@ -50,14 +50,14 @@ export default function MobileKeepAliveTipCard({
           <button
             type="button"
             onClick={onJump}
-            className="pressable flex-1 rounded-lg min-h-11 bg-indigo-600 px-3 py-2 text-body font-medium text-white active:bg-indigo-500"
+            className="pressable flex-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-caption font-medium text-white active:bg-indigo-500 hit-area"
           >
             去开启
           </button>
           <button
             type="button"
             onClick={onIgnore}
-            className="pressable flex-1 rounded-lg min-h-11 border border-edge bg-fill px-3 py-2 text-body font-medium text-fg-secondary active:bg-state-mid"
+            className="pressable flex-1 rounded-lg border border-edge bg-fill px-3 py-1.5 text-caption font-medium text-fg-secondary active:bg-state-mid hit-area"
           >
             忽略
           </button>

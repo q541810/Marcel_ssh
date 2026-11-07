@@ -198,7 +198,7 @@ export default function MobileOnboarding({
             <button
               type="button"
               onClick={() => void finish()}
-              className="rounded-lg min-h-11 px-3 py-2 text-body text-fg-tertiary active:bg-state-soft active:text-fg-secondary"
+              className="rounded-lg px-3 py-1.5 text-caption text-fg-tertiary active:bg-state-soft active:text-fg-secondary hit-area"
             >
               跳过
             </button>

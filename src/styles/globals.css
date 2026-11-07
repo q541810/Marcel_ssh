@@ -170,6 +170,21 @@ html[data-marcel-platform='mobile'] {
   }
 }
 
+/* 点按区：按钮外观可以紧凑（和界面优化前一样），手指点得到的范围至少 44px。
+   用透明伪元素向外撑，不占布局、不改外观；别再用 min-h-11 把按钮本身撑大。 */
+@utility hit-area {
+  position: relative;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
 /* 键盘焦点环：只在键盘聚焦时出现，鼠标点击不出环 */
 @utility focus-ring {
   &:focus-visible {

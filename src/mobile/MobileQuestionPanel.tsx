@@ -94,7 +94,7 @@ export default function MobileQuestionPanel({
         <button
           type="button"
           onClick={form.skip}
-          className="-mr-2 flex-shrink-0 rounded-lg min-h-11 px-2 py-1 text-body text-fg-tertiary active:bg-state-soft"
+          className="-mr-2 flex-shrink-0 rounded-lg px-2 py-1 text-caption text-fg-tertiary active:bg-state-soft hit-area"
         >
           跳过
         </button>

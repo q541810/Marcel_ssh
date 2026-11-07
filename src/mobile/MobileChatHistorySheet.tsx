@@ -245,7 +245,7 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={handleBack}
-              className="-ml-1 flex-shrink-0 rounded-lg min-h-11 px-2 py-1 text-body text-indigo-300 active:bg-state-soft"
+              className="-ml-1 flex-shrink-0 rounded-lg px-2 py-1 text-caption text-indigo-300 active:bg-state-soft hit-area"
             >
               ‹ 返回
             </button>

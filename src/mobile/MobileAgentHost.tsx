@@ -567,7 +567,7 @@ export default function MobileAgentHost({
           type="button"
           onClick={() => void handleNewConversation()}
           disabled={!canInteract || !ids}
-          className="relative rounded-lg bg-indigo-600 px-2.5 py-1.5 text-caption font-medium text-white pressable active:bg-indigo-500 disabled:opacity-40 before:absolute before:inset-x-0 before:-inset-y-2 before:content-['']"
+          className="hit-area rounded-lg bg-indigo-600 px-2.5 py-1.5 text-caption font-medium text-white pressable active:bg-indigo-500 disabled:opacity-40"
         >
           新对话
         </button>
@@ -584,7 +584,7 @@ export default function MobileAgentHost({
               setHistoryBrowserOpen(true);
             }
           }}
-          className="relative rounded-lg bg-surface-raised px-2.5 py-1.5 text-caption text-fg-secondary pressable active:bg-state-mid before:absolute before:inset-x-0 before:-inset-y-2 before:content-['']"
+          className="hit-area rounded-lg bg-surface-raised px-2.5 py-1.5 text-caption text-fg-secondary pressable active:bg-state-mid"
         >
           历史
         </button>
@@ -982,7 +982,7 @@ export default function MobileAgentHost({
             <button
               type="button"
               onClick={handleBackToParent}
-              className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 bg-indigo-600/20 px-2.5 py-2 text-body font-medium text-indigo-300 pressable active:bg-indigo-600/30"
+              className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600/20 px-2.5 py-1.5 text-caption font-medium text-indigo-300 pressable active:bg-indigo-600/30 hit-area"
             >
               <svg
                 className="h-3.5 w-3.5"

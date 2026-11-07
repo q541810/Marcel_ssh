@@ -871,7 +871,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg active:bg-state-mid disabled:opacity-50"
+            className="rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg active:bg-state-mid disabled:opacity-50 hit-area"
             aria-label="刷新"
           >
             刷新
@@ -880,14 +880,14 @@ export default function MobileFilesHost({
             type="button"
             onClick={() => void handleUpload()}
             disabled={uploadBusy}
-            className="rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+            className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-caption font-medium text-white active:bg-indigo-500 disabled:opacity-50 hit-area"
           >
             上传
           </button>
           <button
             type="button"
             onClick={() => setShowNewMenu(true)}
-            className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg active:bg-state-mid"
+            className="rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
           >
             新建
           </button>
@@ -1050,7 +1050,7 @@ export default function MobileFilesHost({
           <button
             type="button"
             onClick={handleReturnTrip}
-            className="flex flex-shrink-0 items-center gap-1 rounded-lg min-h-11 px-2.5 py-2 text-body font-medium text-indigo-300 active:bg-state-soft"
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-caption font-medium text-indigo-300 active:bg-state-soft hit-area"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
             返回{RETURN_TAB_LABEL[returnTrip.tab]}
@@ -1089,7 +1089,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={() => void handlePaste()}
             disabled={pasteBlocked != null}
-            className="flex-shrink-0 rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body text-white active:bg-indigo-500 disabled:opacity-40"
+            className="flex-shrink-0 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-caption text-white active:bg-indigo-500 disabled:opacity-40 hit-area"
           >
             粘贴到此处
           </button>
@@ -1136,7 +1136,7 @@ export default function MobileFilesHost({
                 (err) => setError(`复制路径失败：${getErrorMessage(err)}`),
               );
             }}
-            className="flex-shrink-0 rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
+            className="flex-shrink-0 rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong hit-area"
           >
             复制路径
           </button>
@@ -1171,7 +1171,7 @@ export default function MobileFilesHost({
                 );
               }
             }}
-            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
+            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong hit-area"
           >
             {multiSelected.size === filteredEntries.length &&
             filteredEntries.length > 0
@@ -1188,7 +1188,7 @@ export default function MobileFilesHost({
                   setRenameValue(soleSelected.name);
                   exitSelectMode();
                 }}
-                className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
+                className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong hit-area"
               >
                 重命名
               </button>
@@ -1199,7 +1199,7 @@ export default function MobileFilesHost({
                     setCompressEntry(soleSelected);
                     exitSelectMode();
                   }}
-                  className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong"
+                  className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong hit-area"
                 >
                   压缩
                 </button>
@@ -1215,7 +1215,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong disabled:opacity-40 hit-area"
           >
             复制
           </button>
@@ -1228,7 +1228,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong disabled:opacity-40 hit-area"
           >
             剪切
           </button>
@@ -1240,7 +1240,7 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0}
-            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg active:bg-state-strong disabled:opacity-40"
+            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg active:bg-state-strong disabled:opacity-40 hit-area"
           >
             复制路径
           </button>
@@ -1252,14 +1252,14 @@ export default function MobileFilesHost({
               )
             }
             disabled={multiSelected.size === 0 || opStatus != null}
-            className="rounded-lg min-h-11 bg-red-900/50 px-2.5 py-1.5 text-body text-red-300 active:bg-red-900/80 disabled:opacity-40"
+            className="rounded-lg bg-red-900/50 px-2.5 py-1.5 text-caption text-red-300 active:bg-red-900/80 disabled:opacity-40 hit-area"
           >
             删除
           </button>
           <button
             type="button"
             onClick={exitSelectMode}
-            className="rounded-lg min-h-11 bg-zinc-700 px-2.5 py-1.5 text-body text-fg-secondary active:bg-state-strong"
+            className="rounded-lg bg-zinc-700 px-2.5 py-1.5 text-caption text-fg-secondary active:bg-state-strong hit-area"
           >
             取消
           </button>
