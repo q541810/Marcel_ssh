@@ -265,6 +265,10 @@ impl AgentTool for LocalBashTool {
         "local_bash"
     }
 
+    fn command_host(&self) -> Option<super::CommandHost> {
+        Some(super::CommandHost::Local)
+    }
+
     fn description(&self) -> &str {
         "Execute a shell command on the user's own computer (this computer, where Marcel SSH \
          runs) — not on the remote server. \

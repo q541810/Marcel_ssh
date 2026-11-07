@@ -14,7 +14,7 @@ use crate::agent::risk::Disposition;
 use crate::agent::tool_dispatcher::{
     ApprovalPrefetch, ApprovalSlot, ToolDispatcher, ToolResultEvent,
 };
-use crate::agent::tools::{ToolContext, ToolRegistry};
+use crate::agent::tools::{CommandHost, ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
 use crate::llm::provider::{LlmMessage, LlmRole, ToolCall};
@@ -331,15 +331,15 @@ fn owner_conversation_for(state: &AppState, task_id: &str, fallback: &str) -> St
 ///
 /// 两端都**不许**出现「已终止 / 已杀掉进程」的表述：取消只停止等待，进程
 /// （远端或本机）都可能在继续跑。
-pub(super) fn interruption_notice(tool_name: &str) -> String {
-    match tool_name {
-        "bash" => {
+pub(super) fn interruption_notice(host: Option<CommandHost>) -> String {
+    match host {
+        Some(CommandHost::Remote) => {
             "[用户中断：已停止等待输出并关闭 SSH 通道，但远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时，才可能因管道断开（SIGPIPE）退出；静默运行、重定向了输出、被 nohup/setsid/& 脱离的命令会继续在服务器上运行。必要时用 ps/pgrep 确认并按需 kill 清理。]".to_string()
         }
-        "local_bash" => {
+        Some(CommandHost::Local) => {
             "[用户中断：已停止等待输出并关闭我们这侧的读端，但本机进程不保证已结束——只有它之后还往 stdout/stderr 写东西时，才可能因管道断开而退出；静默运行、重定向了输出、被 Start-Process / nohup / & 脱离的命令会继续在这台电脑上运行。要收尾就自己查了再结束：Windows 用 `Get-Process` / `tasklist` 找到它、`Stop-Process -Id <pid>` 结束；macOS/Linux 用 `ps` / `pgrep` 找到它、`kill <pid>` 结束。]".to_string()
         }
-        _ => "[用户手动中断，已停止等待结果；工具可能已执行完成]".to_string(),
+        None => "[用户手动中断，已停止等待结果；工具可能已执行完成]".to_string(),
     }
 }
 
@@ -454,7 +454,7 @@ async fn execute_single_tool(
             tc.name
         );
         exec.was_aborted = true;
-        let notice = interruption_notice(&tc.name);
+        let notice = interruption_notice(env.registry.get(&tc.name).and_then(|t| t.command_host()));
         if exec.output.is_empty() {
             exec.output = notice;
         } else {

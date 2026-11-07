@@ -604,6 +604,20 @@ pub struct ExecTicketOutcome {
     pub detached: Option<crate::command_exec::JobInfo>,
 }
 
+/// 一个会**起进程**的工具把进程起在哪台机器上。
+///
+/// 用户中断 / 超时都只是「停止等待」，进程可能还活着，收尾得由模型自己做；
+/// 而收尾手段取决于进程在哪（服务器 `ps`/`kill`，还是本机 `Get-Process`/`Stop-Process`）。
+/// 所以中断文案按这个枚举分档（`agent_loop::tool_exec::interruption_notice`），
+/// 而不是按工具名匹配——插件 `kind=ssh` 工具同样在服务器上起进程，不该被漏掉。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandHost {
+    /// 经 SSH 通道在远端服务器上执行。
+    Remote,
+    /// 在用户自己这台电脑上执行。
+    Local,
+}
+
 /// Trait implemented by every agent tool.
 ///
 /// `private_interfaces` 豁免：`preview_write` 的 Err 载荷是
@@ -611,6 +625,14 @@ pub struct ExecTicketOutcome {
 pub trait AgentTool: Send + Sync {
     /// Unique name used by the LLM to reference this tool.
     fn name(&self) -> &str;
+
+    /// 本工具若会起进程，进程起在哪台机器上。默认 `None`（不起进程）。
+    ///
+    /// 声明了它，用户中断时工具结果末尾就会带上「进程不保证已结束、请自行确认并
+    /// 清理」的收尾提醒，与命令超时的提醒同一口径。新增任何「执行命令」的工具都要实现。
+    fn command_host(&self) -> Option<CommandHost> {
+        None
+    }
 
     /// Human-readable description shown to the LLM.
     fn description(&self) -> &str;

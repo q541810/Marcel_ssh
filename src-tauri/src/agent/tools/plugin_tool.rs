@@ -283,6 +283,11 @@ impl AgentTool for PluginAgentTool {
         &self.name
     }
 
+    /// `kind=ssh` 在服务器上起进程；`kind=local` 走内核 handler，不起外部进程。
+    fn command_host(&self) -> Option<crate::agent::tools::CommandHost> {
+        (self.kind == ToolKind::Ssh).then_some(crate::agent::tools::CommandHost::Remote)
+    }
+
     fn description(&self) -> &str {
         &self.description
     }
@@ -403,6 +408,19 @@ mod tests {
             username: "root".into(),
             timestamp: "1720000000".into(),
         }
+    }
+
+    /// 用户中断的收尾提醒按「是否在服务器起进程」分档：`kind=ssh` 要带，`kind=local` 不带。
+    #[test]
+    fn only_ssh_kind_declares_a_command_host() {
+        let ssh = PluginAgentTool::new(&make_def("t", "echo hi", Disposition::Allow), "p");
+        assert_eq!(
+            ssh.command_host(),
+            Some(crate::agent::tools::CommandHost::Remote)
+        );
+        let mut def = make_def("t", "{}", Disposition::Allow);
+        def.kind = ToolKind::Local;
+        assert_eq!(PluginAgentTool::new(&def, "p").command_host(), None);
     }
 
     #[test]

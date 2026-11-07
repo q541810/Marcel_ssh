@@ -147,6 +147,14 @@ pub(crate) fn build_job_settlement_notice(
             j.description.clone()
         };
         lines.push(format!("后台作业 {}（{}）{}", j.job_id, desc, status));
+        // 被终止的作业必须带上「谁动的手」和「进程不保证已结束」。到这里的 Killed 一定
+        // 不是 Agent 自己 job_kill 的（那条路径已置位已通知、不会进通知），所以只可能是
+        // 用户在界面终止，或用户停止任务时随之级联终止——都是别人动的手，模型事先不知情。
+        // 终止只是关闭我们这侧的通道，与命令超时、用户中断同一口径：进程可能还活着，
+        // 要不要收尾由模型自己查了再决定。
+        if j.status == crate::command_exec::JobStatus::Killed {
+            lines.push(killed_job_lifecycle_hint(&j.job_id));
+        }
     }
     lines.push(
         "用 job_output(job_id=...) 读取其输出并纳入结论；\
@@ -168,6 +176,25 @@ pub(crate) fn build_job_settlement_notice(
         ));
     }
     lines.join("\n")
+}
+
+/// 被终止作业的收尾提醒。按作业所在机器（本机作业 id 带 `local_job_` 前缀）指路不同的确认 / 结束手段。
+fn killed_job_lifecycle_hint(job_id: &str) -> String {
+    let local =
+        job_id.starts_with(crate::command_exec::CommandExecutionManager::LOCAL_JOB_ID_PREFIX);
+    let how = if local {
+        "本机进程不保证已结束——静默运行、重定向了输出或已脱离的命令会继续在这台电脑上跑。\
+         要收尾就自己查了再结束：Windows 用 `Get-Process` / `tasklist` 找到它、`Stop-Process -Id <pid>`；\
+         macOS/Linux 用 `ps` / `pgrep` 找到它、`kill <pid>`。"
+    } else {
+        "远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时才可能因管道断开退出；\
+         静默运行、重定向了输出、被 nohup/setsid/& 脱离的命令会继续在服务器上运行。\
+         要收尾就用 bash 执行 ps/pgrep 确认，按需 kill 清理。"
+    };
+    format!(
+        "  这个作业不是你终止的：是用户在界面手动终止，或用户停止任务时随之终止。\
+         终止只关闭了我们这侧的通道，{how}"
+    )
 }
 
 /// 某对话名下仍在运行的后台作业数（本机 + 远端；按归属对话计，另并入
@@ -674,6 +701,7 @@ mod tests {
         PersistedAssistantToolCall, PersistedToolResult, TextReply, MAX_CONCURRENT_TOOL_EXECUTIONS,
     };
     use crate::agent::risk::Disposition;
+    use crate::agent::tools::CommandHost;
     use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
     use crate::error::AppError;
     use crate::llm::provider::ToolCall;
@@ -1012,7 +1040,7 @@ mod tests {
     /// 终止（超时 / 取消只停止等待，见 `command_exec::local_transport`）。
     #[test]
     fn interruption_notice_matches_the_machine_the_command_ran_on() {
-        let remote = interruption_notice("bash");
+        let remote = interruption_notice(Some(CommandHost::Remote));
         assert!(remote.contains("SSH 通道"));
         assert!(remote.contains("远端进程不保证已终止"));
         assert!(remote.contains("ps/pgrep"));
@@ -1021,7 +1049,7 @@ mod tests {
             "远端命令不该指路本机手段：{remote}"
         );
 
-        let local = interruption_notice("local_bash");
+        let local = interruption_notice(Some(CommandHost::Local));
         assert!(local.contains("关闭我们这侧的读端"), "{local}");
         assert!(local.contains("本机进程不保证已结束"), "{local}");
         assert!(
@@ -1048,7 +1076,7 @@ mod tests {
         }
 
         // 其余工具（read_file / web_search / …）走中性文案：本机 / 远端都不占。
-        let other = interruption_notice("read_file");
+        let other = interruption_notice(None);
         assert!(other.contains("工具可能已执行完成"), "{other}");
         assert!(!other.contains("Get-Process") && !other.contains("SSH 通道"));
     }
@@ -1078,6 +1106,33 @@ mod tests {
         assert!(notice.contains("job_output"));
         // 单条 notice 覆盖全部作业（一次决策，不逐条打断）
         assert!(notice.contains("job_1") && notice.contains("job_2"));
+    }
+
+    /// 被终止的作业通知要说明「不是你终止的」和「进程不保证已结束」，并按机器分档；
+    /// 正常完成的作业不带这段。
+    #[test]
+    fn killed_job_notice_carries_lifecycle_reminder_per_host() {
+        use crate::command_exec::JobStatus;
+        let remote =
+            build_job_settlement_notice(&[job_info("job_1", "d", "c", JobStatus::Killed)], 0);
+        assert!(remote.contains("不是你终止的"), "{remote}");
+        assert!(
+            remote.contains("ps/pgrep") && remote.contains("远端进程不保证已终止"),
+            "{remote}"
+        );
+        assert!(!remote.contains("Get-Process"), "{remote}");
+
+        let local =
+            build_job_settlement_notice(&[job_info("local_job_1", "d", "c", JobStatus::Killed)], 0);
+        assert!(
+            local.contains("Stop-Process -Id") && local.contains("本机进程不保证已结束"),
+            "{local}"
+        );
+        assert!(!local.contains("nohup/setsid"), "{local}");
+
+        let done =
+            build_job_settlement_notice(&[job_info("job_2", "d", "c", JobStatus::Completed)], 0);
+        assert!(!done.contains("不保证"), "{done}");
     }
 
     #[test]

@@ -330,6 +330,10 @@ impl AgentTool for BashTool {
         "bash"
     }
 
+    fn command_host(&self) -> Option<super::CommandHost> {
+        Some(super::CommandHost::Remote)
+    }
+
     fn description(&self) -> &str {
         "Execute a shell command on the remote server via the user's login shell \
          (usually bash). Returns combined stdout+stderr. Long output is truncated. \
