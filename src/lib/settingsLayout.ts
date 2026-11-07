@@ -32,7 +32,7 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
       contentPaddingX: 32,
       sectionColumns: 1,
       itemLayout: 'inline',
-      labelWidth: 160,
+      labelWidth: 280,
     };
   }
 
@@ -44,7 +44,7 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
       contentPaddingX: 40,
       sectionColumns: 2,
       itemLayout: 'inline',
-      labelWidth: 192,
+      labelWidth: 240,
     };
   }
 
@@ -55,6 +55,6 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
     contentPaddingX: 48,
     sectionColumns: 2,
     itemLayout: 'inline',
-    labelWidth: 224,
+    labelWidth: 280,
   };
 }

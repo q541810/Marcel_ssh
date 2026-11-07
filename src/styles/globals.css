@@ -32,6 +32,11 @@
   --color-surface-raised: var(--color-zinc-800);
   --color-surface-overlay: var(--color-zinc-800);
 
+  /* 输入槽：输入框、下拉框、文本域的底色。比卡片深、也比画布略深（浅色下是近白），
+     所以放在卡片里或画布上都像「凹进去的槽」。别用 surface-raised 当输入底——
+     深色下它和卡片、最淡边框同色，控件会隐形。描边用 border-edge（不是 edge-subtle）。 */
+  --color-field: color-mix(in oklab, var(--color-zinc-950) 55%, var(--color-zinc-900));
+
   /* 字号阶梯 6 档（禁用 9/10px）。手机端在下方整体上调一档 */
   --text-caption: 11px;
   --text-caption--line-height: 16px;

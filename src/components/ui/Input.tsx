@@ -15,12 +15,12 @@ export default function Input({ label, error, className = '', ...props }: Props)
       )}
       <input
         className={`
-          w-full h-7 rounded-lg bg-surface-raised border px-3 text-body text-fg
+          w-full h-7 rounded-lg bg-field border px-3 text-body text-fg
           placeholder:text-fg-tertiary focus:outline-none transition-colors duration-120
           ${
             error
               ? 'border-red-500 focus:border-red-400'
-              : 'border-edge-subtle focus:border-indigo-500'
+              : 'border-edge hover:border-edge-strong focus:border-indigo-500'
           }
           disabled:text-fg-disabled disabled:cursor-not-allowed
           ${className}

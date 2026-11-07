@@ -39,7 +39,7 @@ export function LevelSelect({
         onChange={onChange}
         ariaLabel={ariaLabel}
         title="选择处置档位"
-        className={`flex-shrink-0 rounded-lg border bg-surface-raised px-3 text-body ${RULE_LEVEL_TONE[value]}`}
+        className={`flex-shrink-0 rounded-lg border bg-field px-3 text-body ${RULE_LEVEL_TONE[value]}`}
         options={options.map((l) => ({
           value: l,
           label: RULE_LEVEL_LABELS[l],

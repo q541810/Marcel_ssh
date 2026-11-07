@@ -29,11 +29,11 @@ import YegouApiBanner from '@/components/settings/YegouApiBanner';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-field px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 候选的选型提示是中文散文，不用渠道/模型字段那套等宽字体。 */
 const descriptionInputClass =
-  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 空注册表兜底（settings 尚未初始化时）：用 lib/llmRegistry 的共享版。 */
 
@@ -315,7 +315,7 @@ function MobileModelEditorSheet({
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
-                  className="w-full resize-y rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
+                  className="w-full resize-y rounded-lg border border-edge bg-field px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
                 />
                 <p className="mt-1 text-caption leading-relaxed text-fg-tertiary">
                   填写该模型支持的推理档位（如 low/medium/high、max）。填了之后，会话输入条模型名旁会出现
@@ -333,7 +333,7 @@ function MobileModelEditorSheet({
                   placeholder={`{\n  "thinking": { "type": "enabled" },\n  "top_p": 0.9\n}`}
                   spellCheck={false}
                   rows={4}
-                  className="w-full resize-y rounded-lg border border-edge bg-surface-raised px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
+                  className="w-full resize-y rounded-lg border border-edge bg-field px-3 py-2 font-mono text-meta text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500"
                 />
                 <p className="text-caption text-fg-tertiary">
                   以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。

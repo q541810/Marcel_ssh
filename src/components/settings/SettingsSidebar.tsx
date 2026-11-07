@@ -60,7 +60,7 @@ export function SettingsSidebar({
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Ctrl+F 搜索"
-            className="w-full pl-9 pr-3 h-8 rounded-lg bg-surface border border-edge-subtle text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+            className="w-full pl-9 pr-3 h-8 rounded-lg bg-surface border border-edge text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           />
         </div>
       </div>

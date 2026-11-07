@@ -471,7 +471,7 @@ export function FontFamilyPicker({
           autoCorrect="off"
           spellCheck={false}
           aria-label="自定义字体栈"
-          className="w-full rounded-xl border border-edge bg-surface-raised px-4 py-2 font-mono text-body text-fg outline-none transition-colors focus:border-indigo-500"
+          className="w-full rounded-xl border border-edge bg-field px-4 py-2 font-mono text-body text-fg outline-none transition-colors focus:border-indigo-500"
         />
       )}
 

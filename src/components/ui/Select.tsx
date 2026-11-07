@@ -210,8 +210,8 @@ export default function Select<T extends string = string>({
         className={`
           pressable focus-ring w-full h-7 flex items-center gap-2 rounded-lg border px-3 text-body text-left
           ${disabled
-            ? 'border-edge-subtle bg-surface-raised text-fg-disabled cursor-not-allowed'
-            : 'border-edge-subtle bg-surface-raised text-fg hover:border-edge focus:border-indigo-500'
+            ? 'border-edge-subtle bg-field text-fg-disabled cursor-not-allowed'
+            : 'border-edge bg-field text-fg hover:border-edge-strong focus:border-indigo-500'
           }
         `}
       >

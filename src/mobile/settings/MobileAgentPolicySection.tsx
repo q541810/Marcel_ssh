@@ -24,7 +24,7 @@ import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
+  'w-full rounded-lg border border-edge bg-field px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
 
 /**
  * Agent 页（手机）：安全与审批 → 用户附加指令 → 执行限制，与桌面同序。
@@ -214,7 +214,7 @@ export function MobileAgentPolicySection() {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="mt-2 w-full resize-none rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
+          className="mt-2 w-full resize-none rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
         />
       </MobileSettingRow>
 

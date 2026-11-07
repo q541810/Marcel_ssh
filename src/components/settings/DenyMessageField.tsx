@@ -3,7 +3,7 @@ import { RotateCcw } from 'lucide-react';
 import type { ReasonVar } from '@/lib/types';
 
 const fieldClass =
-  'w-full resize-y rounded-lg border border-edge bg-surface-raised text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'w-full resize-y rounded-lg border border-edge bg-field text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /**
  * 「拒绝说明」输入框：档位是「直接拒绝」时才出现（别的档位没有要回给模型的话）。

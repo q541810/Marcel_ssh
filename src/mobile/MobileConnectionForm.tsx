@@ -32,9 +32,9 @@ interface MobileConnectionFormProps {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 const inputErrorClass =
-  'w-full rounded-lg border border-red-500 bg-surface-raised px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-red-400';
+  'w-full rounded-lg border border-red-500 bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-red-400';
 
 function Field({
   label,

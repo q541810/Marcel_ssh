@@ -28,7 +28,7 @@ describe('settingsLayout', () => {
       contentMaxWidth: 1280,
       sectionColumns: 2,
       itemLayout: 'inline',
-      labelWidth: 192,
+      labelWidth: 240,
     });
   });
 });

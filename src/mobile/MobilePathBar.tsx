@@ -45,7 +45,7 @@ export default function MobilePathBar({
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        className="min-w-0 flex-1 rounded-lg border border-indigo-500 bg-surface-raised px-3 py-1.5 font-mono text-body text-fg outline-none"
+        className="min-w-0 flex-1 rounded-lg border border-indigo-500 bg-field px-3 py-1.5 font-mono text-body text-fg outline-none"
         autoFocus
       />
     );

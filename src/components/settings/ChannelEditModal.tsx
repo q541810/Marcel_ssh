@@ -39,7 +39,7 @@ export interface ChannelDraft {
 }
 
 const inputClass =
-  'w-full rounded-lg bg-surface border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
+  'w-full rounded-lg bg-field border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
 
 export default function ChannelEditModal({
   open,

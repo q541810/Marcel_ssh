@@ -336,7 +336,7 @@ export default function ConnectionForm({
           <select
             value={authMethod}
             onChange={(e) => setAuthMethod(e.target.value)}
-            className="flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
+            className="flex-1 rounded-lg bg-field border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
           >
             <option value="Password">密码</option>
             <option value="PrivateKey">私钥</option>
@@ -396,7 +396,7 @@ export default function ConnectionForm({
                   setKeyId(e.target.value);
                   if (e.target.value) setKeyPath('');
                 }}
-                className="min-w-0 flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
+                className="min-w-0 flex-1 rounded-lg bg-field border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
               >
                 <option value="">
                   {keys.length > 0 ? '未选择（也可在下方直接填路径）' : '还没有导入私钥'}
@@ -600,7 +600,7 @@ export default function ConnectionForm({
                   setJumpPassword('');
                   setJumpPassphrase('');
                 }}
-                className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg bg-field border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
               >
                 <option value="withTarget">和目标相同</option>
                 <option value="Password">密码</option>
@@ -651,7 +651,7 @@ export default function ConnectionForm({
                         setJumpKeyId(e.target.value);
                         if (e.target.value) setJumpKeyPath('');
                       }}
-                      className="min-w-0 flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
+                      className="min-w-0 flex-1 rounded-lg bg-field border border-edge px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
                     >
                       <option value="">
                         {keys.length > 0

@@ -54,7 +54,7 @@ interface RiskRulesEditorProps {
 }
 
 const fieldClass =
-  'rounded-lg border border-edge bg-surface-raised text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
+  'rounded-lg border border-edge bg-field text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-40';
 
 /** 一个可编辑名单：条目是可删的小标签，下面一个输入框添加；与默认不同时给「恢复默认」。 */
 function ListEditor({

@@ -30,7 +30,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
           setEditing(false);
           if (p !== currentPath) onNavigate(p);
         }}
-        className="flex-1 rounded-md bg-surface-raised border border-edge h-6 px-2 text-body text-fg outline-none focus:border-indigo-500 font-mono"
+        className="flex-1 rounded-md bg-field border border-edge h-6 px-2 text-body text-fg outline-none focus:border-indigo-500 font-mono"
         autoFocus
       />
     );

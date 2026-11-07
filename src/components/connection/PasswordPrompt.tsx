@@ -56,7 +56,7 @@ export default function PasswordPrompt({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
-          className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-read text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg bg-field border border-edge px-3 py-2 text-read text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           placeholder="密码"
         />
         <div className="flex justify-end gap-2 pt-2">

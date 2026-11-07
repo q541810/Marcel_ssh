@@ -853,7 +853,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFolder(false);
             }}
             placeholder="新文件夹名称"
-            className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+            className="flex-1 rounded-md bg-field border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
             autoFocus
           />
           <button
@@ -883,7 +883,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFile(false);
             }}
             placeholder="新文件名称"
-            className="flex-1 rounded-md bg-surface-raised border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+            className="flex-1 rounded-md bg-field border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
             autoFocus
           />
           <button

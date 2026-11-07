@@ -155,7 +155,7 @@ export default function MobileApprovalSheet({
             onChange={(e) => setReason(e.target.value)}
             placeholder="拒绝原因（可选，会告诉 Agent）"
             aria-label="拒绝原因"
-            className="w-full rounded-xl bg-surface border border-edge-subtle px-3 py-2.5 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-edge-strong"
+            className="w-full rounded-xl bg-surface border border-edge px-3 py-2.5 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-edge-strong"
           />
           <div className="flex gap-2">
             <ApprovalRejectButton

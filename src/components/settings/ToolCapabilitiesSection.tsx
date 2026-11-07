@@ -133,7 +133,7 @@ function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placehol
         }}
         placeholder={hasKey ? '已保存，输入新 Key 可覆盖' : placeholder}
         autoComplete="off"
-        className="flex-1 rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+        className="flex-1 rounded-lg bg-field border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
       />
       {hasKey && (
         <Button
@@ -269,7 +269,7 @@ export function ToolCapabilitiesSection() {
                         placeholder={CUSTOM_URL_PLACEHOLDER}
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+                        className="w-full rounded-lg bg-field border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
                       />
                       {customForm.check.error && (
                         <p className="text-meta text-red-400">{customForm.check.error}</p>
@@ -409,7 +409,7 @@ export function ToolCapabilitiesSection() {
                     placeholder={CUSTOM_FETCH_URL_PLACEHOLDER}
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full rounded-lg bg-surface-raised border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg bg-field border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
                   />
                   {customFetchForm.check.error && (
                     <p className="text-meta text-red-400">{customFetchForm.check.error}</p>
