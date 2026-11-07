@@ -20,7 +20,7 @@ export default function Input({ label, error, className = '', ...props }: Props)
           ${
             error
               ? 'border-red-500 focus:border-red-400'
-              : 'border-edge hover:border-edge-strong focus:border-indigo-500'
+              : 'border-edge-strong hover:border-fg-tertiary focus:border-indigo-500'
           }
           disabled:text-fg-disabled disabled:cursor-not-allowed
           ${className}

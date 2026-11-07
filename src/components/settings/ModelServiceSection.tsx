@@ -159,7 +159,7 @@ export function ModelServiceSection() {
         />
       </SettingItem>
 
-      <SettingItem
+      <SettingItem fullWidth
         id="llm-subagent-models"
         label="子agent 模型候选"
         description="主 agent 派发子agent 时可从这份清单按任务难度自选模型，每条写一句适用场景作为选型提示。未配置时，子agent 恒使用当前会话的模型"
@@ -186,7 +186,7 @@ export function ModelServiceSection() {
                   value={choice.description}
                   onChange={(e) => updateSubagentChoice(i, { description: e.target.value })}
                   placeholder="选型提示，如：小模型，适合搜索等简单任务"
-                  className="flex-1 min-w-0 rounded-lg bg-field border border-edge px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="flex-1 min-w-0 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors"
                 />
                 <button
                   type="button"
@@ -240,7 +240,7 @@ export function ModelServiceSection() {
       </SettingItem>
 
       {/* ── 网络与重试策略（全局共享，所有渠道与模型统一生效） ── */}
-      <SettingItem
+      <SettingItem fullWidth
         id="llm-net-policy"
         label="网络与重试策略"
         description="全局共享，所有渠道与模型统一生效（重试次数、间隔、状态码条件、首字超时、超时自动重试）"

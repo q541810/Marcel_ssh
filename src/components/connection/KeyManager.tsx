@@ -109,8 +109,8 @@ export default function KeyManager({
     ? 'shrink-0 rounded-lg px-3 py-2 text-read transition-colors active:bg-state-mid/60'
     : 'shrink-0 rounded px-1.5 py-1 text-meta transition-colors';
   const fieldClass = touch
-    ? 'w-full rounded-xl border border-edge bg-field px-3 py-3 text-title text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500'
-    : 'w-full rounded-lg border border-edge bg-field px-3 py-2 text-read text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+    ? 'w-full rounded-xl border border-edge-strong bg-field px-3 py-3 text-title text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500'
+    : 'w-full rounded-lg border border-edge-strong bg-field px-3 py-2 text-read text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
   const inlineBtnClass = touch ? 'py-2.5 text-read' : 'py-1.5 text-read';
   const smallBtnClass = touch ? 'py-2 text-read' : 'py-1 text-meta';
 
@@ -459,7 +459,7 @@ export default function KeyManager({
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
-            className={`w-full resize-y rounded-lg border border-edge bg-field px-3 py-2 font-mono text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500 ${
+            className={`w-full resize-y rounded-lg border border-edge-strong bg-field px-3 py-2 font-mono text-fg outline-none placeholder:text-fg-disabled focus:border-indigo-500 ${
               touch ? 'text-read' : 'text-meta'
             }`}
           />

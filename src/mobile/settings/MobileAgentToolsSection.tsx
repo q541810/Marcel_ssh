@@ -121,7 +121,7 @@ export function selectMobileFetchMode(
 }
 
 const KEY_INPUT_CLASS =
-  'flex-1 rounded-lg border border-edge bg-field px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'flex-1 rounded-lg border border-edge-strong bg-field px-3 py-2.5 font-mono text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** 联网工具的 API Key 输入框。已存时回显掩码；失焦即保存；Key 永不回传前端。 */
 function ToolApiKeyInput({ slot, placeholder }: { slot: ToolApiKeySlot; placeholder: string }) {

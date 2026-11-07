@@ -51,7 +51,7 @@ export function FontSizeInput({
         onChange={(e) => setInputValue(e.target.value)}
         onFocus={() => setShowSlider(true)}
         onBlur={handleBlur}
-        className="w-24 rounded-lg bg-field border border-edge px-3 py-2 text-body text-fg focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-24 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
       {showSlider && (
         <div 

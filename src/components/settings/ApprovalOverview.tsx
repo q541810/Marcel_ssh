@@ -366,7 +366,7 @@ export function ApprovalOverview({
   const [newCommand, setNewCommand] = useState('');
 
   const confirmMode = agent.confirmEachCommand ? 'each' : agent.listMode;
-  const inputClass = `flex-1 rounded-lg bg-field border border-edge px-3 font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 ${
+  const inputClass = `flex-1 rounded-lg bg-field border border-edge-strong px-3 font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 ${
     compact ? 'py-3 text-body' : 'py-2 text-body'
   }`;
 

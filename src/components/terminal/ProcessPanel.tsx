@@ -127,7 +127,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索进程..."
-          className="flex-1 rounded-md bg-field border border-edge px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+          className="flex-1 rounded-md bg-field border border-edge-strong px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
         />
         <button
           type="button"

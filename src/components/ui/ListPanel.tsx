@@ -51,7 +51,7 @@ export default function ListPanel({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
-          className="w-full h-7 rounded-lg bg-field border border-edge px-3 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors duration-120"
+          className="w-full h-7 rounded-lg bg-field border border-edge-strong px-3 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors duration-120"
         />
       </div>
 

@@ -29,7 +29,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '' };
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /** Skill management for mobile: import file / create / edit / toggle / delete. */
 export function MobileSkillSection() {

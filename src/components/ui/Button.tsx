@@ -39,7 +39,7 @@ export default function Button({
     <button
       disabled={disabled || loading}
       className={`
-        pressable focus-ring inline-flex items-center justify-center gap-2 rounded-lg font-medium
+        pressable focus-ring inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-lg font-medium
         disabled:cursor-not-allowed
         ${variantStyles[variant]}
         ${sizeStyles[size]}

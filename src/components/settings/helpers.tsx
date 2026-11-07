@@ -112,6 +112,7 @@ export function SettingItem({
   children,
   sectionId,
   density = 'default',
+  fullWidth = false,
 }: {
   id: string;
   label: string;
@@ -120,6 +121,8 @@ export function SettingItem({
   children: React.ReactNode;
   sectionId: string;
   density?: 'default' | 'compact';
+  /** 控件本身需要整行宽度（规则编辑器、文本域、预览、网格等）：标签与说明在上，控件在下铺满。 */
+  fullWidth?: boolean;
 }) {
   const { register, unregister } = useSearchRegistry();
   const layout = useSettingsLayout();
@@ -131,26 +134,30 @@ export function SettingItem({
   }, [id, label, description, keywordsKey, sectionId, register, unregister]);
 
   const compact = density === 'compact';
-  const stacked = layout.itemLayout === 'stacked' && !compact;
+  const stacked = (layout.itemLayout === 'stacked' || fullWidth) && !compact;
 
+  // 普通项：说明在左吃掉剩余宽度，控件列在右固定宽（layout.controlWidth），所有控件左缘对齐成一条线。
+  // 宽控件（fullWidth）与窄屏：标签说明在上、控件在下铺满。
   return (
     <div
-      className={`settings-item ${compact ? 'px-4 py-3 items-center' : 'px-4 py-3 items-start'} ${
-        stacked ? 'flex flex-col gap-3' : 'flex gap-6'
+      className={`settings-item px-4 py-3 ${
+        stacked ? 'flex flex-col gap-3' : `flex gap-6 ${compact ? 'items-center' : 'items-start'}`
       }`}
     >
-      <div
-        className={`settings-label-column ${compact || stacked ? 'min-w-0' : 'flex-shrink-0'}`}
-        style={!compact && !stacked ? { width: `${layout.labelWidth}px` } : undefined}
-      >
-        <div className={`text-body text-fg`}>{label}</div>
+      <div className="settings-label-column min-w-0 flex-1">
+        <div className="text-body font-medium text-fg">{label}</div>
         {description && (
-          <div className={`text-meta text-fg-secondary mt-1`}>
+          <div className="text-meta text-fg-secondary mt-1">
             {description}
           </div>
         )}
       </div>
-      <div className={`${compact ? 'flex-shrink-0' : 'flex-1 min-w-0'}`}>{children}</div>
+      <div
+        className={stacked ? 'min-w-0' : 'flex-shrink-0 min-w-0'}
+        style={!stacked && !compact ? { width: `${layout.controlWidth}px` } : undefined}
+      >
+        {children}
+      </div>
     </div>
   );
 }

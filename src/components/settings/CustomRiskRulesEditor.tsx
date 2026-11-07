@@ -21,7 +21,7 @@ import { LevelSelect } from './RiskLevelSelect';
 import { DenyMessageField } from './DenyMessageField';
 
 const fieldClass =
-  'rounded-lg border border-edge bg-field text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
+  'rounded-lg border border-edge-strong bg-field text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500';
 
 /**
  * 自定义规则（桌面与手机共用）：每条是「命令 + 参数含 + 档位」，例如 `docker` + `prune` → 强制审批。

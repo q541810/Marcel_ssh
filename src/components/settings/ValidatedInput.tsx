@@ -39,7 +39,7 @@ export function getValidatedInputClassName(hasError: boolean): string {
   if (hasError) {
     return 'bg-red-900/20 border border-red-500/50 focus:border-red-400';
   }
-  return 'bg-field border border-edge';
+  return 'bg-field border border-edge-strong';
 }
 
 // ─── 组件 ───

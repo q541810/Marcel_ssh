@@ -686,8 +686,9 @@ export function PluginSection() {
         >
           <div className="flex items-center gap-2 min-w-0">
             <span
-              className="text-meta text-fg-tertiary font-mono cursor-pointer hover:text-fg-secondary transition-colors select-all"
-              title="点击复制路径"
+              className="min-w-0 flex-1 truncate text-meta text-fg-tertiary font-mono cursor-pointer hover:text-fg-secondary transition-colors select-all"
+              title={`${pluginDir}
+点击复制路径`}
               onClick={handleCopy}
             >
               {copied ? (

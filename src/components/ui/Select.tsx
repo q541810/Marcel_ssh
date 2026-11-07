@@ -211,7 +211,7 @@ export default function Select<T extends string = string>({
           pressable focus-ring w-full h-7 flex items-center gap-2 rounded-lg border px-3 text-body text-left
           ${disabled
             ? 'border-edge-subtle bg-field text-fg-disabled cursor-not-allowed'
-            : 'border-edge bg-field text-fg hover:border-edge-strong focus:border-indigo-500'
+            : 'border-edge-strong bg-field text-fg hover:border-fg-tertiary focus:border-indigo-500'
           }
         `}
       >

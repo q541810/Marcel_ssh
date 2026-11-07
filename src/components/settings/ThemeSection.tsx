@@ -24,7 +24,7 @@ export function ThemeSection() {
       title="应用主题"
       description="界面与终端的配色、字号与字体；改动即时生效，无需保存"
     >
-      <SettingItem
+      <SettingItem fullWidth
         id="ui-theme"
         label="主题与颜色分区"
         description="选预设整体换色（终端配色随主题成套切换），或进自定义逐分区调整；语义色按基准色自动生成整套深浅"
@@ -67,7 +67,7 @@ export function ThemeSection() {
           onChange={(fontSize) => liveUpdate({ fontSize })}
         />
       </SettingItem>
-      <SettingItem
+      <SettingItem fullWidth
         id="font-family"
         label="终端字体"
         description="只影响终端；从本机已安装的等宽字体里选，Nerd Fonts 图标已内置，无需自己安装"

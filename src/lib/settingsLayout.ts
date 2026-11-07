@@ -8,7 +8,8 @@ export interface SettingsLayout {
   contentPaddingX: number;
   sectionColumns: 1 | 2;
   itemLayout: SettingsItemLayout;
-  labelWidth: number;
+  /** 设置项右侧控件列的固定宽度；说明文字吃掉剩余宽度（stacked 时不用）。 */
+  controlWidth: number;
 }
 
 export function resolveSettingsLayout(width: number): SettingsLayout {
@@ -20,7 +21,7 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
       contentPaddingX: 20,
       sectionColumns: 1,
       itemLayout: 'stacked',
-      labelWidth: 0,
+      controlWidth: 0,
     };
   }
 
@@ -32,7 +33,7 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
       contentPaddingX: 32,
       sectionColumns: 1,
       itemLayout: 'inline',
-      labelWidth: 280,
+      controlWidth: 320,
     };
   }
 
@@ -44,7 +45,7 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
       contentPaddingX: 40,
       sectionColumns: 2,
       itemLayout: 'inline',
-      labelWidth: 240,
+      controlWidth: 280,
     };
   }
 
@@ -55,6 +56,6 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
     contentPaddingX: 48,
     sectionColumns: 2,
     itemLayout: 'inline',
-    labelWidth: 280,
+    controlWidth: 320,
   };
 }

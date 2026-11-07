@@ -203,7 +203,7 @@ function Row({
 }
 
 const INPUT =
-  'w-full rounded-lg bg-field border border-edge px-3 text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
+  'w-full rounded-lg bg-field border border-edge-strong px-3 text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
 
 function inputClass(compact?: boolean) {
   return `${INPUT} font-mono ${compact ? 'py-3 text-body' : 'py-2 text-body'}`;

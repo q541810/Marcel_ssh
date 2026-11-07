@@ -131,7 +131,7 @@ export function AgentPolicySection() {
         <div className="px-6 py-5">
           <ApprovalOverview agent={agent} onChange={updateAgent} />
         </div>
-        <SettingItem
+        <SettingItem fullWidth
           id="cmd-test"
           label="测试命令"
           description="输入一条命令，看它命中哪条规则、三个模式下各会怎样"
@@ -148,7 +148,7 @@ export function AgentPolicySection() {
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              className="w-full rounded-lg bg-field border border-edge px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-lg bg-field border border-edge-strong px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
             />
             {check.error && <p className="text-meta text-red-400">{check.error}</p>}
             {check.results && (
@@ -160,7 +160,7 @@ export function AgentPolicySection() {
             )}
           </div>
         </SettingItem>
-        <SettingItem
+        <SettingItem fullWidth
           id="cmd-custom-rules"
           label="自定义规则"
           description="命令命中就按所选档位处理，多条命中取最严"
@@ -175,7 +175,7 @@ export function AgentPolicySection() {
             />
           </div>
         </SettingItem>
-        <SettingItem
+        <SettingItem fullWidth
           id="cmd-protected-paths"
           label="受保护路径"
           description="在这些路径下写入会触发审批"
@@ -199,7 +199,7 @@ export function AgentPolicySection() {
             />
           </div>
         </SettingItem>
-        <SettingItem
+        <SettingItem fullWidth
           id="cmd-tool-approval"
           label="需要审批的工具"
           description="这些工具执行前按所选档位处理；命令由规则决定"

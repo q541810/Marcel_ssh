@@ -221,7 +221,7 @@ export function MobileMcpServerSection() {
             disabled={running || busy}
             inputMode="numeric"
             aria-label="端口"
-            className="w-28 rounded-lg border border-edge bg-field px-3 py-2 font-mono text-body text-fg focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+            className="w-28 rounded-lg border border-edge-strong bg-field px-3 py-2 font-mono text-body text-fg focus:border-indigo-500 focus:outline-none disabled:opacity-50"
           />
         </div>
       </MobileSettingRow>
@@ -242,7 +242,7 @@ export function MobileMcpServerSection() {
             spellCheck={false}
             aria-label="访问令牌"
             placeholder="启动时自动生成"
-            className="min-w-0 flex-1 rounded-lg border border-edge bg-field px-3 py-2 font-mono text-meta text-fg-secondary focus:border-indigo-500 focus:outline-none read-only:opacity-70"
+            className="min-w-0 flex-1 rounded-lg border border-edge-strong bg-field px-3 py-2 font-mono text-meta text-fg-secondary focus:border-indigo-500 focus:outline-none read-only:opacity-70"
           />
           {shownToken && <CopyButton text={shownToken} size="md" />}
         </div>

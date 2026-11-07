@@ -104,7 +104,7 @@ export function McpServerSection() {
         title="让外部 Agent 接入 Marcel SSH"
         description="Claude Code、zcode、DeepSeek Harness 等可以调用你已保存的连接执行 SSH / SFTP 操作"
       >
-        <SettingItem
+        <SettingItem fullWidth
           id="mcp-client-config-stdio"
           label="方式一：stdio（推荐）"
           description="客户端自己启动 Marcel SSH，不需要保持任何东西在后台运行。你在界面上保存的连接会自动可用。"
@@ -127,7 +127,7 @@ export function McpServerSection() {
           </div>
         </SettingItem>
 
-        <SettingItem
+        <SettingItem fullWidth
           id="mcp-external-agent-trust"
           label="它能做什么"
           description="外部 Agent 可以执行命令、收发文件，命令不经过 Marcel SSH 的风险评估，也不会弹审批。"
@@ -167,7 +167,7 @@ export function McpServerSection() {
           </div>
         </SettingItem>
 
-        <SettingItem
+        <SettingItem fullWidth
           id="mcp-http-endpoint"
           label="监听地址"
           description={
@@ -187,7 +187,7 @@ export function McpServerSection() {
                 aria-label="监听地址"
                 placeholder="127.0.0.1"
                 spellCheck={false}
-                className="w-40 rounded-lg bg-field border border-edge px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-40 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
               />
               <span className="text-fg-disabled text-body">:</span>
               <input
@@ -196,7 +196,7 @@ export function McpServerSection() {
                 disabled={running || busy}
                 inputMode="numeric"
                 aria-label="端口"
-                className="w-24 rounded-lg bg-field border border-edge px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-24 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
               />
             </div>
             {exposureWarning && (
@@ -231,7 +231,7 @@ export function McpServerSection() {
               aria-label="访问令牌"
               onChange={(e) => setPendingToken(e.target.value)}
               placeholder="启动时自动生成"
-              className="flex-1 min-w-0 rounded-lg bg-field border border-edge px-3 py-2 text-meta text-fg-secondary font-mono focus:outline-none focus:border-indigo-500 read-only:opacity-70"
+              className="flex-1 min-w-0 rounded-lg bg-field border border-edge-strong px-3 py-2 text-meta text-fg-secondary font-mono focus:outline-none focus:border-indigo-500 read-only:opacity-70"
             />
             {shownToken && <CopyButton text={shownToken} />}
             {!running && (
@@ -244,7 +244,7 @@ export function McpServerSection() {
         </SettingItem>
 
         {running && config?.http && (
-          <SettingItem
+          <SettingItem fullWidth
             id="mcp-http-client-config"
             label="客户端配置"
             description="粘到支持 HTTP 的客户端里即可。"
@@ -262,7 +262,7 @@ export function McpServerSection() {
         )}
 
         {error && (
-          <SettingItem
+          <SettingItem fullWidth
             id="mcp-http-error"
             label="出错了"
             sectionId="settings-mcp-server"

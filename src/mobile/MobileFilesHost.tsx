@@ -1423,7 +1423,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
             autoFocus
           />
         </div>
@@ -1566,7 +1566,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 text-body text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500"
             autoFocus
           />
         </div>
@@ -1676,7 +1676,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge bg-field px-3 py-2.5 text-body text-fg outline-none focus:border-indigo-500"
+            className="w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 text-body text-fg outline-none focus:border-indigo-500"
             autoFocus
           />
         </div>

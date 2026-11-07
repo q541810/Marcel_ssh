@@ -86,7 +86,7 @@ export default function QuickConnect() {
               setError('');
             }}
             placeholder="user@host:port"
-            className="w-full rounded-lg bg-field border border-edge px-3 py-1.5 text-read font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+            className="w-full rounded-lg bg-field border border-edge-strong px-3 py-1.5 text-read font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
           />
           {error && (
             <div className="absolute top-full left-0 mt-1 text-meta text-red-400 z-10 max-w-md truncate">
