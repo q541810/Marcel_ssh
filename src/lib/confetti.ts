@@ -43,6 +43,11 @@ export interface ConfettiBurst {
   /** 纸片整体大小倍率。 */
   scale?: number;
   colors?: readonly string[];
+  /**
+   * 像素碎片：只出方块、不旋转不翻面不飘，落笔时坐标取整——像素风场景用（关于页图标变像素那一刻）。
+   * 方块边长取 `6~11 × scale`，想要整数倍像素就给整数 scale 的约数，别指望引擎替你对齐格子。
+   */
+  pixel?: boolean;
 }
 
 type Shape = 0 | 1 | 2; // 0 方片 / 1 圆点 / 2 细条
@@ -68,6 +73,7 @@ export interface Particle {
   life: number;
   color: string;
   shape: Shape;
+  pixel?: boolean;
 }
 
 /** 同屏粒子上限：打字很快时也不至于越攒越多拖垮帧率。 */
@@ -99,19 +105,20 @@ export function spawnParticles(burst: ConfettiBurst, rng: () => number = Math.ra
     const speed = vMin + rng() * (vMax - vMin);
     const w = (6 + rng() * 5) * scale;
     const shapeRoll = rng();
-    const shape: Shape = shapeRoll < 0.62 ? 0 : shapeRoll < 0.82 ? 1 : 2;
+    const shape: Shape = burst.pixel ? 0 : shapeRoll < 0.62 ? 0 : shapeRoll < 0.82 ? 1 : 2;
+    const side = burst.pixel ? Math.max(2, Math.round(w)) : w;
     out.push({
       x: burst.x,
       y: burst.y,
       vx: Math.cos(dir) * speed,
       vy: Math.sin(dir) * speed,
-      w: shape === 2 ? w * 0.4 : w,
-      h: shape === 2 ? w * 1.6 : shape === 1 ? w : w * (0.45 + rng() * 0.35),
-      rot: rng() * Math.PI * 2,
-      vrot: (rng() - 0.5) * 14,
-      flip: rng() * Math.PI * 2,
-      flipSpeed: 6 + rng() * 10,
-      sway: 20 + rng() * 40,
+      w: burst.pixel ? side : shape === 2 ? w * 0.4 : w,
+      h: burst.pixel ? side : shape === 2 ? w * 1.6 : shape === 1 ? w : w * (0.45 + rng() * 0.35),
+      rot: burst.pixel ? 0 : rng() * Math.PI * 2,
+      vrot: burst.pixel ? 0 : (rng() - 0.5) * 14,
+      flip: burst.pixel ? 0 : rng() * Math.PI * 2,
+      flipSpeed: burst.pixel ? 0 : 6 + rng() * 10,
+      sway: burst.pixel ? 0 : 20 + rng() * 40,
       swayFreq: 4 + rng() * 5,
       swayPhase: rng() * Math.PI * 2,
       gravity,
@@ -120,6 +127,7 @@ export function spawnParticles(burst: ConfettiBurst, rng: () => number = Math.ra
       life: lMin + rng() * (lMax - lMin),
       color: colors[Math.floor(rng() * colors.length) % colors.length],
       shape,
+      pixel: burst.pixel,
     });
   }
   return out;
@@ -203,6 +211,11 @@ function drawParticle(c: CanvasRenderingContext2D, p: Particle): void {
   const fade = Math.min(1, (p.life - p.age) / 0.5);
   c.globalAlpha = Math.max(0, fade);
   c.fillStyle = p.color;
+  if (p.pixel) {
+    // 像素碎片：边缘必须落在整数坐标上，否则会糊成半透明边
+    c.fillRect(Math.round(p.x - p.w / 2), Math.round(p.y - p.h / 2), p.w, p.h);
+    return;
+  }
   c.save();
   c.translate(p.x, p.y);
   c.rotate(p.rot);

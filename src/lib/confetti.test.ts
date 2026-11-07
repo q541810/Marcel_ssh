@@ -54,6 +54,29 @@ describe("spawnParticles", () => {
   });
 });
 
+describe("spawnParticles 像素碎片模式", () => {
+  it("只出不旋转、不翻面、不飘的整数边长正方形，颜色取自给定色板", () => {
+    const colors = ["#111111", "#eeeeee"];
+    const ps = spawnParticles({ x: 0, y: 0, angle: -90, spread: 360, count: 120, pixel: true, scale: 0.8, colors }, seeded());
+    for (const p of ps) {
+      expect(p.shape).toBe(0);
+      expect(p.w).toBe(p.h);
+      expect(Number.isInteger(p.w)).toBe(true);
+      expect(p.w).toBeGreaterThanOrEqual(2);
+      expect(p.rot).toBe(0);
+      expect(p.vrot).toBe(0);
+      expect(p.flipSpeed).toBe(0);
+      expect(p.sway).toBe(0);
+      expect(colors).toContain(p.color);
+    }
+  });
+
+  it("不开 pixel 时行为不变（仍会出圆点和细条）", () => {
+    const ps = spawnParticles({ x: 0, y: 0, angle: -90, spread: 90, count: 300 }, seeded());
+    expect(new Set(ps.map((p) => p.shape)).size).toBe(3);
+  });
+});
+
 describe("stepParticle", () => {
   it("pulls a particle downward over time (screen y grows)", () => {
     const [p] = spawnParticles(

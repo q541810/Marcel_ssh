@@ -10,6 +10,7 @@ import {
 } from '@/lib/mascot/frames';
 import { prefersReducedMotion } from '@/lib/confetti';
 import { createLogoBounce, type LogoBounce } from '@/lib/logoBounce';
+import { bakeMascotFrame, readMascotRim } from '@/lib/mascot/bake';
 
 /**
  * 玛瑟尔像素动画播放器（纯功能：给一个状态就播，不认任何 store）。
@@ -35,48 +36,7 @@ export interface MarcelSpriteProps {
   onPoke?: () => void;
 }
 
-const bakeCache = new Map<string, HTMLCanvasElement>();
 let drawFailureLogged = false;
-const BAKE_CACHE_LIMIT = 400;
-
-function bake(data: MascotFrameData, index: number, rim: string): HTMLCanvasElement {
-  const key = `${index}|${rim}`;
-  const hit = bakeCache.get(key);
-  if (hit) return hit;
-  const [w, h] = data.size;
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
-  if (ctx) {
-    const rows = data.frames[index];
-    for (let y = 0; y < h; y++) {
-      const row = rows[y];
-      let x = 0;
-      while (x < w) {
-        const ch = row[x];
-        let end = x + 1;
-        while (end < w && row[end] === ch) end++;
-        if (ch !== '.') {
-          const color = ch === 'O' ? rim : data.palette[ch];
-          if (color) {
-            ctx.fillStyle = color;
-            ctx.fillRect(x, y, end - x, 1);
-          }
-        }
-        x = end;
-      }
-    }
-  }
-  if (bakeCache.size >= BAKE_CACHE_LIMIT) bakeCache.clear(); // 只在频繁换主题时才会撑到；整体清掉重烤即可
-  bakeCache.set(key, c);
-  return c;
-}
-
-function readRim(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue('--color-edge-strong').trim();
-  return v || 'rgba(128,128,128,0.6)';
-}
 
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(prefersReducedMotion);
@@ -180,7 +140,7 @@ export default memo(function MarcelSprite({ state, size, perch = false, classNam
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(bake(data, seq[shownIndex][0], readRim()), 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bakeMascotFrame(data, seq[shownIndex][0], readMascotRim()), 0, 0, canvas.width, canvas.height);
     } catch (err) {
       if (!drawFailureLogged) {
         drawFailureLogged = true;
