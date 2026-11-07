@@ -15,6 +15,12 @@
  *    the user sees where the gesture will land before letting go. Older systems
  *    only ever deliver the commit, so previews are purely additive.
  *
+ * 3. **In-app edge swipe** — some ROMs (HyperOS among them) never report the
+ *    gesture, only the final commit. `edgeSwipeBack.ts` therefore tracks the
+ *    finger itself (like a leading-edge strip in a native app) and drives the
+ *    same previews through {@link touchBack}. When the system does report, it
+ *    simply takes over; either way the commit path above does the closing.
+ *
  * Layers register a close callback on mount and unregister on unmount; the
  * topmost (most recently opened) layer consumes the back press first.
  *
@@ -36,6 +42,8 @@ export interface BackGestureFrame {
   edge: BackEdge;
   /** Vertical finger travel since the gesture began, in CSS px. */
   dy: number;
+  /** Absolute finger Y in CSS px (viewport), for tilting toward the finger. */
+  y: number;
 }
 
 /**
@@ -90,6 +98,10 @@ export interface BackDiagnostics {
   topHadPreview: boolean | null;
   /** The webview reports prefers-reduced-motion (previews are skipped). */
   reducedMotion: boolean;
+  /** In-app edge swipes that started tracking the finger. */
+  touchStarts: number;
+  /** In-app edge swipes released past the threshold (committed). */
+  touchCommits: number;
 }
 
 let diag: BackDiagnostics = {
@@ -102,6 +114,8 @@ let diag: BackDiagnostics = {
   lastProgress: 0,
   topHadPreview: null,
   reducedMotion: false,
+  touchStarts: 0,
+  touchCommits: 0,
 };
 const diagListeners = new Set<() => void>();
 
@@ -178,12 +192,25 @@ const SETTLE_EPSILON = 0.002;
 
 interface GestureSession {
   entry: BackEntry;
+  /** Who is reporting the finger: the system (smoothed) or our own touch tracking (1:1). */
+  source: 'system' | 'touch';
   edge: BackEdge;
   startY: number;
   target: BackGestureFrame;
   current: BackGestureFrame;
   raf: number | null;
   lastT: number;
+  /** touchcancel grace: the system took the finger, wait for its commit. */
+  graceTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** After touchcancel, how long to wait for the system's own commit before giving up. */
+const TOUCH_CANCEL_GRACE_MS = 200;
+
+/** Native reports Y in physical px; the page works in CSS px. */
+function cssPx(physical: number): number {
+  const dpr = window.devicePixelRatio;
+  return dpr > 0 ? physical / dpr : physical;
 }
 
 let session: GestureSession | null = null;
@@ -206,6 +233,10 @@ function stopLoop(s: GestureSession): void {
     cancelAnimationFrame(s.raf);
     s.raf = null;
   }
+  if (s.graceTimer != null) {
+    clearTimeout(s.graceTimer);
+    s.graceTimer = null;
+  }
 }
 
 function tick(now: number): void {
@@ -226,13 +257,16 @@ function tick(now: number): void {
   const tgt = s.target;
   cur.progress += (tgt.progress - cur.progress) * k;
   cur.dy += (tgt.dy - cur.dy) * k;
+  cur.y += (tgt.y - cur.y) * k;
   cur.edge = tgt.edge;
   const settled =
     Math.abs(tgt.progress - cur.progress) < SETTLE_EPSILON &&
-    Math.abs(tgt.dy - cur.dy) < 0.5;
+    Math.abs(tgt.dy - cur.dy) < 0.5 &&
+    Math.abs(tgt.y - cur.y) < 0.5;
   if (settled) {
     cur.progress = tgt.progress;
     cur.dy = tgt.dy;
+    cur.y = tgt.y;
   }
   s.entry.preview?.update({ ...cur });
   if (!settled) s.raf = requestAnimationFrame(tick);
@@ -252,7 +286,18 @@ function endSession(mode: 'cancel' | 'commit'): void {
   if (mode === 'cancel') s.entry.preview?.cancel();
 }
 
-function startGesture(edge: number, y: number): void {
+function startGesture(edge: number, physicalY: number): void {
+  const y = cssPx(physicalY);
+  // Our own touch tracking already follows this finger (the system reports
+  // the same swipe too, e.g. on a Pixel): adopt it instead of restarting, so
+  // the preview doesn't flinch back to rest and out again.
+  if (session?.source === 'touch') {
+    bumpDiag({ starts: diag.starts + 1 });
+    stopLoop(session);
+    session.source = 'system';
+    session.startY = y - session.target.dy;
+    return;
+  }
   // A previous gesture the system never resolved: settle it first.
   endSession('cancel');
   const top = stack[stack.length - 1];
@@ -264,30 +309,107 @@ function startGesture(edge: number, y: number): void {
   });
   if (!top?.preview || reduced) return;
   const e = normalizeEdge(edge);
-  const frame = (): BackGestureFrame => ({ progress: 0, edge: e, dy: 0 });
+  const frame = (): BackGestureFrame => ({ progress: 0, edge: e, dy: 0, y });
   session = {
     entry: top,
+    source: 'system',
     edge: e,
     startY: y,
     target: frame(),
     current: frame(),
     raf: null,
     lastT: 0,
+    graceTimer: null,
   };
   top.preview.start(e);
 }
 
-function progressGesture(progress: number, edge: number, y: number): void {
+function progressGesture(progress: number, edge: number, physicalY: number): void {
   bumpDiag({ frames: diag.frames + 1, lastProgress: progress });
   const s = session;
   if (!s) return;
+  const y = cssPx(physicalY);
   s.target = {
     progress: Math.min(Math.max(progress, 0), 1),
     edge: normalizeEdge(edge),
     dy: y - s.startY,
+    y,
   };
   ensureLoop(s);
 }
+
+/**
+ * The in-app edge swipe's way in (see `edgeSwipeBack.ts`). Unlike the system's
+ * events these are the finger itself, so frames go to the preview 1:1 with no
+ * smoothing: direct manipulation must not lag the finger.
+ */
+export const touchBack = {
+  /** Is there a layer with a preview to drive, and motion allowed? */
+  canStart(): boolean {
+    return stack[stack.length - 1]?.preview != null && !prefersReducedMotion();
+  },
+  /** Finger committed to a back swipe from `edge`. False: nothing to preview. */
+  begin(edge: BackEdge, y: number): boolean {
+    endSession('cancel');
+    const top = stack[stack.length - 1];
+    if (!top?.preview || prefersReducedMotion()) return false;
+    const frame = (): BackGestureFrame => ({ progress: 0, edge, dy: 0, y });
+    session = {
+      entry: top,
+      source: 'touch',
+      edge,
+      startY: y,
+      target: frame(),
+      current: frame(),
+      raf: null,
+      lastT: 0,
+      graceTimer: null,
+    };
+    bumpDiag({ touchStarts: diag.touchStarts + 1 });
+    top.preview.start(edge);
+    top.preview.update({ ...session.current });
+    return true;
+  },
+  move(progress: number, y: number): void {
+    const s = session;
+    if (!s || s.source !== 'touch') return;
+    if (!stack.includes(s.entry)) return;
+    const frame: BackGestureFrame = {
+      progress: Math.min(Math.max(progress, 0), 1),
+      edge: s.edge,
+      dy: y - s.startY,
+      y,
+    };
+    s.target = frame;
+    s.current = { ...frame };
+    s.entry.preview?.update({ ...frame });
+  },
+  /** Finger lifted: close the layer (continuing from the pose) or settle back. */
+  end(commit: boolean): void {
+    const s = session;
+    if (!s || s.source !== 'touch') return;
+    if (commit) {
+      bumpDiag({ touchCommits: diag.touchCommits + 1 });
+      popAndClose();
+    } else {
+      endSession('cancel');
+    }
+  },
+  /**
+   * `touchcancel`: usually the system took the finger for its own back gesture
+   * and will follow with a commit (or a cancel). Hold the pose for a moment so
+   * that commit continues from it; give up if nothing comes.
+   */
+  drop(): void {
+    const s = session;
+    if (!s || s.source !== 'touch') return;
+    stopLoop(s);
+    s.graceTimer = setTimeout(() => {
+      s.graceTimer = null;
+      if (session === s && s.source === 'touch') endSession('cancel');
+    }, TOUCH_CANCEL_GRACE_MS);
+  },
+};
 
 function popAndClose(): boolean {
   bumpDiag({ commits: diag.commits + 1 });

@@ -1404,46 +1404,45 @@ html[data-marcel-theme='light'] .marcel-code-block {
   animation: mobilePopoverExit 160ms ease-in both;
 }
 
-/* ── 预见式返回（Android 14+ 侧滑返回手势的实时预览） ──
-   姿态由 mobile/backPreview.ts 逐帧写进 --back-* 自定义属性，这里统一翻成 transform。
+/* ── 预见式返回（侧滑返回手势的实时预览，系统进度或应用内边缘滑动驱动） ──
+   每帧只写 transform / opacity（GPU 合成，不触发布局与重绘），见 mobile/backPreview.ts。
+   手势期间会整屏重绘的东西一律恒定：页面圆角与阴影从第一帧起就固定（屏幕自身的圆角
+   会盖住静止时的圆角），遮罩是单独一层只动 opacity，不用 filter。
    data-back 只在手势期间存在，className 仍归 React。
-   手势松手确认后，层自己的退出动画必须从「用户松手的那个姿态」接着走，所以退出关键帧
-   也用同一组变量作终点（函数列表与上面的 transform 一致，才会逐项平滑插值，
-   不会退化成矩阵插值）。 */
-[data-back] {
-  transform: translate3d(var(--back-x, 0px), var(--back-y, 0px), 0)
-    scale(var(--back-s, 1));
-  opacity: var(--back-o, 1);
+   松手确认后，层自己的退出动画必须从「用户松手的那个姿态」接着走：backPreview 在确认时把
+   姿态记进 --back-*，退出关键帧用它作终点。transform 的函数列表必须与 backPreview 里的
+   poseTransform 完全一致（perspective / translate3d / rotateX / rotateY / scale），
+   才会逐项平滑插值，不会退化成矩阵插值。 */
+
+/* 页面：收缩后露出底下的屏幕，需要圆角裁切 + 一圈极淡的边 + 投影，
+   否则深色页压在深色底上看不出它缩小了。恒定值，手势期间不逐帧变。 */
+[data-back='page'] {
+  overflow: hidden;
+  border-radius: 28px;
+  box-shadow:
+    0 0 0 1px rgb(128 128 128 / 0.22),
+    0 18px 48px rgb(0 0 0 / 0.42);
 }
 
-/* 页面 / 页内导航：收缩后露出底下的内容，需要圆角裁切 + 一圈极淡的边，
-   否则深色页压在深色底上看不出它缩小了。 */
-[data-back='page'],
 [data-back='peek'] {
   overflow: hidden;
-  border-radius: var(--back-r, 0px);
-}
-
-[data-back='page'] {
-  box-shadow:
-    0 0 0 1px rgb(128 128 128 / calc(var(--back-p, 0) * 0.28)),
-    0 14px 44px rgb(0 0 0 / calc(var(--back-p, 0) * 0.45));
 }
 
 @keyframes mobileSheetBackExit {
   to {
-    transform: translate3d(var(--back-x, 0px), 100%, 0) scale(var(--back-s, 1));
+    transform: perspective(1100px)
+      translate3d(var(--back-x, 0px), 100%, 0)
+      rotateX(var(--back-rx, 0deg)) rotateY(var(--back-ry, 0deg))
+      scale(var(--back-s, 1));
   }
 }
 
 @keyframes mobileFullscreenBackExit {
   to {
     opacity: 0;
-    transform: translate3d(
-        calc(var(--back-x, 0px) * 3),
-        var(--back-y, 0px),
-        0
-      )
+    transform: perspective(1100px)
+      translate3d(calc(var(--back-x, 0px) * 3), var(--back-y, 0px), 0)
+      rotateX(var(--back-rx, 0deg)) rotateY(calc(var(--back-ry, 0deg) * 1.6))
       scale(calc(var(--back-s, 1) * 0.86));
   }
 }
