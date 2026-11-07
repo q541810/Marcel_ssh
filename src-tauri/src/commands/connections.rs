@@ -151,7 +151,16 @@ pub async fn config_delete_connection(
     state: State<'_, AppState>,
     id: String,
     delete_memories: Option<bool>,
+    delete_conversations: Option<bool>,
 ) -> Result<(), AppError> {
+    // 删之前先记下名字和地址：删完连接配置就没了，对话留下来要靠它们认人。
+    let (name, host) = {
+        let store = state.connection_store.read().await;
+        match store.get_by_id(&id) {
+            Some(c) => (Some(c.name.clone()), Some(c.host.clone())),
+            None => (None, None),
+        }
+    };
     state
         .connection_store
         .mutate(|store| {
@@ -161,6 +170,27 @@ pub async fn config_delete_connection(
             Ok(())
         })
         .await?;
+
+    // 这台服务器名下的对话：勾了「同时删除对话」就彻底删；否则全部归档并记下名字，
+    // 在历史页「已删除的服务器」里还找得到，超过归档保留天数后随归档清理一起清掉。
+    // 两条路都只是尽力而为，失败不影响删连接本身。
+    if delete_conversations.unwrap_or(false) {
+        match super::agent_conversation::delete_all_conversations_of_connection(state.inner(), &id)
+        {
+            Ok(n) if n > 0 => log::info!("删除连接 {id}：一并删除 {n} 条对话"),
+            Ok(_) => {}
+            Err(e) => log::warn!("删除连接 {id} 的对话失败: {e}"),
+        }
+    } else {
+        match state
+            .conversation_db
+            .mark_connection_deleted(&id, name.as_deref(), host.as_deref())
+        {
+            Ok(n) if n > 0 => log::info!("删除连接 {id}：{n} 条对话已归档保留"),
+            Ok(_) => {}
+            Err(e) => log::warn!("归档连接 {id} 的对话失败: {e}"),
+        }
+    }
 
     // Best-effort: also purge every secret bound to this connection (登录密码 / 私钥口令 /
     // 跳板机密码 / 跳板机私钥口令) from the keychain. 槽位清单见 `SecretSlot::for_connection`。

@@ -1346,6 +1346,23 @@ export interface QuestionAnswer {
 
 // Conversation types
 
+/**
+ * 一台「已删除的服务器」名下的对话概况（历史页「已删除的服务器」分组的一行）。
+ * 删服务器时它的对话被归档并留在库里，这里是它们的入口；过了归档保留天数会随归档清理一起清掉。
+ */
+export interface OrphanConversationGroup {
+  connectionId: string;
+  /** 删除时记下的名字；更早以前就删掉的服务器没有记录，为 null。 */
+  name: string | null;
+  host: string | null;
+  /** 删除时间（ISO）；更早删掉的是「第一次被发现」的时间，也是归档清理开始计时的时刻。 */
+  deletedAt: string | null;
+  conversationCount: number;
+  lastUpdatedAt: string;
+  /** 最近一条对话的标题，认不出服务器时靠它认人。 */
+  lastTitle: string;
+}
+
 export interface AgentConversation {
   id: string;
   connectionId: string;

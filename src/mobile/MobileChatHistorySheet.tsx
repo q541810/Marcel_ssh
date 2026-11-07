@@ -24,7 +24,9 @@ import { getErrorMessage } from '@/lib/errors';
 import { useConversationStore } from '@/stores/conversationStore';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import { MOBILE_MAX_RETAINED_VIEWS } from '@/lib/retainedViews';
+import { orphanSearchLabel } from '@/lib/orphanConversations';
 import MobileSheet from './ui/MobileSheet';
+import MobileDeletedServerGroups from './MobileDeletedServerGroups';
 
 interface MobileChatHistorySheetProps {
   open: boolean;
@@ -60,6 +62,7 @@ export default function MobileChatHistorySheet({
   );
 
   const [expandedConnId, setExpandedConnId] = useState<string | null>(null);
+  const [expandedOrphanId, setExpandedOrphanId] = useState<string | null>(null);
 
   // 从 manager 中订阅状态
   const conversationsByConn = useConversationHistoryStore((s) => s.conversationsByConn);
@@ -84,6 +87,8 @@ export default function MobileChatHistorySheet({
 
   // manager actions
   const loadAllConnections = useConversationHistoryStore((s) => s.loadAllConnections);
+  const orphanGroups = useConversationHistoryStore((s) => s.orphanGroups);
+  const loadOrphanGroups = useConversationHistoryStore((s) => s.loadOrphanGroups);
   const selectConversation = useConversationHistoryStore((s) => s.selectConversation);
   const openSearchResult = useConversationHistoryStore((s) => s.openSearchResult);
   const clearSelectedConversation = useConversationHistoryStore((s) => s.clearSelectedConversation);
@@ -117,6 +122,7 @@ export default function MobileChatHistorySheet({
   useEffect(() => {
     if (!open) {
       setExpandedConnId(null);
+      setExpandedOrphanId(null);
       reset();
     } else {
       void fetchConnections();
@@ -130,6 +136,12 @@ export default function MobileChatHistorySheet({
       void loadAllConnections(connections);
     }
   }, [open, connections, loadAllConnections]);
+
+  // 已删除的服务器分组：与现存连接无关（连接删光了也要能看到），打开时单独拉一次，
+  // 连接列表变了（删了一台、转移走一批）也重拉。
+  useEffect(() => {
+    if (open) void loadOrphanGroups();
+  }, [open, connections, loadOrphanGroups]);
 
   // 打开「显示已归档」时补拉各连接的归档缓存（手机上只在这里用到它）
   useEffect(() => {
@@ -184,8 +196,9 @@ export default function MobileChatHistorySheet({
   const connNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of connections) m.set(c.id, connLabel(c));
+    for (const g of orphanGroups) m.set(g.connectionId, orphanSearchLabel(g, privacyMode));
     return m;
-  }, [connections, connLabel]);
+  }, [connections, connLabel, orphanGroups, privacyMode]);
 
   const groupedSearch = useMemo(() => {
     return groupSearchResultsByConnection(searchResults, connNameById);
@@ -439,7 +452,8 @@ export default function MobileChatHistorySheet({
                 )}
                 {!loadingConvs &&
                   !connectionsLoading &&
-                  connections.length === 0 && (
+                  connections.length === 0 &&
+                  orphanGroups.length === 0 && (
                     <p className="py-8 text-center text-body text-fg-tertiary">
                       暂无连接记录
                     </p>
@@ -595,6 +609,10 @@ export default function MobileChatHistorySheet({
                       </div>
                     );
                   })}
+                <MobileDeletedServerGroups
+                  expandedId={expandedOrphanId}
+                  onExpandedChange={setExpandedOrphanId}
+                />
               </>
             )}
           </div>

@@ -35,6 +35,7 @@ import type {
   AgentModeSettings,
   ApprovalOverview,
   AgentConversation,
+  OrphanConversationGroup,
   StoredMessage,
   UserInputMetadata,
   ConversationSearchResult,
@@ -683,6 +684,40 @@ export async function agentDeleteConversationsBySession(
   return invoke("agent_delete_conversations_by_session", { sessionId });
 }
 
+/** 所有「已删除的服务器」及其名下对话的概况。 */
+export async function agentListOrphanConversationGroups(): Promise<
+  OrphanConversationGroup[]
+> {
+  return invoke<OrphanConversationGroup[]>("agent_list_orphan_conversation_groups");
+}
+
+/** 一台已删除服务器名下的全部主对话（含归档）。服务器仍存在时后端会拒绝。 */
+export async function agentListOrphanConversations(
+  connectionId: string,
+): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>("agent_list_orphan_conversations", {
+    connectionId,
+  });
+}
+
+/** 把已删除服务器的对话整体转移到另一台现有服务器，返回转移的条数。 */
+export async function agentReassignOrphanConversations(
+  fromConnectionId: string,
+  toConnectionId: string,
+): Promise<number> {
+  return invoke<number>("agent_reassign_orphan_conversations", {
+    fromConnectionId,
+    toConnectionId,
+  });
+}
+
+/** 彻底删除一台已删除服务器名下的全部对话（不可恢复），返回删掉的条数。 */
+export async function agentDeleteOrphanConversations(
+  connectionId: string,
+): Promise<number> {
+  return invoke<number>("agent_delete_orphan_conversations", { connectionId });
+}
+
 /**
  * 预演一条命令会被怎么处置。`draft` 带上设置页里还没保存的规则/名单，
  * 缺省则用已保存的设置。
@@ -754,12 +789,19 @@ export async function setConnectionRemotePlatform(
 /**
  * 删除连接。`deleteMemories` = 同时删掉这台机器的长期记忆（确认框里的复选框）；
  * 不删的话它们会出现在记忆管理页的「已删除的连接」里。
+ * `deleteConversations` = 同时彻底删掉这台机器的对话；不删的话对话被归档保留，
+ * 出现在历史页的「已删除的服务器」里，过了归档保留天数随归档清理一起清掉。
  */
 export async function deleteConnection(
   id: string,
   deleteMemories = false,
+  deleteConversations = false,
 ): Promise<void> {
-  return invoke("config_delete_connection", { id, deleteMemories });
+  return invoke("config_delete_connection", {
+    id,
+    deleteMemories,
+    deleteConversations,
+  });
 }
 
 /** 一条连接的落位（拖拽排序用）：id + 目标分组；group 为 null = 未分组。 */

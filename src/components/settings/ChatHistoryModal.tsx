@@ -20,6 +20,8 @@ import {
 } from '@/stores/conversationHistoryManager';
 import { buildConversationAgentStatusMap } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
+import { orphanSearchLabel } from '@/lib/orphanConversations';
+import DeletedServerGroups from './DeletedServerGroups';
 
 interface Props {
   open: boolean;
@@ -59,6 +61,8 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
 
   // manager actions
   const loadAllConnections = useConversationHistoryStore((s) => s.loadAllConnections);
+  const orphanGroups = useConversationHistoryStore((s) => s.orphanGroups);
+  const loadOrphanGroups = useConversationHistoryStore((s) => s.loadOrphanGroups);
   const setSelectedConnId = useConversationHistoryStore((s) => s.setSelectedConnId);
   const selectConversation = useConversationHistoryStore((s) => s.selectConversation);
   const openSearchResult = useConversationHistoryStore((s) => s.openSearchResult);
@@ -95,6 +99,12 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
       void loadAllConnections(connections);
     }
   }, [open, connections, loadAllConnections, reset]);
+
+  // 已删除的服务器分组：与现存连接无关（连接删光了也要能看到），打开时单独拉一次。
+  // 连接列表变了（删了一台、转移走一批）也重拉，分组随之更新。
+  useEffect(() => {
+    if (open) void loadOrphanGroups();
+  }, [open, connections, loadOrphanGroups]);
 
   // 打开「显示已归档」时按连接拉归档列表（缓存在 live store，抽屉共用）。
   useEffect(() => {
@@ -172,10 +182,12 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
   const connNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of connections) m.set(c.id, connLabel(c));
+    for (const g of orphanGroups) m.set(g.connectionId, orphanSearchLabel(g, privacyMode));
     return m;
-  }, [connections, connLabel]);
+  }, [connections, connLabel, orphanGroups, privacyMode]);
 
   const selectedConn = connections.find((c) => c.id === selectedConnId);
+  const selectedOrphan = orphanGroups.find((g) => g.connectionId === selectedConnId);
 
   const groupedSearch = useMemo(() => {
     return groupSearchResultsByConnection(searchResults, connNameById);
@@ -271,7 +283,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                 {loadingConvs && (
                   <div className="p-4 text-body text-fg-tertiary">加载中...</div>
                 )}
-                {!loadingConvs && connections.length === 0 && (
+                {!loadingConvs && connections.length === 0 && orphanGroups.length === 0 && (
                   <div className="p-4 text-body text-fg-tertiary">暂无连接记录</div>
                 )}
                 {connections.map((conn) => {
@@ -440,6 +452,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                     </div>
                   );
                 })}
+                <DeletedServerGroups />
               </>
             )}
           </div>
@@ -450,8 +463,14 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
               <div className="flex items-center justify-between px-4 py-3 border-b border-edge-subtle flex-shrink-0">
                 <div className="min-w-0">
                   <h4 className="text-body font-semibold text-fg truncate">{selectedConv.title}</h4>
-                  {selectedConn && (
+                  {selectedConn ? (
                     <p className="text-meta text-fg-tertiary truncate">{connLabel(selectedConn)}</p>
+                  ) : (
+                    selectedOrphan && (
+                      <p className="text-meta text-fg-tertiary truncate">
+                        {orphanSearchLabel(selectedOrphan, privacyMode)}
+                      </p>
+                    )
                   )}
                 </div>
                 <span className="text-meta text-fg-disabled flex-shrink-0 ml-3">

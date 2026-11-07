@@ -35,6 +35,8 @@ vi.mock('@/lib/tauri', () => ({
   hasPassphrase: mocks.hasPassphrase,
   savePassphrase: mocks.savePassphrase,
   listKeys: mocks.listKeys,
+  agentListConversationsByConnection: vi.fn(async () => []),
+  agentListArchivedConversations: vi.fn(async () => []),
 }));
 
 vi.mock('@/stores/connectionStore', () => ({

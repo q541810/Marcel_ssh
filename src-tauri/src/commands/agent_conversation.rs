@@ -731,6 +731,17 @@ pub async fn agent_purge_expired_archived(
     state: State<'_, AppState>,
     retention_days: u64,
 ) -> Result<usize, AppError> {
+    // 先给「以前就已经删掉」的服务器的对话开始计时（见 `orphans.rs`），否则它们没有归档时间、
+    // 永远清不掉。已保存服务器列表为空时不盘点：连接配置读失败也是这个样子，会把所有对话
+    // 误当成孤儿。保留天数为 0（永不清理）时照样盘点——这只是给它们一个能在设置页看到的归宿。
+    let known = saved_connection_ids(state.inner()).await;
+    if !known.is_empty() {
+        match state.conversation_db.stamp_historic_orphans(&known) {
+            Ok(n) if n > 0 => log::info!("已删除服务器的遗留对话 {n} 条开始计入归档清理"),
+            Ok(_) => {}
+            Err(e) => log::warn!("盘点已删除服务器的遗留对话失败: {e}"),
+        }
+    }
     if retention_days == 0 {
         return Ok(0);
     }
@@ -1057,6 +1068,29 @@ pub async fn agent_search_conversations(
     Ok(results)
 }
 
+/// 彻底删除某连接名下的全部对话（含归档、子对话、图片），并清掉内存里的模型记忆和记忆附属数据。
+/// 返回删掉的对话条数。删服务器时勾了「同时删除对话」、彻底删除「已删除的服务器」、
+/// 删除某会话的全部对话都走这一处。
+pub(crate) fn delete_all_conversations_of_connection(
+    state: &AppState,
+    connection_id: &str,
+) -> Result<usize, AppError> {
+    // 先列出待删除的 conversation ids，用于日志与级联清理
+    let conv_ids = state
+        .conversation_db
+        .list_conversations(connection_id)
+        .map(|v| v.into_iter().map(|c| c.id).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    state
+        .conversation_db
+        .delete_conversations_by_connection(connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to delete conversations: {}", e)))?;
+    drop_session_models(state, &conv_ids);
+    forget_conversations_in_memory(state, &conv_ids);
+    Ok(conv_ids.len())
+}
+
 /// Delete all conversations for a given SSH session.
 #[tauri::command]
 pub async fn agent_delete_conversations_by_session(
@@ -1064,30 +1098,109 @@ pub async fn agent_delete_conversations_by_session(
     session_id: String,
 ) -> Result<(), AppError> {
     let connection_id = connection_id_for_session(state.inner(), &session_id).await?;
-
-    // 先列出待删除的 conversation ids，用于日志与级联清理
-    let conv_ids = state
-        .conversation_db
-        .list_conversations(&connection_id)
-        .map(|v| v.into_iter().map(|c| c.id).collect::<Vec<_>>())
-        .unwrap_or_default();
-
-    state
-        .conversation_db
-        .delete_conversations_by_connection(&connection_id)
-        .map_err(|e| {
-            AppError::Agent(format!("Failed to delete conversations by session: {}", e))
-        })?;
+    let count = delete_all_conversations_of_connection(state.inner(), &connection_id)?;
     log::info!(
         "Deleted all conversations for session: {} (connection={}, count={})",
         session_id,
         connection_id,
-        conv_ids.len()
+        count
     );
-    drop_session_models(&state, &conv_ids);
-    forget_conversations_in_memory(&state, &conv_ids);
-
     Ok(())
+}
+
+/// 当前已保存的服务器 id 集合：判断「哪些对话属于已删除的服务器」的唯一依据。
+async fn saved_connection_ids(state: &AppState) -> std::collections::HashSet<String> {
+    state
+        .connection_store
+        .read()
+        .await
+        .get_all()
+        .iter()
+        .map(|c| c.id.clone())
+        .collect()
+}
+
+/// 校验 `connection_id` 确实是一台「已删除的服务器」。转移 / 彻底删除前必过这一关：
+/// 命令可以被前端以外的调用方直接调用，不能让它们碰到还在用的服务器的对话。
+async fn ensure_orphan(state: &AppState, connection_id: &str) -> Result<(), AppError> {
+    if !crate::agent::conversation::is_saved_server_id(connection_id)
+        || saved_connection_ids(state).await.contains(connection_id)
+    {
+        return Err(AppError::Agent(
+            "这台服务器仍然存在，不能当作已删除处理".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 列出所有「已删除的服务器」及其名下对话的概况（历史页的「已删除的服务器」分组）。
+#[tauri::command]
+pub async fn agent_list_orphan_conversation_groups(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::agent::conversation::OrphanGroup>, AppError> {
+    let known = saved_connection_ids(state.inner()).await;
+    state
+        .conversation_db
+        .list_orphan_groups(&known)
+        .map_err(|e| AppError::Agent(format!("Failed to list deleted-server groups: {}", e)))
+}
+
+/// 某台已删除服务器名下的全部主对话（含归档，因为删服务器时它们都被归档了）。
+#[tauri::command]
+pub async fn agent_list_orphan_conversations(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<Conversation>, AppError> {
+    ensure_orphan(state.inner(), &connection_id).await?;
+    let conversations = state
+        .conversation_db
+        .list_conversations(&connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
+    Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
+}
+
+/// 把已删除服务器的对话整体转移到另一台现有服务器（比如重新添加了同一台机器之后）。
+/// 返回转移的对话条数。
+#[tauri::command]
+pub async fn agent_reassign_orphan_conversations(
+    state: State<'_, AppState>,
+    from_connection_id: String,
+    to_connection_id: String,
+) -> Result<usize, AppError> {
+    ensure_orphan(state.inner(), &from_connection_id).await?;
+    if !saved_connection_ids(state.inner())
+        .await
+        .contains(&to_connection_id)
+    {
+        return Err(AppError::Agent("目标服务器不存在".into()));
+    }
+    let moved = state
+        .conversation_db
+        .reassign_connection(&from_connection_id, &to_connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to reassign conversations: {}", e)))?;
+    log::info!(
+        "Reassigned {} conversation(s) from deleted connection {} to {}",
+        moved,
+        from_connection_id,
+        to_connection_id
+    );
+    Ok(moved)
+}
+
+/// 彻底删除一台已删除服务器名下的全部对话（不可恢复）。返回删掉的主对话条数。
+#[tauri::command]
+pub async fn agent_delete_orphan_conversations(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<usize, AppError> {
+    ensure_orphan(state.inner(), &connection_id).await?;
+    let count = delete_all_conversations_of_connection(state.inner(), &connection_id)?;
+    log::info!(
+        "Permanently deleted {} conversation row(s) of deleted connection {}",
+        count,
+        connection_id
+    );
+    Ok(count)
 }
 
 /// 加载某对话下所有持久化的 plan（按 updated_at 倒序），已反序列化为 AgentTaskPlan。

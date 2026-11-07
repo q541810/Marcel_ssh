@@ -4,6 +4,7 @@ import type {
   AgentConversation,
   AgentMessage,
   ConversationSearchResult,
+  OrphanConversationGroup,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import {
@@ -49,6 +50,11 @@ export interface ConversationHistoryState {
 
   // 6. 归档视图：搜索与列表是否包含归档会话
   showArchived: boolean;
+
+  // 7. 已删除的服务器：删服务器时它的对话被归档留库，这里是它们的入口。
+  // 对话单独放一份而不进 conversationsByConn——后者每次重载都整体替换。
+  orphanGroups: OrphanConversationGroup[];
+  orphanConversations: Record<string, AgentConversation[]>;
 }
 
 export interface ConversationHistoryActions {
@@ -88,6 +94,15 @@ export interface ConversationHistoryActions {
   /** 永久删除归档会话（仅归档视图）：硬删 + 清理选中/搜索结果。 */
   deleteArchivedConversation: (conversationId: string) => Promise<void>;
 
+  /** 拉「已删除的服务器」分组。失败当没有，不打断历史页的其它部分。 */
+  loadOrphanGroups: () => Promise<OrphanConversationGroup[]>;
+  /** 拉某台已删除服务器名下的对话（选中该分组时调用）。 */
+  loadOrphanConversations: (connectionId: string) => Promise<AgentConversation[]>;
+  /** 把一台已删除服务器的对话整体转移到现有服务器。失败向上抛。返回转移条数。 */
+  reassignOrphan: (fromConnectionId: string, toConnectionId: string) => Promise<number>;
+  /** 彻底删除一台已删除服务器的全部对话（不可恢复）。失败向上抛。 */
+  deleteOrphan: (connectionId: string) => Promise<void>;
+
   // 重置全部状态（关闭历史面板时调用）
   reset: () => void;
 }
@@ -122,6 +137,9 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
   renameInput: '',
 
   showArchived: false,
+
+  orphanGroups: [],
+  orphanConversations: {},
 
   loadAllConnections: async (connections: SavedConnection[]) => {
     if (connections.length === 0) {
@@ -577,6 +595,91 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
     }));
   },
 
+  loadOrphanGroups: async () => {
+    try {
+      const groups = await tauri.agentListOrphanConversationGroups();
+      set({ orphanGroups: groups });
+      return groups;
+    } catch (err) {
+      console.error('[ConversationHistoryManager] loadOrphanGroups failed:', getErrorMessage(err));
+      set({ orphanGroups: [] });
+      return [];
+    }
+  },
+
+  loadOrphanConversations: async (connectionId: string) => {
+    try {
+      const convs = await tauri.agentListOrphanConversations(connectionId);
+      set((s) => ({ orphanConversations: { ...s.orphanConversations, [connectionId]: convs } }));
+      return convs;
+    } catch (err) {
+      console.error(
+        '[ConversationHistoryManager] loadOrphanConversations failed:',
+        getErrorMessage(err),
+      );
+      return [];
+    }
+  },
+
+  reassignOrphan: async (fromConnectionId: string, toConnectionId: string) => {
+    const moved = await tauri.agentReassignOrphanConversations(fromConnectionId, toConnectionId);
+    // 目标服务器的 live 列表（侧边抽屉）与归档缓存都要刷新，否则转过去的对话要重启才看得到。
+    const live = useConversationStore.getState();
+    await Promise.all([
+      live.loadConnectionConversations(toConnectionId),
+      live.loadArchivedConversations(toConnectionId),
+    ]).catch((err) =>
+      console.warn('[ConversationHistoryManager] 刷新目标服务器会话失败:', getErrorMessage(err)),
+    );
+    set((s) => {
+      const orphanConversations = { ...s.orphanConversations };
+      delete orphanConversations[fromConnectionId];
+      const leaving = s.selectedConnId === fromConnectionId;
+      return {
+        orphanConversations,
+        searchResults: s.searchResults.filter((r) => r.connectionId !== fromConnectionId),
+        ...(leaving
+          ? {
+              selectedConnId: null,
+              selectedConvId: null,
+              selectedConv: null,
+              messages: [],
+              activeMatchIds: [],
+              matchIndex: 0,
+              highlightMessageId: null,
+            }
+          : {}),
+      };
+    });
+    await Promise.all([get().loadOrphanGroups(), get().loadConnectionConversations(toConnectionId)]);
+    return moved;
+  },
+
+  deleteOrphan: async (connectionId: string) => {
+    await tauri.agentDeleteOrphanConversations(connectionId);
+    set((s) => {
+      const orphanConversations = { ...s.orphanConversations };
+      delete orphanConversations[connectionId];
+      const leaving = s.selectedConnId === connectionId;
+      return {
+        orphanConversations,
+        searchResults: s.searchResults.filter((r) => r.connectionId !== connectionId),
+        ...(leaving
+          ? {
+              selectedConnId: null,
+              selectedConvId: null,
+              selectedConv: null,
+              messages: [],
+              activeMatchIds: [],
+              matchIndex: 0,
+              highlightMessageId: null,
+            }
+          : {}),
+      };
+    });
+    await get().loadOrphanGroups();
+  },
+
   reset: () => {
     if (searchTimer) {
       clearTimeout(searchTimer);
@@ -590,6 +693,8 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
       conversationsByConn: {},
       loadingConvs: false,
       showArchived: false,
+      orphanGroups: [],
+      orphanConversations: {},
 
       selectedConnId: null,
       selectedConvId: null,

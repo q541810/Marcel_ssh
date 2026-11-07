@@ -520,6 +520,9 @@ impl ConversationDb {
         for id in &ids {
             self.delete_conversation(id)?;
         }
+        if !ids.is_empty() {
+            self.prune_deleted_connection_records()?;
+        }
         Ok(ids)
     }
 
@@ -537,6 +540,7 @@ impl ConversationDb {
         for id in ids {
             self.delete_conversation(&id)?;
         }
+        self.prune_deleted_connection_records()?;
 
         Ok(())
     }

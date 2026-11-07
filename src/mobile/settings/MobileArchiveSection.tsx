@@ -36,7 +36,7 @@ export function MobileArchiveSection() {
     <div className="space-y-2">
       <MobileSettingRow
         label="归档保留天数"
-        description="归档超过这个天数的会话会在下次启动应用时永久删除（消息一并清理）；填 0 表示永不清理"
+        description="归档超过这个天数的会话会在下次启动应用时永久删除（消息一并清理）；已删除服务器的对话从服务器被删那天起也按这个天数清理；填 0 表示永不清理"
       >
         <div className="mt-2 flex items-center gap-2">
           <input

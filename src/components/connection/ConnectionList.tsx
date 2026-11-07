@@ -1144,9 +1144,9 @@ export default function ConnectionList() {
       <DeleteConnectionDialog
         connection={deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={(connection, deleteMemories) => {
+        onConfirm={(connection, deleteMemories, deleteConversations) => {
           setDeleteTarget(null);
-          void removeConnection(connection.id, deleteMemories);
+          void removeConnection(connection.id, deleteMemories, deleteConversations);
         }}
       />
     </ListPanel>

@@ -13,6 +13,7 @@
 // - `plans.rs`         plan 与快照存取
 // - `fork.rs`          会话分叉（把某个回合边界之前的历史整份复制成独立会话）
 // - `recall.rs`        跨会话回忆（长期记忆：按机器检索历史会话、列最近活跃会话）
+// - `orphans.rs`       被删服务器的对话（删除时归档并记名字、孤儿分组、转移、跟随归档清理）
 //
 // 对外路径保持不变：全部 pub 类型在这里 re-export，`agent::conversation::X` 照旧。
 
@@ -23,6 +24,7 @@ mod history;
 mod llm_history;
 mod messages;
 mod model;
+mod orphans;
 mod plans;
 mod recall;
 mod usage;
@@ -39,6 +41,7 @@ pub use model::{
     Conversation, ConversationError, ConversationSearchResult, ConversationWithMessages,
     SubConversationInfo,
 };
+pub use orphans::{is_saved_server_id, OrphanGroup};
 pub use recall::{RecallHit, RootConversationBrief};
 pub use usage::{ConversationUsage, LastContext};
 
@@ -314,6 +317,20 @@ impl ConversationDb {
         // 归档列表按「连接 + 归档时间」取，顺带覆盖按连接等值查未归档项的最左前缀。
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_conversations_archived ON conversations(connection_id, archived_at)",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
+
+        // 已删除服务器的名字与地址（见 `orphans.rs`）：删服务器时对话留在库里并归档，
+        // 连接配置却没了，没有这张表历史页只能显示一串 id。对话清完记录跟着清。
+        // 本机数据，不参与跨设备同步。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS deleted_connections (
+                connection_id TEXT PRIMARY KEY,
+                name TEXT,
+                host TEXT,
+                deleted_at TEXT NOT NULL
+            )",
             [],
         )
         .map_err(|e| ConversationError::SchemaError { source: e })?;

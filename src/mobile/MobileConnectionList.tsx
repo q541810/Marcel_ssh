@@ -31,6 +31,8 @@ import type { SavedConnection } from '@/lib/types';
 import { openMemorySettings } from '@/lib/memoryNav';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useHostMemoryCount } from '@/components/memory/useHostMemoryCount';
+import { useConnectionConversationCount } from '@/hooks/useConnectionConversationCount';
+import { orphanRetentionNote } from '@/lib/orphanConversations';
 import {
   loadCollapsedGroups,
   removeCollapsedGroup,
@@ -101,7 +103,10 @@ export default function MobileConnectionList({
     null,
   );
   const [deleteMemories, setDeleteMemories] = useState(false);
+  const [deleteConversations, setDeleteConversations] = useState(false);
   const deleteTargetMemoryCount = useHostMemoryCount(deleteTarget?.id ?? null);
+  const deleteTargetConversationCount = useConnectionConversationCount(deleteTarget?.id ?? null);
+  const archiveRetentionDays = useSettingsStore((s) => s.settings.archiveRetentionDays ?? 30);
   // 各台机器有几条记忆：有的才给「这台机器的记忆」入口（行尾空间有限，没有就不占位）。
   const memorySummaries = useMemoryStore((s) => s.overview?.summaries);
   useEffect(() => {
@@ -232,8 +237,14 @@ export default function MobileConnectionList({
   const handleDeleteConnection = async () => {
     if (!deleteTarget) return;
     setLocalError(null);
-    await removeConnection(deleteTarget.id, deleteMemories && deleteTargetMemoryCount > 0);
+    await removeConnection(
+      deleteTarget.id,
+      deleteMemories && deleteTargetMemoryCount > 0,
+      deleteConversations && deleteTargetConversationCount > 0,
+    );
     setDeleteTarget(null);
+    setDeleteMemories(false);
+    setDeleteConversations(false);
   };
 
   const handleStartRenameGroup = (groupName: string) => {
@@ -494,6 +505,7 @@ export default function MobileConnectionList({
                             data-nodrag
                             onClick={() => {
                               setDeleteMemories(false);
+                              setDeleteConversations(false);
                               setDeleteTarget(conn);
                             }}
                             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-tertiary active:bg-state-soft active:text-red-400"
@@ -544,6 +556,23 @@ export default function MobileConnectionList({
           <p className="pb-1 text-body text-fg-secondary">
             删除连接「{deleteTargetLabel}」？此操作不可撤销。
           </p>
+          {deleteTargetConversationCount > 0 && (
+            <label className="mb-1 flex items-start gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-body text-fg">
+              <input
+                type="checkbox"
+                checked={deleteConversations}
+                onChange={(e) => setDeleteConversations(e.target.checked)}
+                className="mt-0.5 h-5 w-5 flex-shrink-0 accent-red-500"
+              />
+              <span>
+                同时彻底删除这台机器的 {deleteTargetConversationCount} 条对话
+                <span className="mt-0.5 block text-meta text-fg-tertiary">
+                  不删的话会留在「聊天历史 → 已删除的服务器」里，
+                  {orphanRetentionNote(archiveRetentionDays)}
+                </span>
+              </span>
+            </label>
+          )}
           {deleteTargetMemoryCount > 0 && (
             <label className="mb-1 flex items-start gap-3 rounded-xl border border-edge-subtle bg-surface px-3 py-3 text-body text-fg">
               <input
