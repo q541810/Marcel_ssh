@@ -53,59 +53,64 @@ function SkillCard({
         onDragEnd={onDragEnd}
         onDragOver={onDragOver}
         className={
-          'group rounded-xl border transition-colors p-4 ' +
-          (skill.enabled
-            ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
-            : 'bg-surface-raised border-edge-subtle hover:border-edge') +
+          'group rounded-lg px-2 py-2 transition-colors duration-120 hover:bg-state-soft' +
+          (expanded ? ' bg-state-soft' : '') +
           (draggable ? ' cursor-grab active:cursor-grabbing' : '') +
           (dragging ? ' opacity-40' : '')
         }
       >
         <div className='flex items-center gap-2'>
-          <Toggle checked={skill.enabled} onChange={onToggle} size="sm" />
           <button
             onClick={() => setExpanded((v) => !v)}
             className='flex-1 min-w-0 text-left'
           >
             <div className='flex items-center gap-2 min-w-0'>
-              <span className='text-body font-medium text-fg truncate'>{skill.name}</span>
+              <span className={`text-body font-medium truncate ${skill.enabled ? 'text-fg' : 'text-fg-secondary'}`}>{skill.name}</span>
               {builtin && (
-                <span className='flex-shrink-0 rounded px-1 py-px text-caption leading-4 bg-surface-raised text-fg-secondary border border-edge'>
+                <span className='flex-shrink-0 rounded-sm px-1 text-caption bg-state-soft text-fg-tertiary'>
                   内置
                 </span>
               )}
               {skill.resources && skill.resources.length > 0 && (
                 <span
                   title={`含 ${skill.resources.length} 个资源文件`}
-                  className='flex-shrink-0 rounded px-1 py-px text-caption leading-4 bg-surface-raised text-fg-secondary border border-edge'
+                  className='flex-shrink-0 rounded-sm px-1 text-caption bg-state-soft text-fg-tertiary'
                 >
                   {skill.resources.length} 资源
                 </span>
               )}
             </div>
-            {skill.description && (
-              <div className='text-meta text-fg-tertiary truncate'>{skill.description}</div>
-            )}
           </button>
           {!builtin && (
             <>
               <button
                 onClick={onEdit}
                 title='编辑'
-                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-soft opacity-0 group-hover:opacity-100 transition'
+                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-mid opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring transition-[color,background-color,opacity] duration-120'
               >
                 <Pencil size={14} strokeWidth={1.5} />
               </button>
               <button
                 onClick={onDelete}
                 title='删除'
-                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-red-400 hover:bg-state-soft opacity-0 group-hover:opacity-100 transition'
+                className='flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-red-400 hover:bg-state-mid opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring transition-[color,background-color,opacity] duration-120'
               >
                 <Trash2 size={14} strokeWidth={1.5} />
               </button>
             </>
           )}
+          <div className='flex-shrink-0 pt-0.5'>
+            <Toggle checked={skill.enabled} onChange={onToggle} size="sm" ariaLabel={skill.enabled ? '停用' : '启用'} />
+          </div>
         </div>
+        {skill.description && (
+          <div
+            onClick={() => setExpanded((v) => !v)}
+            className='mt-0.5 text-meta text-fg-tertiary line-clamp-2 break-words cursor-pointer'
+          >
+            {skill.description}
+          </div>
+        )}
         {expanded && (
           <>
             <pre className='mt-2 text-meta text-fg-secondary whitespace-pre-wrap break-words font-sans px-1'>
@@ -302,7 +307,7 @@ export default function SkillList() {
       }
     >
       <div
-        className="space-y-1"
+        className="space-y-px"
         onDrop={(e) => {
           e.preventDefault();
           commitDrop();

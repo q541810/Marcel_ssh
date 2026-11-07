@@ -95,7 +95,7 @@ export default function McpList() {
         ) : undefined
       }
     >
-      <div className="space-y-1 text-body">
+      <div className="space-y-px text-body">
         {loading && servers.length === 0 && (
           <div className="space-y-2 px-1 mt-2" aria-label="加载中...">
             <div className="h-12 rounded-lg bg-state-soft animate-pulse" />
@@ -129,45 +129,48 @@ export default function McpList() {
                 setContextMenu({ x: e.clientX, y: e.clientY, server });
               }}
               className={
-                'group rounded-xl border transition-colors p-4 space-y-2 ' +
-                (server.enabled
-                  ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
-                  : 'bg-surface-raised border-edge-subtle hover:border-edge')
+                'group rounded-lg px-2 py-2 space-y-2 transition-colors duration-120 hover:bg-state-soft' +
+                (expandedId === server.id ? ' bg-state-soft' : '')
               }
             >
               <div className="flex items-center gap-2">
-                <Toggle checked={server.enabled} onChange={() => toggleServer(server.id)} size="sm" />
                 <button
                   onClick={() => setExpandedId(expandedId === server.id ? null : server.id)}
                   className="flex-1 min-w-0 text-left"
                 >
-                  <div className="text-fg font-medium truncate">{server.name}</div>
-                  <div className="text-meta text-fg-tertiary truncate">
-                    {subtitle || <span className="italic text-fg-disabled">未配置详情</span>}
-                  </div>
+                  <div className={`text-body font-medium truncate ${server.enabled ? 'text-fg' : 'text-fg-secondary'}`}>{server.name}</div>
                 </button>
                 <button
                   onClick={() => refreshTools(server.id)}
                   disabled={refreshing}
                   title="刷新工具"
-                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-soft opacity-0 group-hover:opacity-100 transition disabled:opacity-50"
+                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-mid opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring transition-[color,background-color,opacity] duration-120 disabled:opacity-50"
                 >
                   <RefreshCw size={14} strokeWidth={1.5} className={refreshing ? 'animate-spin' : ''} />
                 </button>
                 <button
                   onClick={() => { setEditing(server); setModalOpen(true); }}
                   title="编辑"
-                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-soft opacity-0 group-hover:opacity-100 transition"
+                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-fg hover:bg-state-mid opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring transition-[color,background-color,opacity] duration-120"
                 >
                   <Pencil size={14} strokeWidth={1.5} />
                 </button>
                 <button
                   onClick={() => { if (confirm(`确定删除 "${server.name}" 吗？`)) deleteServer(server.id); }}
                   title="删除"
-                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-red-400 hover:bg-state-soft opacity-0 group-hover:opacity-100 transition"
+                  className="flex-shrink-0 p-1 rounded-md text-fg-tertiary hover:text-red-400 hover:bg-state-mid opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring transition-[color,background-color,opacity] duration-120"
                 >
                   <Trash2 size={14} strokeWidth={1.5} />
                 </button>
+                <div className="flex-shrink-0 pt-0.5">
+                  <Toggle checked={server.enabled} onChange={() => toggleServer(server.id)} size="sm" ariaLabel={server.enabled ? '停用' : '启用'} />
+                </div>
+              </div>
+              <div
+                onClick={() => setExpandedId(expandedId === server.id ? null : server.id)}
+                className="-mt-1.5 text-meta text-fg-tertiary truncate cursor-pointer"
+              >
+                {subtitle || <span className="italic text-fg-disabled">未配置详情</span>}
               </div>
               {status?.error && <div className="text-meta text-red-400 break-words">{status.error}</div>}
               {refreshing && !status?.error && (
