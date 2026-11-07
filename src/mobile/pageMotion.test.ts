@@ -4,7 +4,7 @@ import { __pageMotionMath as M, type Box, type Card } from './pageMotion';
 import { __resetOrigin, claimOrigin } from './pageOrigin';
 
 const B: Box = { left: 0, top: 0, w: 390, h: 788 };
-const ROW = { left: 12, top: 419, width: 366, height: 67 };
+const ROW = { rect: { left: 12, top: 419, width: 366, height: 67 }, radT: 12, radB: 0 };
 
 function gap(a: Card, b: Card): number {
   return (
@@ -15,25 +15,30 @@ function gap(a: Card, b: Card): number {
   );
 }
 
-const ZERO: Card = { cx: 0, cy: 0, w: 0, h: 0, rl: 0, rx: 0, ry: 0, o: 0, sh: 0 };
+const ZERO: Card = { cx: 0, cy: 0, w: 0, h: 0, rt: 0, rb: 0, rx: 0, ry: 0, o: 0, sh: 0, src: 0, txt: 0 };
 
 describe('card geometry', () => {
   it('a card on a row covers exactly that row (page cropped from the top)', () => {
-    const c = M.cardOn(ROW, 10, B);
-    expect(c.cx).toBeCloseTo(ROW.left + ROW.width / 2);
-    expect(c.cy).toBeCloseTo(ROW.top + ROW.height / 2);
-    expect(c.w).toBeCloseTo(ROW.width);
-    expect(c.h).toBeCloseTo(ROW.height);
-    // Visible corner radius = element radius × scale.
-    expect(c.rl * (c.w / B.w)).toBeCloseTo(10);
-    // The clip keeps the top ROW.height / scale px of the page.
+    const c = M.cardOn(ROW, B);
+    const r = ROW.rect;
+    expect(c.cx).toBeCloseTo(r.left + r.width / 2);
+    expect(c.cy).toBeCloseTo(r.top + r.height / 2);
+    expect(c.w).toBeCloseTo(r.width);
+    expect(c.h).toBeCloseTo(r.height);
+    // Lands with the row's own visible corners (rounded top, square bottom here).
     const s = c.w / B.w;
+    expect(c.rt * s).toBeCloseTo(12);
+    expect(c.rb).toBe(0);
+    // The clip keeps the top ROW.height / scale px of the page.
     const bottom = Number(M.cardClip(c, B).match(/inset\(0px 0px ([\d.]+)px/)![1]);
-    expect((B.h - bottom) * s).toBeCloseTo(ROW.height, 0);
+    expect((B.h - bottom) * s).toBeCloseTo(r.height, 0);
+    // It is wearing the row: surface and text fully shown.
+    expect(c.src).toBe(1);
+    expect(c.txt).toBe(1);
   });
 
   it('a tall origin gets a card as wide as it, never taller than the page allows', () => {
-    const c = M.cardOn({ left: 100, top: 100, width: 40, height: 400 }, 8, B);
+    const c = M.cardOn({ rect: { left: 100, top: 100, width: 40, height: 400 }, radT: 8, radB: 8 }, B);
     expect(c.w).toBeCloseTo(40);
     expect(c.h).toBeCloseTo((40 * B.h) / B.w);
   });
@@ -41,7 +46,7 @@ describe('card geometry', () => {
   it('the held card at rest is the page itself, unclipped', () => {
     const c = M.heldCard({ x: 0, y: 0, s: 1, rx: 0, ry: 0, o: 1 }, B);
     expect(c).toEqual(M.restCard(B));
-    expect(M.cardClip(c, B)).toBe('inset(0px 0px 0.0px 0px round 28.0px)');
+    expect(M.cardClip(c, B)).toBe('inset(0px 0px 0.0px 0px round 28.0px 28.0px 28.0px 28.0px)');
     expect(M.cardTransform(c, B)).toContain('translate3d(195.00px, 394.00px, 0)');
   });
 
@@ -56,7 +61,7 @@ describe('card geometry', () => {
 describe('flights', () => {
   const held = M.heldCard({ x: -20, y: 4, s: 0.8, rx: 8, ry: -18, o: 1 }, B);
   const v: Card = { ...ZERO, cx: -0.12, cy: 0.05, w: -0.3, h: -0.6, ry: -0.04 };
-  const home = M.cardOn(ROW, 10, B);
+  const home = M.cardOn(ROW, B);
 
   it('flies home from exactly the held pose, at the held speed, and lands on the row', () => {
     const { path, ms } = M.flight(held, v, home, 'home', 0.42);
@@ -66,17 +71,23 @@ describe('flights', () => {
     const still = M.flight(held, { ...ZERO }, home, 'home', 0.42).path;
     expect((path(4).cx - still(4).cx) / 4).toBeCloseTo(v.cx, 1);
     expect((path(4).w - still(4).w) / 4).toBeCloseTo(v.w, 1);
-    expect(path(ms)).toEqual(home);
-    expect(ms).toBeLessThan(1200);
+    expect(path(ms)).toEqual({ ...home, o: 0 });
+    expect(ms).toBeLessThan(1600);
   });
 
-  it('never fades in mid-air: the page is fully visible until it is within ~half a row of it', () => {
+  it('the page never turns see-through, and page and row content are never shown together', () => {
     const { path, ms } = M.flight(held, v, home, 'home', 0.42);
-    for (let t = 0; t <= ms; t += 8) {
+    for (let t = 0; t < ms; t += 4) {
       const c = path(t);
-      if (gap(c, home) > 34) expect(c.o).toBe(1);
+      expect(c.o).toBe(1);
+      // The row's text only appears once its surface fully covers the page.
+      if (c.txt > 0.001) expect(c.src).toBeGreaterThan(0.99);
+      // Far from the row nothing of it shows yet.
+      if (gap(c, home) > 120) expect(c.src).toBe(0);
     }
-    expect(path(ms).o).toBe(0);
+    const end = path(ms);
+    expect(end.src).toBe(1);
+    expect(end.txt).toBe(1);
   });
 
   it('tilts unwind to flat as it lands', () => {
@@ -85,13 +96,15 @@ describe('flights', () => {
     expect(path(ms).ry).toBe(0);
   });
 
-  it('growing out of the row is the mirror: visible as soon as it leaves the row', () => {
+  it('growing out of the row is the mirror: text goes first, then the surface', () => {
     const rest = M.restCard(B);
     const { path, ms } = M.flight(home, { ...ZERO }, rest, 'grow', 0.42);
-    expect(path(0).o).toBe(0);
-    for (let t = 0; t <= ms; t += 8) {
+    expect(path(0).src).toBe(1);
+    expect(path(0).txt).toBe(1);
+    for (let t = 0; t <= ms; t += 4) {
       const c = path(t);
-      if (gap(c, home) > 34) expect(c.o).toBe(1);
+      expect(c.o).toBe(1);
+      if (c.src < 0.99) expect(c.txt).toBeLessThan(0.001);
     }
     expect(path(ms)).toEqual(rest);
   });

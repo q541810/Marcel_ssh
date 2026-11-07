@@ -67,8 +67,6 @@ import { claimOrigin } from './pageOrigin';
 
 /** Corner radius of the lifted page, in the page's own (unscaled) px. */
 const CARD_RADIUS = 28;
-/** Corner radius used when the origin has square corners (a row inside a group). */
-const ORIGIN_RADIUS_FALLBACK = 10;
 /** Share of the way, at the origin end, over which the shadow settles. */
 const SHADOW_SPAN = 0.6;
 /** After a commit, how long the page gets to start closing before the flight turns back. */
@@ -84,8 +82,9 @@ export interface Card extends Channels {
   /** visible size */
   w: number;
   h: number;
-  /** corner radius in the page's own px (scaled with the card) */
-  rl: number;
+  /** top / bottom corner radius in the page's own px (scaled with the card) */
+  rt: number;
+  rb: number;
   /** tilts, deg */
   rx: number;
   ry: number;
@@ -93,6 +92,26 @@ export interface Card extends Channels {
   o: number;
   /** opacity of its shadow */
   sh: number;
+  /**
+   * The stand-in for the origin row that rides on the card, in two layers so
+   * two sets of text are never seen at once: `src` is its plain surface (the
+   * row's background) covering the page content, `txt` the row's content on
+   * top of that surface. Landing: the surface comes first, then the text;
+   * growing out of the row: the reverse.
+   */
+  src: number;
+  txt: number;
+}
+
+/** What the card lands on: the origin's rect (screen behind at rest) and look. */
+export interface Origin {
+  el: Element;
+  rect: { left: number; top: number; width: number; height: number };
+  /** visible corner radii, px (taken from the clipping group for a row inside one) */
+  radT: number;
+  radB: number;
+  /** the colour behind its content */
+  bg: string;
 }
 
 /** The page's own box (viewport px), measured untransformed. */
@@ -131,11 +150,14 @@ function restCard(b: Box): Card {
     cy: b.top + b.h / 2,
     w: b.w,
     h: b.h,
-    rl: CARD_RADIUS,
+    rt: CARD_RADIUS,
+    rb: CARD_RADIUS,
     rx: 0,
     ry: 0,
     o: 1,
     sh: 1,
+    src: 0,
+    txt: 0,
   };
 }
 
@@ -153,8 +175,12 @@ function heldCard(p: Pose, b: Box): Card {
   };
 }
 
-/** Card that sits exactly on `rect` with visible corner radius `radius`. */
-function cardOn(rect: { left: number; top: number; width: number; height: number }, radius: number, b: Box): Card {
+/**
+ * Card that sits exactly on the origin, wearing it: the stand-in fully shown
+ * (`src` 1), the page under it, the origin's own corner radii.
+ */
+function cardOn(origin: Pick<Origin, 'rect' | 'radT' | 'radB'>, b: Box): Card {
+  const rect = origin.rect;
   // The crop keeps the page's full width and trims its bottom, so a card can
   // be relatively shorter than the page (a row) but not taller: a tall origin
   // gets a card as wide as it, centred on it.
@@ -166,11 +192,14 @@ function cardOn(rect: { left: number; top: number; width: number; height: number
     cy: rect.top + rect.height / 2,
     w,
     h,
-    rl: radius / s,
+    rt: origin.radT / s,
+    rb: origin.radB / s,
     rx: 0,
     ry: 0,
-    o: 0,
+    o: 1,
     sh: 0,
+    src: 1,
+    txt: 1,
   };
 }
 
@@ -199,7 +228,9 @@ function cardTransform(c: Card, b: Box): string {
 function cardClip(c: Card, b: Box): string {
   const s = Math.max(c.w / b.w, 1e-4);
   const hc = Math.min(b.h, c.h / s);
-  return `inset(0px 0px ${Math.max(0, b.h - hc).toFixed(1)}px 0px round ${Math.max(0, c.rl).toFixed(1)}px)`;
+  const rt = Math.max(0, c.rt).toFixed(1);
+  const rb = Math.max(0, c.rb).toFixed(1);
+  return `inset(0px 0px ${Math.max(0, b.h - hc).toFixed(1)}px 0px round ${rt}px ${rt}px ${rb}px ${rb}px)`;
 }
 
 function shadowTransform(c: Card, b: Box): string {
@@ -209,6 +240,26 @@ function shadowTransform(c: Card, b: Box): string {
     `scale(${(c.w / b.w).toFixed(5)}, ${(c.h / b.h).toFixed(5)}) ` +
     `translate(${(-b.w / 2).toFixed(2)}px, ${(-b.h / 2).toFixed(2)}px)`
   );
+}
+
+/**
+ * The stand-in's box is the origin's own size; this maps it onto the card's
+ * frame (same centre, tilt and size). Its content is then scaled back to
+ * uniform (`standInnerTransform`) so the row's text is never squashed.
+ */
+function standTransform(c: Card, b: Box, sw: number, sh: number): string {
+  return (
+    `translate3d(${(c.cx - b.left).toFixed(2)}px, ${(c.cy - b.top).toFixed(2)}px, 0) ` +
+    `perspective(${PERSPECTIVE_PX}px) rotateX(${c.rx.toFixed(2)}deg) rotateY(${c.ry.toFixed(2)}deg) ` +
+    `scale(${(c.w / sw).toFixed(5)}, ${(c.h / sh).toFixed(5)}) ` +
+    `translate(${(-sw / 2).toFixed(2)}px, ${(-sh / 2).toFixed(2)}px)`
+  );
+}
+
+function standInnerTransform(c: Card, sw: number, sh: number): string {
+  const sx = c.w / sw;
+  const sy = Math.max(c.h / sh, 1e-4);
+  return `scale(1, ${(sx / sy).toFixed(5)})`;
 }
 
 /** Sum of the distances of the four edges, px. */
@@ -226,18 +277,27 @@ function rectGap(a: Card, b: Card): number {
 // ---------------------------------------------------------------------------
 
 /**
- * How the look (page and shadow opacity) changes along a flight:
- * - `home`: landing on the origin — the page dissolves into the row only once
- *   it is within about half a row of it ({@link mergeWindow}), the shadow
- *   settles over the last {@link SHADOW_SPAN} of the way.
- * - `grow`: leaving the origin — the mirror image, at the start.
+ * How the look changes along a flight. The page itself never turns
+ * see-through, and the page's content and the row's content are never shown
+ * over each other:
+ * - `home`: landing on the origin — in the first half of the last
+ *   {@link handOver} px the row's plain surface covers the page content, in
+ *   the second half the row's text appears on it; by touchdown the card *is*
+ *   the row. The shadow settles over the last {@link SHADOW_SPAN} of the way.
+ * - `grow`: leaving the origin — the mirror image.
  * - `plain`: no hand-over (cancel, the off-screen fallback).
  */
 type Look = 'home' | 'grow' | 'plain';
 
-/** Distance (sum of edge gaps, px) from the origin over which the card hands over to it. */
-function mergeWindow(origin: Card): number {
-  return clamp(0.5 * Math.min(origin.w, origin.h), 12, 48);
+/** Distance (sum of edge gaps, px) from the origin over which the row and page swap on the card. */
+function handOver(origin: Card): number {
+  return clamp(1.5 * Math.min(origin.w, origin.h), 24, 120);
+}
+
+/** 1 at the origin, 0 once `gap` is past the hand-over: [surface, text]. */
+function swapAt(gap: number, origin: Card): [number, number] {
+  const g = gap / handOver(origin);
+  return [1 - smoothstep((g - 0.5) / 0.5), 1 - smoothstep(g / 0.5)];
 }
 
 function lookAt(
@@ -246,24 +306,31 @@ function lookAt(
   to: Card,
   c: Card,
   left: number,
-): { o: number; sh: number } {
+): { o: number; sh: number; src: number; txt: number } {
   if (look === 'home') {
+    const [surface, text] = swapAt(rectGap(c, to), to);
     return {
-      o: from.o * smoothstep(rectGap(c, to) / mergeWindow(to)),
+      o: from.o,
       sh: from.sh * smoothstep(left / SHADOW_SPAN),
+      src: Math.max(from.src, surface),
+      txt: Math.max(from.txt, text),
     };
   }
   if (look === 'grow') {
+    const [surface, text] = swapAt(rectGap(c, from), from);
     return {
-      o: from.o + (1 - from.o) * smoothstep(rectGap(c, from) / mergeWindow(from)),
+      o: from.o,
       sh: from.sh + (1 - from.sh) * smoothstep((1 - left) / SHADOW_SPAN),
+      src: Math.min(from.src, surface),
+      txt: Math.min(from.txt, text),
     };
   }
-  return { o: to.o + (from.o - to.o) * left, sh: to.sh + (from.sh - to.sh) * left };
+  const mix = (k: 'o' | 'sh' | 'src' | 'txt') => to[k] + (from[k] - to[k]) * left;
+  return { o: mix('o'), sh: mix('sh'), src: mix('src'), txt: mix('txt') };
 }
 
 const CARD_TOLERANCE = (k: string): number =>
-  k === 'rx' || k === 'ry' ? 0.1 : k === 'o' || k === 'sh' ? 0.01 : 0.4;
+  k === 'rx' || k === 'ry' ? 0.1 : k === 'o' || k === 'sh' || k === 'src' || k === 'txt' ? 0.01 : 0.4;
 
 /**
  * A spring flight from `from` (moving at `v` per ms) to `to`: geometry and
@@ -278,7 +345,7 @@ function flight(
   look: Look,
   response: number,
 ): { path: Trajectory<Card>; ms: number } {
-  const run = springPath(from, { ...v, o: 0, sh: 0 }, to, {
+  const run = springPath(from, { ...v, o: 0, sh: 0, src: 0, txt: 0 }, to, {
     response,
     damping: { rx: 0.85, ry: 0.85 },
     tolerance: CARD_TOLERANCE,
@@ -287,7 +354,10 @@ function flight(
   const n = run.samples.length;
   const samples = run.samples.map((c, i) => {
     const left = total > 1 ? clamp(rectGap(c, to) / total, 0, 1) : 1 - i / Math.max(1, n - 1);
-    return i === n - 1 ? { ...to } : { ...c, ...lookAt(look, from, to, c, left) };
+    if (i < n - 1) return { ...c, ...lookAt(look, from, to, c, left) };
+    // Touchdown on the row: the stand-in is the row now; the page underneath
+    // is let go of (it unmounts) and the stand-in is removed onto the real row.
+    return look === 'home' ? { ...to, o: 0 } : { ...to };
   });
   return { path: sampled(samples, run.dt), ms: run.ms };
 }
@@ -295,6 +365,51 @@ function flight(
 // ---------------------------------------------------------------------------
 // The page element
 // ---------------------------------------------------------------------------
+
+/**
+ * A copy of the origin row, worn by the card while it lands on (or grows out
+ * of) that row. Visual only: inert, hidden from assistive tech, no ids.
+ */
+function makeStandIn(origin: Origin): { outer: HTMLDivElement; inner: HTMLDivElement } {
+  const { width: sw, height: sh } = origin.rect;
+  const outer = document.createElement('div');
+  outer.dataset.backStandIn = '';
+  outer.setAttribute('aria-hidden', 'true');
+  outer.inert = true;
+  outer.style.cssText =
+    `width:${sw}px;height:${sh}px;pointer-events:none;transform-origin:0 0;overflow:hidden;` +
+    `will-change:transform,opacity;opacity:0;background:${origin.bg};` +
+    `border-radius:${origin.radT}px ${origin.radT}px ${origin.radB}px ${origin.radB}px;`;
+  const inner = document.createElement('div');
+  inner.style.cssText = 'position:absolute;inset:0;transform-origin:50% 50%;will-change:transform;';
+  const copy = origin.el.cloneNode(true) as HTMLElement;
+  copy.removeAttribute('id');
+  copy.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  // Selectors like `:not(:first-child)` won't match the copy where it sits
+  // now: carry over the box styles that make it look the way it does.
+  const cs = getComputedStyle(origin.el);
+  const keep = [
+    'border-top',
+    'border-right',
+    'border-bottom',
+    'border-left',
+    'background-color',
+    'color',
+    'font-family',
+    'font-size',
+    'line-height',
+    'padding',
+    'box-sizing',
+  ];
+  for (const k of keep) copy.style.setProperty(k, cs.getPropertyValue(k));
+  copy.style.setProperty('width', '100%');
+  copy.style.setProperty('height', '100%');
+  copy.style.setProperty('margin', '0');
+  copy.style.setProperty('border-radius', '0');
+  inner.appendChild(copy);
+  outer.appendChild(inner);
+  return { outer, inner };
+}
 
 const SHADOW_CSS =
   'pointer-events:none;transform-origin:0 0;will-change:transform,opacity;opacity:0;' +
@@ -310,6 +425,7 @@ class PageCard {
   el: HTMLElement | null = null;
   box: Box = { left: 0, top: 0, w: 1, h: 1 };
   private shadow: HTMLDivElement | null = null;
+  private stand: { outer: HTMLDivElement; inner: HTMLDivElement; w: number; h: number } | null = null;
   private last: Card | null = null;
   private clip = '';
   private anims: Animation[] = [];
@@ -366,6 +482,32 @@ class PageCard {
       this.shadow = shadow;
     }
     return true;
+  }
+
+  /** Dress the card with a stand-in for `origin` (replacing any), or take it off. */
+  wear(origin: Origin | null): void {
+    this.dropStandIn();
+    const el = this.el;
+    if (!origin || !el?.parentElement) return;
+    const { outer, inner } = makeStandIn(origin);
+    const cs = getComputedStyle(el);
+    outer.style.position = cs.position === 'fixed' ? 'fixed' : 'absolute';
+    outer.style.left = `${el.offsetLeft}px`;
+    outer.style.top = `${el.offsetTop}px`;
+    outer.style.zIndex = cs.zIndex;
+    // Right above the card, in its stacking context.
+    el.parentElement.insertBefore(outer, el.nextSibling);
+    this.stand = { outer, inner, w: origin.rect.width, h: origin.rect.height };
+    if (this.last) this.write(this.last);
+  }
+
+  dropStandIn(): void {
+    const st = this.stand;
+    if (!st) return;
+    st.outer.getAnimations?.().forEach((a) => a.cancel());
+    st.inner.getAnimations?.().forEach((a) => a.cancel());
+    st.outer.remove();
+    this.stand = null;
   }
 
   /** The element directly below the card in paint order that the scrim must go under. */
@@ -430,6 +572,19 @@ class PageCard {
         ),
       );
     }
+    const st = this.stand;
+    if (st) {
+      this.anims.push(
+        st.outer.animate(
+          keyframes(path, ms, (c) => ({ transform: standTransform(c, b, st.w, st.h), opacity: c.src })),
+          { duration: ms, fill: 'forwards' },
+        ),
+        st.inner.animate(
+          keyframes(path, ms, (c) => ({ transform: standInnerTransform(c, st.w, st.h), opacity: c.txt })),
+          { duration: ms, fill: 'forwards' },
+        ),
+      );
+    }
     let done = false;
     const finish = () => {
       if (done || this.anims[0] !== anim) return;
@@ -453,6 +608,7 @@ class PageCard {
   cleanup(): void {
     this.stop();
     this.dropShadow();
+    this.dropStandIn();
     const el = this.el;
     this.el = null;
     this.last = null;
@@ -486,6 +642,13 @@ class PageCard {
     if (this.shadow) {
       this.shadow.style.transform = shadowTransform(c, b);
       this.shadow.style.opacity = (c.sh * c.o).toFixed(3);
+    }
+    const st = this.stand;
+    if (st) {
+      st.outer.style.transform = standTransform(c, b, st.w, st.h);
+      st.outer.style.opacity = c.src.toFixed(3);
+      st.inner.style.transform = standInnerTransform(c, st.w, st.h);
+      st.inner.style.opacity = c.txt.toFixed(3);
     }
   }
 
@@ -666,6 +829,59 @@ class Underlay {
 }
 
 // ---------------------------------------------------------------------------
+// The origin's look
+// ---------------------------------------------------------------------------
+
+function px(v: string): number {
+  return parseFloat(v) || 0;
+}
+
+/**
+ * Visible top / bottom corner radii of `el` (layout px). A row inside a
+ * rounded group has square corners of its own but is clipped round by the
+ * group where it touches the group's corners — that is what shows, so that
+ * is what the card must land with.
+ */
+function cornerRadii(el: Element, rect: DOMRect): { radT: number; radB: number } {
+  const cs = getComputedStyle(el);
+  let radT = px(cs.borderTopLeftRadius);
+  let radB = px(cs.borderBottomLeftRadius);
+  let p = el.parentElement;
+  for (let i = 0; i < 4 && p && (!radT || !radB); i++, p = p.parentElement) {
+    const pcs = getComputedStyle(p);
+    if (pcs.overflow === 'visible' && pcs.overflowX === 'visible') continue;
+    const pr = p.getBoundingClientRect();
+    const tol = 1.5;
+    const sameLeft = Math.abs(pr.left - rect.left) < tol;
+    if (!radT && sameLeft && Math.abs(pr.top - rect.top) < tol) radT = px(pcs.borderTopLeftRadius);
+    if (!radB && sameLeft && Math.abs(pr.bottom - rect.bottom) < tol) radB = px(pcs.borderBottomLeftRadius);
+  }
+  return { radT, radB };
+}
+
+/** Alpha of a computed colour in any notation (`rgba(…)`, `oklch(… / a)`, `transparent`). */
+function alphaOf(color: string): number {
+  if (!color || color === 'transparent') return 0;
+  const slash = color.match(/\/\s*([\d.]+)(%?)\s*\)/);
+  if (slash) return parseFloat(slash[1]) / (slash[2] ? 100 : 1);
+  const rgba = color.match(/^rgba\(([^)]+)\)/);
+  if (rgba) {
+    const parts = rgba[1].split(',');
+    return parts.length > 3 ? parseFloat(parts[3]) : 1;
+  }
+  return 1;
+}
+
+/** The first solid background behind `el`'s content (its own or an ancestor's). */
+function backdropOf(el: Element): string {
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    const bg = getComputedStyle(n).backgroundColor;
+    if (alphaOf(bg) > 0.5) return bg;
+  }
+  return getComputedStyle(document.body).backgroundColor || '#000';
+}
+
+// ---------------------------------------------------------------------------
 // The page motion (one per page component)
 // ---------------------------------------------------------------------------
 
@@ -703,8 +919,8 @@ export function createPageMotion(
     grace = null;
   };
 
-  /** Where the origin is (as it will be once the screen behind is back at rest). */
-  function originCard(): Card | null {
+  /** Where the origin is (as it will be once the screen behind is back at rest), and its look. */
+  function measureOrigin(): Origin | null {
     const o = origin;
     const el = card.el;
     if (!o || !o.isConnected || (el && el.contains(o))) return null;
@@ -715,9 +931,14 @@ export function createPageMotion(
     if (r.top + r.height < 0 || r.top > viewportHeight() || r.left + r.width < 0 || r.left > viewportWidth()) {
       return null;
     }
-    const own = parseFloat(getComputedStyle(o).borderTopLeftRadius) || 0;
-    const radius = Math.min(own > 0 ? own : ORIGIN_RADIUS_FALLBACK, r.height / 2);
-    return cardOn(r, radius, card.box);
+    const { radT, radB } = cornerRadii(o, measured);
+    return {
+      el: o,
+      rect: r,
+      radT: Math.min(radT, r.height / 2),
+      radB: Math.min(radB, r.height / 2),
+      bg: backdropOf(o),
+    };
   }
 
   function holdFrame(p: Pose): Card {
@@ -733,7 +954,9 @@ export function createPageMotion(
     el.style.pointerEvents = 'none';
     const [from, v] = card.now();
     under.begin(getUnder(), el, card.lowest, UNDER_COVERED);
-    const home = originCard();
+    const landing = measureOrigin();
+    card.wear(landing);
+    const home = landing ? cardOn(landing, card.box) : null;
     const to = home ?? offscreenCard(card.box, from.w, from.h);
     const { path, ms } = flight(from, v, to, home ? 'home' : 'plain', feel.flight);
     // The exit class only times the unmount: make it wait for the flight.
@@ -745,6 +968,7 @@ export function createPageMotion(
       // now; until it does, leave it where it landed, but take away what lives
       // outside it.
       card.dropShadow();
+      card.dropStandIn();
       under.cleanupNow();
       if (!el.isConnected) card.cleanup();
     });
@@ -820,11 +1044,13 @@ export function createPageMotion(
       if (wasOurs) {
         [from, v] = card.now();
       } else {
-        from = originCard() ?? offscreenCard(card.box, card.box.w, card.box.h);
+        const start = measureOrigin();
+        card.wear(start);
+        from = start ? cardOn(start, card.box) : offscreenCard(card.box, card.box.w, card.box.h);
         v = zeroLike(from);
       }
-      // Coming out of the row: the page appears over the first stretch.
-      const look: Look = from.o < 1 ? 'grow' : 'plain';
+      // Out of the row: the card starts as the row and the page shows through as it leaves.
+      const look: Look = from.src > 0 ? 'grow' : 'plain';
       under.begin(getUnder(), el, card.lowest, UNDER_SHOWN);
       const { path, ms } = flight(from, v, card.rest, look, feel.flight);
       card.play(path, ms, () => card.cleanup());

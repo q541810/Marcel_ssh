@@ -27,12 +27,13 @@ export interface BackFeel {
 }
 
 export const DEFAULT_BACK_FEEL: Readonly<BackFeel> = Object.freeze({
-  shrink: 0.42,
-  turn: 18,
-  pitch: 12,
+  // 用户在演示台上调出来、拍板的手感（2026-11-07）
+  shrink: 0.52,
+  turn: 3,
+  pitch: 13,
   shift: 0.085,
-  lift: 10,
-  flight: 0.42,
+  lift: 0,
+  flight: 0.8,
 });
 
 /** Slider ranges for the debug panel (label, min, max, step, unit). */
@@ -49,7 +50,7 @@ export const BACK_FEEL_RANGES: ReadonlyArray<{
   { key: 'pitch', label: '上下倾斜', min: 0, max: 40, step: 1, unit: '°' },
   { key: 'shift', label: '左右位移', min: 0, max: 0.3, step: 0.005, unit: '×屏宽' },
   { key: 'lift', label: '上下位移', min: 0, max: 80, step: 2, unit: 'px' },
-  { key: 'flight', label: '飞回快慢', min: 0.25, max: 0.8, step: 0.01, unit: 's' },
+  { key: 'flight', label: '飞回快慢', min: 0.25, max: 1.2, step: 0.01, unit: 's' },
 ];
 
 const STORAGE_KEY = 'marcel:back-feel';

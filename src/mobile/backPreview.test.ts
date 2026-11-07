@@ -50,7 +50,9 @@ describe('held card', () => {
   });
 
   it('shrinks and drifts like the reference frames (finger 50% / 69% / 87% across)', () => {
-    const at = (share: number) => M.cardPose(frame('right', W * share), feel, 1);
+    // The reference fit (shrink 0.42); the shipped default may be tuned stronger.
+    const ref = { ...feel, shrink: 0.42 };
+    const at = (share: number) => M.cardPose(frame('right', W * share), ref, 1);
     // Scale ≈ 0.93 / 0.82 / 0.70.
     expect(at(0.5).s).toBeCloseTo(0.93, 1);
     expect(at(0.69).s).toBeCloseTo(0.82, 1);
@@ -61,7 +63,7 @@ describe('held card', () => {
     expect(Math.abs(at(0.69).x) / W).toBeLessThan(0.04);
     expect(Math.abs(at(0.87).x) / W).toBeGreaterThan(0.04);
     for (let dx = 0; dx <= W; dx += 10) {
-      expect(Math.abs(M.cardPose(frame('right', dx), feel, 1).x)).toBeLessThanOrEqual(W * 0.085);
+      expect(Math.abs(M.cardPose(frame('right', dx), ref, 1).x)).toBeLessThanOrEqual(W * 0.085);
     }
   });
 });
