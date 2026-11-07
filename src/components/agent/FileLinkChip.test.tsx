@@ -124,3 +124,44 @@ describe('MarkdownBody file links', () => {
     expect(host.querySelectorAll('a').length).toBe(1);
   });
 });
+
+describe('MarkdownBody 行内代码路径兜底', () => {
+  const chips = () => Array.from(host.querySelectorAll('[data-file-link]')) as HTMLButtonElement[];
+  const renderMd = (content: string) => act(async () => root.render(<MarkdownBody sync content={content} />));
+
+  it('agent 没写 remote: 链接、只把绝对路径放进行内代码时，照样渲染成可点的芯片（表格里也行）', async () => {
+    await renderMd(
+      '配置在 `/opt/1panel/openresty/conf/nginx.conf`，备份在 `/data/backup/x-2026-11-07/`。\n\n| 文件 | 说明 |\n|---|---|\n| `/srv/app/main.go` | 入口 |\n',
+    );
+    expect(chips().map((c) => c.textContent)).toEqual([
+      '/opt/1panel/openresty/conf/nginx.conf',
+      '/data/backup/x-2026-11-07/',
+      '/srv/app/main.go',
+    ]);
+    await act(async () => chips()[0].click());
+    expect(nav.runDefaultFileAction).toHaveBeenCalledWith(
+      expect.objectContaining({ side: 'remote', host: null, path: '/opt/1panel/openresty/conf/nginx.conf' }),
+      expect.anything(),
+    );
+    await act(async () => chips()[1].click());
+    expect(nav.runDefaultFileAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ path: '/data/backup/x-2026-11-07', isDir: true }),
+      expect.anything(),
+    );
+  });
+
+  it('接口路由、相对路径、普通代码保持原样；围栏代码块里的路径不动', async () => {
+    await renderMd(
+      '`/admin/requests` 和 `extensions/a.go` 和 `kubectl get pods`\n\n```\n/etc/nginx/nginx.conf\n```\n\n```bash\ncat /etc/hosts\n```\n',
+    );
+    expect(chips()).toHaveLength(0);
+    expect(host.querySelectorAll('code').length).toBe(5);
+  });
+
+  it('链接文字里夹着行内代码时不套出第二个芯片', async () => {
+    await renderMd('[`/etc/nginx/nginx.conf`](remote:/etc/nginx/nginx.conf)');
+    expect(chips()).toHaveLength(1);
+    expect(host.querySelectorAll('button button').length).toBe(0);
+  });
+});
+

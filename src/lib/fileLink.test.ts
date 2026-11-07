@@ -3,6 +3,7 @@ import {
   defaultFileAction,
   fileLinkActionItems,
   findConnectionByHost,
+  inlineCodeFileRef,
   parseFileLink,
   relativeCandidates,
   relativePathUnder,
@@ -190,5 +191,52 @@ describe('decideOpen', () => {
     expect(decideOpen('a.md', 1e9).kind).toBe('refuse');
     expect(decideOpen('a.md', 10, 'preview').kind).toBe('refuse');
     expect(decideOpen('a.png', 10, 'editor').kind).toBe('refuse');
+  });
+});
+
+describe('inlineCodeFileRef（行内代码路径兜底）', () => {
+  it('认出带常见系统顶层目录或带扩展名的绝对路径，当作对话所在服务器上的文件', () => {
+    expect(inlineCodeFileRef('/opt/1panel/openresty/conf/nginx.conf')).toEqual({
+      side: 'remote', host: null, path: '/opt/1panel/openresty/conf/nginx.conf', isDir: undefined,
+    });
+    expect(inlineCodeFileRef('/opt/1panel/db/1panel.db')?.path).toBe('/opt/1panel/db/1panel.db');
+    expect(inlineCodeFileRef('/srv/app/main.go')?.path).toBe('/srv/app/main.go');
+    expect(inlineCodeFileRef('/home/ubuntu/.bashrc')?.path).toBe('/home/ubuntu/.bashrc');
+  });
+
+  it('目录靠结尾斜杠或常见顶层目录认出，并带上 isDir', () => {
+    expect(inlineCodeFileRef('/data/backup/wb2api-reqbody-2026-11-07/')).toEqual({
+      side: 'remote', host: null, path: '/data/backup/wb2api-reqbody-2026-11-07', isDir: true,
+    });
+    expect(inlineCodeFileRef('/var/log/nginx')?.path).toBe('/var/log/nginx');
+    expect(inlineCodeFileRef('/etc/')?.path).toBe('/etc');
+  });
+
+  it('接口路由、URL、命令片段、占位符一律不认，避免点了才发现不是文件', () => {
+    for (const text of [
+      '/admin/requests',
+      '/admin/requests/82',
+      '/internal/v1/requests/{seq}',
+      'https://white.neopig.top/api/status',
+      '/etc/nginx/*.conf',
+      'cat /etc/hosts',
+      '/path/to/$FILE',
+      '--config=/etc/x.conf',
+      '/etc/../root/x',
+      '//server/share/a.txt',
+      '/',
+      '/etc',
+    ]) {
+      expect(inlineCodeFileRef(text), text).toBeNull();
+    }
+  });
+
+  it('相对路径与 Windows 路径不猜', () => {
+    expect(inlineCodeFileRef('extensions/internal/server/reqbody.go')).toBeNull();
+    expect(inlineCodeFileRef('./run.sh')).toBeNull();
+    expect(inlineCodeFileRef('~/notes/a.md')).toBeNull();
+    expect(inlineCodeFileRef('C:/Users/x/out.csv')).toBeNull();
+    expect(inlineCodeFileRef('')).toBeNull();
+    expect(inlineCodeFileRef(undefined)).toBeNull();
   });
 });

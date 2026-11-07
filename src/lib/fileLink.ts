@@ -30,6 +30,42 @@ export interface FileRef {
   isDir?: boolean;
 }
 
+// ──────────── 行内代码里的路径（兜底） ────────────
+
+/** 常见的类 Unix 顶层目录。第一段命中它，`/xxx/yyy` 才可信是文件系统路径而不是接口路由。 */
+const UNIX_ROOT_DIRS = new Set([
+  'bin', 'boot', 'data', 'dev', 'etc', 'home', 'lib', 'lib64', 'media', 'mnt', 'opt', 'proc',
+  'root', 'run', 'sbin', 'snap', 'srv', 'sys', 'tmp', 'usr', 'var', 'www', 'workspace', 'app',
+]);
+
+/** 路径里不该出现的字符：空白、引号、通配符、模板占位、重定向 / 管道等 —— 出现就不是单纯一个路径。 */
+const NOT_A_PLAIN_PATH = /[\s"'`*?<>|;&$(){}[\]\\^!=,]/;
+
+/**
+ * agent 没按约定写 `remote:` 链接、只把路径放进行内代码时的兜底识别。
+ * 宁可漏认也不误认：误认会把接口路由、命令片段渲染成一个点了却「路径不存在」的芯片。
+ * 只认类 Unix 绝对路径，且满足其一：第一段是常见系统顶层目录（`/etc/…` `/data/…`），
+ * 或最后一段带扩展名（`/srv/app/main.go`）。至少两段、或一段但带扩展名。
+ * 相对路径无法单凭文本落到某台机器的某个目录，不在这里认（靠提示词要求补成绝对路径）；
+ * Windows 路径可能在本机也可能在远端 Windows 主机，同样不猜。
+ * 是否真的存在仍由点击时的 stat 确认。
+ */
+export function inlineCodeFileRef(text: string | null | undefined): FileRef | null {
+  if (!text) return null;
+  const value = text.trim();
+  if (value.length < 2 || value.length > 512) return null;
+  if (!value.startsWith('/') || value.startsWith('//')) return null;
+  if (NOT_A_PLAIN_PATH.test(value) || /:\/\//.test(value)) return null;
+  const isDir = value.endsWith('/');
+  const segments = value.split('/').filter(Boolean);
+  if (segments.length === 0 || segments.includes('..')) return null;
+  const last = segments[segments.length - 1];
+  const hasExt = /^[^.].*\.[A-Za-z0-9_-]{1,12}$/.test(last) || /^\.[^.]+$/.test(last);
+  const knownRoot = UNIX_ROOT_DIRS.has(segments[0]);
+  if (!(knownRoot && (segments.length >= 2 || isDir)) && !(hasExt && segments.length >= 2)) return null;
+  return { side: 'remote', host: null, path: trimTrailingSeparators(value), isDir: isDir || undefined };
+}
+
 // ──────────── 链接解析 ────────────
 
 function safeDecode(value: string): string {

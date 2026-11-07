@@ -1192,6 +1192,15 @@ mod tests {
         assert!(!text.contains("anchor"));
         assert!(text.contains("remote:/绝对路径"));
         assert!(text.contains("文件夹"));
+        // 路径一律链接：表格里的文件清单也算、相对路径要补成绝对路径；
+        // 「路径放代码块」不再和它打架（复制类条目里不列路径）。
+        assert!(text.contains("一律写成链接"));
+        assert!(text.contains("表格"));
+        assert!(text.contains("相对路径不能直接当地址"));
+        assert!(
+            !text.contains("命令、路径、配置、代码"),
+            "复制类条目不该再把路径列进去"
+        );
         for name in ["沟通", "多机", "本机子agent"] {
             let t = TemplateManager.render_fragment(name, &json!({}));
             assert!(!t.contains("present_file"), "{name}: present_file 已移除");
