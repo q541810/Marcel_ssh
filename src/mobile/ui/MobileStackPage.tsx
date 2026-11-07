@@ -1,7 +1,7 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
-import { pageBackPreview } from '../backPreview';
+import { createPageMotion } from '../pageMotion';
 
 interface MobileStackPageProps {
   /** Shown while true; on false the page plays its exit animation, then unmounts. */
@@ -31,9 +31,10 @@ interface MobileStackPageProps {
 /**
  * A sub-page stacked *inside* a tab (settings category, a second level under
  * it): it covers its parent screen instead of replacing it, so the parent keeps
- * its state and scroll position, and the predictive-back gesture has a real
- * screen to reveal underneath — the page shrinks into a floating card exactly
- * like a full-screen page (`MobileFullscreenPage`), just scoped to the tab.
+ * its state and scroll position, and the page can grow out of the row that
+ * opened it and fly back into it — on the back gesture, the back button or any
+ * other close (pageMotion.ts), exactly like a full-screen page
+ * (`MobileFullscreenPage`), just scoped to the tab.
  *
  * The parent must be a positioned box that both this page and `underlay` fill
  * (`absolute inset-0`); the page sits on top at `z-10`.
@@ -53,17 +54,31 @@ export default function MobileStackPage({
   const underlayRef = useRef(underlay);
   underlayRef.current = underlay;
 
+  const [motion] = useState(() =>
+    createPageMotion(
+      () => rootRef.current,
+      () => underlayRef.current(),
+    ),
+  );
+
   const registered = open && backEnabled;
   useEffect(() => {
     if (!registered) return;
-    return registerBackHandler(
-      () => onBackRef.current(),
-      pageBackPreview(
-        () => rootRef.current,
-        () => underlayRef.current(),
-      ),
-    );
-  }, [registered]);
+    return registerBackHandler(() => onBackRef.current(), motion.preview);
+  }, [registered, motion]);
+
+  // Open: grow out of the row that was tapped. Close: fly back into it. Runs
+  // before paint, so the CSS entrance never shows a frame.
+  const mounted = presence.mounted;
+  useLayoutEffect(() => {
+    if (!mounted) return;
+    if (open) motion.enter();
+    else motion.exit();
+  }, [open, mounted, motion]);
+  useEffect(() => {
+    if (!mounted) return;
+    return () => motion.dispose();
+  }, [mounted, motion]);
 
   if (!presence.mounted) return null;
   return (

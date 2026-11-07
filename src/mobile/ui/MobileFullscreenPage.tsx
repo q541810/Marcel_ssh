@@ -1,7 +1,7 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { registerBackHandler } from '../backHandler';
-import { pageBackPreview } from '../backPreview';
+import { createPageMotion } from '../pageMotion';
 
 interface MobileFullscreenPageProps {
   /** Page content (header / body / footer), laid out in a column flexbox. */
@@ -66,15 +66,19 @@ export default function MobileFullscreenPage({
   // when the callback identity changes (e.g. a dirty-state dependency).
   const hasBack = onBack != null;
   const rootRef = useRef<HTMLDivElement>(null);
+  // Grows out of the control that opened it and flies back into it on close;
+  // the back gesture holds it as a card in between (pageMotion.ts).
+  const [motion] = useState(() => createPageMotion(() => rootRef.current));
   useEffect(() => {
     if (!hasBack) return;
-    // Predictive back: the page shrinks and follows the finger; on commit the
-    // exit animation (`[data-back].mobile-fullscreen-exit`) continues from there.
-    return registerBackHandler(
-      () => onBackRef.current?.(),
-      pageBackPreview(() => rootRef.current),
-    );
-  }, [hasBack]);
+    return registerBackHandler(() => onBackRef.current?.(), motion.preview);
+  }, [hasBack, motion]);
+
+  useLayoutEffect(() => {
+    if (closing) motion.exit();
+    else motion.enter();
+  }, [closing, motion]);
+  useEffect(() => () => motion.dispose(), [motion]);
 
   return createPortal(
     <div

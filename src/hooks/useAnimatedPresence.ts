@@ -22,6 +22,31 @@ export interface AnimatedPresence {
 const EXIT_FALLBACK_MS = 400;
 
 /**
+ * Until when a physics-driven exit (a page flying back to where it was opened
+ * from, see mobile/pageMotion.ts) is still on screen. Such an exit has no fixed
+ * length — a spring settles when it settles — so it may outlast the fallback;
+ * while it plays, the fallback waits instead of unmounting mid-flight. The
+ * normal unmount (animationend of the layer's exit class, timed to the flight)
+ * is unaffected.
+ */
+let exitHeldUntil = 0;
+
+/** Keep every exit fallback from firing for the next `ms` (only ever extends). */
+export function holdExitFallback(ms: number): void {
+  exitHeldUntil = Math.max(exitHeldUntil, performance.now() + ms);
+}
+
+/** Run `fire` after the exit fallback delay, waiting out any held exit. */
+function armExitFallback(fire: () => void, set: (t: ReturnType<typeof setTimeout>) => void): void {
+  const check = () => {
+    const wait = exitHeldUntil - performance.now();
+    if (wait > 0) set(setTimeout(check, wait + 20));
+    else fire();
+  };
+  set(setTimeout(check, EXIT_FALLBACK_MS));
+}
+
+/**
  * Delayed-unmount helper so closing overlays can play an exit animation.
  * For components that own their `open` prop / state.
  *
@@ -49,10 +74,15 @@ export function useAnimatedPresence(open: boolean): AnimatedPresence {
     }
     if (!mounted) return;
     // Closing: keep mounted, arm fallback unmount.
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      setMounted(false);
-    }, EXIT_FALLBACK_MS);
+    armExitFallback(
+      () => {
+        timerRef.current = null;
+        setMounted(false);
+      },
+      (t) => {
+        timerRef.current = t;
+      },
+    );
     return () => {
       if (timerRef.current != null) {
         clearTimeout(timerRef.current);
@@ -136,7 +166,9 @@ export function useAnimatedClose(
     if (closingRef.current) return;
     closingRef.current = true;
     setClosing(true);
-    timerRef.current = setTimeout(finish, EXIT_FALLBACK_MS);
+    armExitFallback(finish, (t) => {
+      timerRef.current = t;
+    });
     onStartRef.current?.();
   }, [finish]);
 

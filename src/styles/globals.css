@@ -1623,24 +1623,14 @@ html[data-marcel-theme='light'] .marcel-code-block {
   animation: mobilePopoverExit 160ms ease-in both;
 }
 
-/* ── 预见式返回（侧滑返回手势的实时预览，由系统手势的进度与手指坐标驱动） ──
-   每帧只写 transform / opacity（GPU 合成，不触发布局与重绘），见 mobile/backPreview.ts。
-   手势期间会整屏重绘的东西一律恒定：页面圆角与阴影从第一帧起就固定（屏幕自身的圆角
-   会盖住静止时的圆角），遮罩是单独一层只动 opacity，不用 filter。
-   data-back 只在手势期间存在，className 仍归 React。
-   松手（甩出）与取消（弹回）的动作全由 backPreview 用 Web Animations 播：从松手那一刻的
-   姿态和速度接着走，不等 React 换类名。这里的退出规则只负责「计时」——让层的卸载
-   等甩出播完（--back-ms），本身不动任何东西。 */
-
-/* 页面：收缩后露出底下的屏幕，需要圆角裁切 + 一圈极淡的边 + 投影，
-   否则深色页压在深色底上看不出它缩小了。恒定值，手势期间不逐帧变。 */
-[data-back='page'] {
-  overflow: hidden;
-  border-radius: 28px;
-  box-shadow:
-    0 0 0 1px rgb(128 128 128 / 0.22),
-    0 18px 48px rgb(0 0 0 / 0.42);
-}
+/* ── 预见式返回与页面转场（由手势进度与手指坐标驱动，见 mobile/backPreview.ts、pageMotion.ts） ──
+   手指按住期间每帧只写 transform / opacity（GPU 合成，不触发布局与重绘）。
+   页面（data-back='page'）：圆角裁切由 pageMotion 用行内 clip-path 画（按住期间恒定不变，
+   只有「从入口展开 / 飞回入口」那几百毫秒才逐帧变），投影是卡片后面单独一层元素，
+   遮罩也是单独一层只动 opacity，这里不再给页面写圆角与阴影。
+   data-back 只在手势 / 转场期间存在，className 仍归 React。
+   松手、取消、开合的动作全由 JS 用 Web Animations 播（弹簧，可随时打断）；这里的退出规则
+   只负责「计时」——让层的卸载等动作播完（--back-ms），本身不动任何东西。 */
 
 /* 页内返回（回上一级文件夹、页签兜底）同样收成卡片：底下没有别的屏幕，
    靠圆角 + 细边把它从深色背景里勾出来。 */
