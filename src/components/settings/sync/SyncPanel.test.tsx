@@ -1,4 +1,4 @@
-﻿// @vitest-environment jsdom
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -393,8 +393,16 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(bodyText()).toContain('已加入同步');
     });
 
-    it('同步码不对：后端的原因显示出来，向导不关', async () => {
-      vi.mocked(tauri.syncJoin).mockRejectedValueOnce({ kind: 'Other', message: '恢复密钥不对' });
+    it('扫码入口只在手机端出现：桌面端加同步码这一步没有相机可用', async () => {
+      await openJoin();
+      const scan = [...document.body.querySelectorAll('button')].find((b) =>
+        (b.textContent ?? '').trim() === '扫码',
+      );
+      if (variant === 'mobile') expect(scan).toBeTruthy();
+      else expect(scan).toBeUndefined();
+    });
+
+    it('同步码不对：后端的原因显示出来，向导不关', async () => {      vi.mocked(tauri.syncJoin).mockRejectedValueOnce({ kind: 'Other', message: '恢复密钥不对' });
       await openJoin();
       await type(inputByLabel('同步码'), 'MSYNC1-' + 'a'.repeat(60));
       await click(buttons().filter((b) => b.textContent === '加入').pop()!);
@@ -615,7 +623,7 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(tauri.syncConfirmHeld).toHaveBeenLastCalledWith(true);
     });
 
-    it('添加设备：默认不取同步码；点显示才取，并提醒等同于钥匙；桌面有二维码、手机没有', async () => {
+    it('添加设备：默认不取同步码；点显示才取，并提醒等同于钥匙；桌面有放大二维码入口、手机没有', async () => {
       await mountEnabled();
       expect(tauri.syncGetSyncCode).not.toHaveBeenCalled();
       expect(document.body.querySelector('[data-testid="sync-code"]')).toBeNull();
@@ -624,14 +632,46 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(tauri.syncGetSyncCode).toHaveBeenCalledTimes(1);
       expect(document.body.querySelector('[data-testid="sync-code"]')?.textContent).toContain('MSYNC1-');
       expect(bodyText()).toContain('等同于钥匙本身');
-      const qr = document.body.querySelector('svg[aria-label="同步码二维码"]');
-      if (variant === 'desktop') expect(qr).not.toBeNull();
-      else expect(qr).toBeNull();
+      // 设置行里**不再内联画小二维码**：控件列 280~320px 装不下能扫的码
+      // （SFTP 同步码 133 模块，每格至少 3 设备像素 = 399px）。只有放大弹层里那张。
+      expect(document.body.querySelector('svg[aria-label="同步码二维码"]')).toBeNull();
+      // 「放大二维码」只在桌面出现：手机用不着扫自己屏幕上的码
+      const zoom = [...document.body.querySelectorAll('button')].find((b) =>
+        (b.textContent ?? '').includes('放大二维码'),
+      );
+      if (variant === 'desktop') expect(zoom).toBeTruthy();
+      else expect(zoom).toBeUndefined();
 
       await click(findButton('复制同步码'));
       expect(copy).toHaveBeenCalledWith('MSYNC1-' + 'Zm9v'.repeat(30));
       await click(findButton('隐藏'));
       await vi.waitFor(() => expect(document.body.querySelector('[data-testid="sync-code"]')).toBeNull());
+    });
+
+    it('桌面端放大二维码：点开是白底黑块的大图，每格整数设备像素；关掉后回到设置页', async () => {
+      if (variant !== 'desktop') return;
+      await mountEnabled();
+      await click(findButton('显示同步码'));
+      await click(findButton('放大二维码'));
+
+      const dialog = document.body.querySelector('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      expect(dialog!.textContent).toContain('用手机扫描');
+      const big = dialog!.querySelector('svg[aria-label="同步码二维码"]');
+      expect(big).not.toBeNull();
+      // 白底黑块，不跟深浅色主题走
+      expect(big!.querySelector('rect')?.getAttribute('fill')).toBe('#ffffff');
+      expect(big!.querySelector('path')?.getAttribute('fill')).toBe('#000000');
+      // viewBox 宽度必须是模块数的整数倍，倍数不小于 3
+      const [vbW] = (big!.getAttribute('viewBox') ?? '').split(' ').slice(2).map(Number);
+      expect(vbW).toBeGreaterThan(0);
+      expect(Number.isInteger(vbW)).toBe(true);
+
+      // 弹层右上角是纯图标按钮，只能按 aria-label 找
+      const close = dialog!.querySelector<HTMLButtonElement>('button[aria-label="关闭"]');
+      expect(close).not.toBeNull();
+      await click(close!);
+      await vi.waitFor(() => expect(document.body.textContent).not.toContain('用手机扫描'));
     });
 
     it('同步码取不到：就地给出原因', async () => {

@@ -21,6 +21,13 @@
     <!-- 应用内更新：判断当前网络是否计量（移动数据），计量网络下不自动下载
          安装包，避免静默消耗用户流量。isActiveNetworkMetered 需要此权限。 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 扫一扫同步码：WebView 里 getUserMedia(VIDEO_CAPTURE) 需要相机权限。
+         运行时授权由 wry 的 RustWebChromeClient.onPermissionRequest 代问，这里只声明。 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 没有相机的设备（电视盒子、部分平板）也能装：扫码只是加入同步的一种方式，
+         手动粘贴同步码始终可用，所以不设 required。 -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

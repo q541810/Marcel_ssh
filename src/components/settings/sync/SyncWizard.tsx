@@ -1,8 +1,14 @@
-import { useEffect, useReducer, useRef } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { Suspense, lazy, useEffect, useReducer, useRef, useState } from 'react';
+import { ScanLine, ShieldCheck } from 'lucide-react';
 import { useSyncStore } from '@/stores/syncStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { isDebugConnection } from '@/lib/debugServer';
+
+/**
+ * 扫码页按需加载：它带着二维码解码器（jsqr，40 kB 上下），而桌面端**永远不会**打开它。
+ * 静态 import 会把解码器塞进设置页那个 chunk，让每个桌面用户都为用不到的功能付带宽。
+ */
+const MobileQrScanner = lazy(() => import('@/mobile/MobileQrScanner'));
 import { getErrorMessage } from '@/lib/errors';
 import {
   buildStorageConfig,
@@ -35,7 +41,7 @@ const inputClass =
  * 「开启同步」与「加入已有同步」的向导（桌面 Modal / 手机 Sheet 共用）。
  *
  * 开启：选存储 → 测试连接 → 开启 → **展示恢复密钥**（勾选"我已妥善保存"才能完成，这一步不可随手关掉）。
- * 加入：先选本机已有内容怎么对账，再粘贴同步码，或手动填存储位置 + 恢复密钥。
+ * 加入：粘贴同步码，或手动填存储位置 + 恢复密钥。
  *
  * 状态机在 `lib/syncModel.ts`（纯函数，有单测）；这里只负责把动作接到后端命令上。
  * 恢复密钥 / 同步码只存在于本组件的局部状态，关闭向导即清空。
@@ -55,6 +61,7 @@ export function SyncWizard({
   onFinished: (mode: WizardMode) => void;
 }) {
   const [state, dispatch] = useReducer(wizardReducer, mode, initialWizardState);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const testStorage = useSyncStore((s) => s.testStorage);
   const create = useSyncStore((s) => s.create);
   const join = useSyncStore((s) => s.join);
@@ -67,6 +74,8 @@ export function SyncWizard({
   // 每次打开都从干净的表单开始（上次填过的密码 / 恢复密钥不该留着）。
   useEffect(() => {
     if (open) dispatch({ type: 'reset', mode });
+    // 关掉向导时扫码页也必须关，否则相机会留在外面继续跑。
+    if (!open) setScannerOpen(false);
   }, [open, mode]);
 
   // 关闭后稍等退场动画播完再清空：密码 / 恢复密钥 / 同步码不在内存里多留。
@@ -261,9 +270,23 @@ export function SyncWizard({
             className={`${inputClass} resize-none break-all font-mono text-meta`}
           />
           <p className="mt-1 text-meta leading-relaxed text-fg-tertiary">
-            在已开启同步的设备上打开「设置 → 同步 → 添加设备」就能看到同步码。桌面端还有二维码：
-            用手机相机扫一下，把扫出来的文字粘贴到这里即可。
+            在已开启同步的设备上打开「设置 → 同步 → 添加设备」就能看到同步码。
+            {variant === 'mobile'
+              ? '点下面的「扫码」，对准那台设备上的二维码即可。'
+              : '桌面端还有二维码：用手机相机扫一下，把扫出来的文字粘贴到这里即可。'}
           </p>
+          {variant === 'mobile' && (
+            <SyncButton
+              variant={variant}
+              kind="secondary"
+              className="mt-2 w-full"
+              onClick={() => setScannerOpen(true)}
+              disabled={working}
+            >
+              <ScanLine className="h-5 w-5" aria-hidden />
+              扫码
+            </SyncButton>
+          )}
           <p className="mt-1 text-meta leading-relaxed text-amber-400/90">
             同步码里带着解锁数据的钥匙，别发给不信任的人。
           </p>
@@ -311,6 +334,16 @@ export function SyncWizard({
       )}
       {state.submit.status === 'failed' && state.submit.message && (
         <Callout tone="error">{state.submit.message}</Callout>
+      )}
+      {/* 扫码页是独立的全屏层（自带返回键与相机生命周期）：扫到后填进输入框，用户自己点「加入」。 */}
+      {variant === 'mobile' && scannerOpen && (
+        <Suspense fallback={null}>
+          <MobileQrScanner
+            open={scannerOpen}
+            onClose={() => setScannerOpen(false)}
+            onAccept={(code) => dispatch({ type: 'setSyncCode', value: code })}
+          />
+        </Suspense>
       )}
     </SyncDialog>
   );

@@ -162,6 +162,7 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
           label="跨设备同步"
           description="把连接、设置、快捷命令、技能和 MCP 服务同步到你的其它设备。"
           keywords={['同步', 'sync', 'webdav', '坚果云', '加密', '多设备', '开启同步', '加入同步']}
+          fullWidth
         >
           <div className="space-y-3">
             {notice && <Callout>{notice}</Callout>}
@@ -216,8 +217,9 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
           variant={variant}
           id="sync-add-device"
           label="添加设备"
-          description="在新设备上选「加入已有同步」，输入这里的同步码。"
-          keywords={['添加设备', '同步码', '二维码', '新设备']}
+          description="在新设备上选「加入已有同步」，输入这里的同步码，或者用手机端直接扫码。"
+          keywords={['添加设备', '同步码', '二维码', '新设备', '扫码']}
+          fullWidth
         >
           <AddDeviceBlock variant={variant} />
         </SyncRow>
@@ -271,9 +273,10 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
     );
   }
 
+  // 手机端各行是独立卡片，叠在一起要有间距；桌面端的行在同一张卡片里，由卡片自己分隔。
   return (
     <>
-      {body}
+      {variant === 'mobile' ? <div className="flex flex-col gap-3">{body}</div> : body}
       {wizardNode}
     </>
   );

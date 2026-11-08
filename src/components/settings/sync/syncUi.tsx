@@ -27,6 +27,7 @@ export function SyncRow({
   description,
   keywords,
   trailing,
+  fullWidth = false,
   children,
 }: {
   variant: SyncVariant;
@@ -36,11 +37,20 @@ export function SyncRow({
   keywords?: string[];
   /** 手机端：标题行右侧的控件（开关、状态）。桌面端并入 children 顶部。 */
   trailing?: ReactNode;
+  /** 桌面端：控件本身需要整行宽度（二维码、文本域、规则编辑器）。标签与说明在上，控件在下铺满。 */
+  fullWidth?: boolean;
   children?: ReactNode;
 }) {
   if (variant === 'desktop') {
     return (
-      <SettingItem id={id} label={label} description={description} keywords={keywords} sectionId={SYNC_SECTION_ID}>
+      <SettingItem
+        id={id}
+        label={label}
+        description={description}
+        keywords={keywords}
+        sectionId={SYNC_SECTION_ID}
+        fullWidth={fullWidth}
+      >
         {trailing}
         {children}
       </SettingItem>
@@ -57,9 +67,9 @@ type ButtonKind = 'primary' | 'secondary' | 'danger' | 'ghost';
 
 const MOBILE_BUTTON: Record<ButtonKind, string> = {
   primary: 'bg-indigo-600 text-white active:bg-indigo-500',
-  secondary: 'bg-zinc-700 text-fg active:bg-state-strong',
+  secondary: 'bg-fill text-fg active:bg-fill-strong',
   danger: 'bg-red-600 text-white active:bg-red-500',
-  ghost: 'bg-transparent text-indigo-300 active:bg-state-soft',
+  ghost: 'bg-transparent text-indigo-300 active:bg-fill-soft',
 };
 
 /** 桌面用项目通用的 `Button`；手机用触屏尺寸（至少 44px 高）的同色按钮。 */

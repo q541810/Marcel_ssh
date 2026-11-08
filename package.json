@@ -49,6 +49,7 @@
     "diff": "^9.0.0",
     "hast-util-from-html-isomorphic": "^2.0.0",
     "highlight.js": "^11.11.1",
+    "jsqr": "^1.4.0",
     "katex": "^0.18.4",
     "lowlight": "^3.3.0",
     "lucide-react": "^1.17.0",

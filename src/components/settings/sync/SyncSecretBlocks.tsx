@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Maximize } from 'lucide-react';
 import Reveal from '@/components/ui/Reveal';
 import { useSyncStore } from '@/stores/syncStore';
 import { getErrorMessage } from '@/lib/errors';
-import { QrCode } from './QrCode';
+import { QrZoomDialog } from './QrZoomDialog';
 import { buildQrMatrix } from './qrMatrix';
 import { RecoveryKeyView } from './RecoveryKeyView';
 import { Callout, CopyButton, SyncButton, type SyncVariant } from './syncUi';
@@ -97,43 +97,66 @@ function RevealToggle({
 }
 
 /**
- * 添加设备：显示同步码（桌面另有二维码）。
+ * 添加设备：显示同步码，桌面另有「放大二维码」。
  *
- * 桌面的二维码给手机扫：手机系统相机扫出来是一段文字，复制后粘贴到手机端「加入已有同步」里即可
- * （应用内扫码以后再做）。手机端本身不生成二维码，只给同步码和复制按钮。
+ * 为什么二维码不内联画在设置行里：SFTP 的同步码要带整条服务器连接 + 主机指纹，
+ * 实测 1100 字符上下、133 个模块（含静区），每格至少要 3~4 个**设备像素**才稳定可扫
+ * ——那意味着至少要 133 × 3 = 399px 宽。设置行的控件列只有 280~320px，装不下；
+ * 以前写死 168px 硬画进去，每格只剩 1.26 个像素（98 格占 1px、35 格占 2px），
+ * 同一张码里格子宽窄不一，手机怎么对都对不上，实测 0/9 次能解出。
+ *
+ * 所以这里只放一个常驻的「放大二维码」按钮，点开是占满屏幕的弹层，
+ * 那里空间够、每格能到 4~5 个设备像素（实测 9/9 全通过，中度镜头模糊也扛得住）。
+ * 宁可少一张小图，也不给一张扫不出来的图——后者只会让用户反复试然后认为功能坏了。
+ *
+ * 手机端不生成二维码（用不着扫自己的屏幕），只给同步码和复制按钮。
  */
 export function AddDeviceBlock({ variant }: { variant: SyncVariant }) {
   const getSyncCode = useSyncStore((s) => s.getSyncCode);
   const secret = useRevealedSecret(getSyncCode);
   const code = useHeld(secret.value);
-  // 太长的同步码塞不进二维码：就地说明，别留一块空白。
-  const qrFits = variant === 'desktop' && code !== null && buildQrMatrix(code) !== null;
+  const [zoomOpen, setZoomOpen] = useState(false);
+  // null = 同步码太长，连二维码都编不出来（放大也救不了，这时只能复制）
+  const qrMatrix = code !== null ? buildQrMatrix(code) : null;
+  const canShowQr = variant === 'desktop' && qrMatrix !== null;
+
+  // 收起时把放大弹层一并关掉（机密已经不在屏幕上了，别再留一扇窗）。
+  useEffect(() => {
+    if (secret.value === null) setZoomOpen(false);
+  }, [secret.value]);
 
   return (
     <div className="space-y-3">
       <RevealToggle variant={variant} secret={secret} showLabel="显示同步码" />
       <Reveal show={secret.value !== null}>
         <div className="space-y-3 pt-1">
-          <div className={variant === 'desktop' ? 'flex flex-wrap items-start gap-4' : 'space-y-3'}>
-            {qrFits && code !== null && (
-              <div className="flex-shrink-0">
-                <QrCode text={code} size={168} label="同步码二维码" />
-                <p className="mt-2 max-w-[168px] text-caption leading-snug text-fg-tertiary">
-                  用手机相机扫描，把扫出的文字粘贴到手机端的「加入已有同步」。
-                </p>
-              </div>
-            )}
-            <div className="min-w-0 flex-1 space-y-2">
-              <div
-                className="max-h-32 overflow-y-auto break-all rounded-lg border border-edge bg-surface/70 px-3 py-2 font-mono text-meta leading-relaxed text-fg-secondary select-all"
-                data-testid="sync-code"
+          {canShowQr && code !== null && (
+            <div className="space-y-2">
+              <SyncButton
+                variant={variant}
+                kind="primary"
+                className="w-full"
+                onClick={() => setZoomOpen(true)}
               >
-                {code ?? ''}
-              </div>
-              {code !== null && <CopyButton variant={variant} text={code} label="复制同步码" />}
+                <Maximize className="h-4 w-4" aria-hidden />
+                放大二维码
+              </SyncButton>
+              <p className="text-caption leading-snug text-fg-tertiary">
+                会占满整个屏幕：手机离屏幕 20~30 厘米对着扫最稳。
+                手机端也可以直接用「加入已有同步」里的扫码按钮。
+              </p>
             </div>
+          )}
+          <div className="min-w-0 space-y-2">
+            <div
+              className="max-h-32 overflow-y-auto break-all rounded-lg border border-edge bg-surface/70 px-3 py-2 font-mono text-meta leading-relaxed text-fg-secondary select-all"
+              data-testid="sync-code"
+            >
+              {code ?? ''}
+            </div>
+            {code !== null && <CopyButton variant={variant} text={code} label="复制同步码" />}
           </div>
-          {variant === 'desktop' && code !== null && !qrFits && (
+          {variant === 'desktop' && code !== null && !canShowQr && (
             <p className="text-meta text-fg-tertiary">同步码较长，无法生成二维码，请复制后发到另一台设备。</p>
           )}
           <Callout tone="warn">
@@ -142,6 +165,9 @@ export function AddDeviceBlock({ variant }: { variant: SyncVariant }) {
           </Callout>
         </div>
       </Reveal>
+      {canShowQr && code !== null && (
+        <QrZoomDialog open={zoomOpen} code={code} onClose={() => setZoomOpen(false)} />
+      )}
     </div>
   );
 }
