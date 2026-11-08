@@ -576,6 +576,111 @@ pub fn has(slot: &SecretSlot) -> Result<bool, AppError> {
     get(slot).map(|secret| secret.is_some())
 }
 
+// ── 孤儿渠道密钥清理 ─────────────────────────────────────────────────────────
+//
+// 渠道被删（或历史 bug、中断的流程）时，`llm_channel_{id}` / `llm_channel_headers_{id}`
+// 可能留在系统密钥链里没人认领。Windows 凭据管理器对条目总数有上限（满了之后连别的软件都
+// 写不进去，报「Not enough memory resources」），所以启动时按「设置里现有的渠道」清一遍。
+//
+// 判定刻意保守：
+// - 只认账号名形如 `llm_channel_(headers_)?<UUID>` 的条目——不是 UUID 的 id（手工导入、旧版本）一律不碰；
+// - 设置里**一个渠道都没有**时整个跳过（设置读失败回落默认值时 `known` 也是空的，
+//   那时「全是孤儿」是假象，绝不能据此清空用户的 Key）；
+// - 直接删条目、不经 [`delete`]，因此不广播机密变更；对端是否跟着删由机密流自己的比对决定。
+
+/// UUID 形态（8-4-4-4-12 的小写十六进制）。
+fn is_uuid_like(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_digit() || (b'a'..=b'f').contains(c),
+        })
+}
+
+/// 从账号名里取出渠道 id（`llm_channel_headers_` 要排在 `llm_channel_` 之前判断）。
+fn channel_id_of_account(account: &str) -> Option<&str> {
+    let id = account
+        .strip_prefix("llm_channel_headers_")
+        .or_else(|| account.strip_prefix("llm_channel_"))?;
+    is_uuid_like(id).then_some(id)
+}
+
+/// 纯函数：从一批账号名里挑出「渠道 id 不在 `known` 里」的。`known` 为空时返回空（见上）。
+fn orphan_channel_accounts<'a>(
+    accounts: impl IntoIterator<Item = &'a str>,
+    known: &std::collections::HashSet<&str>,
+) -> Vec<&'a str> {
+    if known.is_empty() {
+        return Vec::new();
+    }
+    accounts
+        .into_iter()
+        .filter(|a| channel_id_of_account(a).is_some_and(|id| !known.contains(id)))
+        .collect()
+}
+
+/// 清掉密钥链里没有对应渠道的 `llm_channel_*` 条目，返回删掉的条数。
+///
+/// 一次成组的同步系统调用（枚举 + 逐条删除），异步上下文里放进 `spawn_blocking`。
+/// 当前平台的密钥链不支持枚举（macOS / Linux / Android）时什么也不做、返回 0。
+pub fn purge_orphan_channel_secrets(known_channel_ids: &[String]) -> Result<usize, AppError> {
+    #[cfg(target_os = "android")]
+    {
+        let _ = known_channel_ids;
+        Ok(0)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let known: std::collections::HashSet<&str> =
+            known_channel_ids.iter().map(String::as_str).collect();
+        if known.is_empty() {
+            return Ok(0);
+        }
+        let pattern = format!(
+            r"^llm_channel_(headers_)?[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}\.{}$",
+            SERVICE.replace('.', r"\.")
+        );
+        let mut spec = std::collections::HashMap::new();
+        spec.insert("pattern", pattern.as_str());
+        // 默认 store 由 `keyring::Entry::new` 首次调用时装上；先造一个不落盘的条目触发它。
+        if let Err(e) = store_impl::entry(SERVICE, "orphan_purge_probe") {
+            log::debug!("密钥链初始化失败，跳过孤儿渠道密钥清理：{}", e);
+            return Ok(0);
+        }
+        let entries = match keyring_core::Entry::search(&spec) {
+            Ok(entries) => entries,
+            Err(e) => {
+                log::debug!("当前密钥链不支持枚举，跳过孤儿渠道密钥清理：{}", e);
+                return Ok(0);
+            }
+        };
+        // 枚举结果把「用户名.服务名」按最后一个点劈开，劈的位置对我们没意义：
+        // 拼回完整目标名再去掉 `.{SERVICE}` 后缀，得到账号名。
+        let suffix = format!(".{}", SERVICE);
+        let named: Vec<(String, keyring_core::Entry)> = entries
+            .into_iter()
+            .filter_map(|entry| {
+                let (service, user) = entry.get_specifiers()?;
+                let target = format!("{user}.{service}");
+                let account = target.strip_suffix(&suffix)?.to_string();
+                Some((account, entry))
+            })
+            .collect();
+        let orphans: std::collections::HashSet<&str> =
+            orphan_channel_accounts(named.iter().map(|(a, _)| a.as_str()), &known)
+                .into_iter()
+                .collect();
+        let mut removed = 0usize;
+        for (account, entry) in &named {
+            if orphans.contains(account.as_str()) && entry.delete_credential().is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+}
+
 /// 前端契约里 `hasXxx` 标记所对应的固定槽位是否有值（字段名与语义不变，见
 /// `SettingsResponse` / `AppBootstrapData`）。
 ///
@@ -679,6 +784,58 @@ mod tests {
         );
         // 快照表本身要覆盖每个变体：样本里有而快照里没有就是漏钉
         assert_eq!(snapshot.len(), all_samples().len());
+    }
+
+    const U1: &str = "27164dff-fef7-4a58-9cec-ad2cf3948bd6";
+    const U2: &str = "58f95f33-e735-4259-a86e-551bff068ec3";
+
+    #[test]
+    fn orphan_channel_accounts_picks_only_unknown_uuid_channels() {
+        let a1 = format!("llm_channel_{U1}");
+        let h1 = format!("llm_channel_headers_{U1}");
+        let a2 = format!("llm_channel_{U2}");
+        let h2 = format!("llm_channel_headers_{U2}");
+        let accounts = vec![
+            a1.as_str(),
+            h1.as_str(),
+            a2.as_str(),
+            h2.as_str(),
+            "llm_channel_ch-1", // 非 UUID：不碰
+            "llm_api_key",      // 旧版单 Key：不碰
+            "jev_api_key",
+            "keys:master",
+        ];
+        let known: HashSet<&str> = [U1].into_iter().collect();
+        let orphans = orphan_channel_accounts(accounts, &known);
+        assert_eq!(orphans, vec![a2.as_str(), h2.as_str()]);
+    }
+
+    #[test]
+    fn orphan_channel_accounts_does_nothing_when_no_channel_is_known() {
+        // 设置读失败回落默认值时 known 为空，那时「全是孤儿」是假象
+        let a2 = format!("llm_channel_{U2}");
+        assert!(orphan_channel_accounts([a2.as_str()], &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn channel_id_of_account_requires_uuid_shape() {
+        assert_eq!(
+            channel_id_of_account(&format!("llm_channel_{U1}")),
+            Some(U1)
+        );
+        assert_eq!(
+            channel_id_of_account(&format!("llm_channel_headers_{U1}")),
+            Some(U1)
+        );
+        assert_eq!(channel_id_of_account("llm_channel_"), None);
+        assert_eq!(channel_id_of_account("llm_channel_ABC"), None);
+        // 大写 / 少一位 / 连字符位置不对都不算
+        assert_eq!(
+            channel_id_of_account(&format!("llm_channel_{}", U1.to_uppercase())),
+            None
+        );
+        assert_eq!(channel_id_of_account(&format!("llm_channel_{}", &U1[1..])), None);
+        assert_eq!(channel_id_of_account("pk:27164dff-fef7-4a58-9cec-ad2cf3948bd6"), None);
     }
 
     #[test]

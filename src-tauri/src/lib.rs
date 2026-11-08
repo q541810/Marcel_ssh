@@ -1074,6 +1074,29 @@ pub fn run() {
                         }
                     }
                     log::info!("已后台异步预热各渠道 LLM API Key");
+
+                    // 预热之后顺手清孤儿：密钥链里没有对应渠道的 `llm_channel_*` 条目。
+                    // Windows 凭据管理器条目总数有上限，堆满后连新建同步都存不进密钥。
+                    // 判定细节与保守条件见 `keychain::purge_orphan_channel_secrets`。
+                    let known: Vec<String> = {
+                        let settings = settings_arc.read().await;
+                        settings
+                            .llm_registry
+                            .channels
+                            .iter()
+                            .map(|c| c.id.clone())
+                            .collect()
+                    };
+                    match tokio::task::spawn_blocking(move || {
+                        crate::config::keychain::purge_orphan_channel_secrets(&known)
+                    })
+                    .await
+                    {
+                        Ok(Ok(0)) => {}
+                        Ok(Ok(n)) => log::info!("已清理密钥链里 {} 条没有对应渠道的孤儿密钥", n),
+                        Ok(Err(e)) => log::warn!("清理孤儿渠道密钥失败：{}", e),
+                        Err(e) => log::warn!("清理孤儿渠道密钥任务失败：{}", e),
+                    }
                 });
             }
 

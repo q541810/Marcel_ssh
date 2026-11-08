@@ -89,6 +89,9 @@ keyring = { version = "^4", default-features = false, features = [
     "apple-native-keyring-store",
     "zbus-secret-service-keyring-store",
 ] }
+# `keyring::Entry` 是只管读写删的精简包装；枚举密钥链（孤儿渠道密钥清理）要用底层的
+# `keyring_core::Entry::search`，与上面 keyring 用的是同一个默认 store。
+keyring-core = { version = "^1", features = [] }
 # 仅 Windows 无感更新需要：NSIS 安装包在执行前用 minisign 验签（Android 的
 # APK 由系统安装器强制校验签名一致，故不引入该依赖）。
 [target.'cfg(windows)'.dependencies]
