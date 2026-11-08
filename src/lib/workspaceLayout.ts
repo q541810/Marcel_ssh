@@ -312,6 +312,67 @@ export function resolveWorkspaceLayout({
   return { sidebarWidth, mainWidth, dockWidth };
 }
 
+/**
+ * 侧栏内容层的排版宽度 —— 和 `sidebarWidth`（aside 的宽度）不是一回事。
+ *
+ * 收起侧栏时 aside 的 `width` 走 300ms 补间，求解器却当场把 `sidebarWidth` 算成 0。
+ * 内容层若跟着归零，这 300ms 里「已保存的连接」会一字一行地重排一遍再被裁掉——
+ * 用户看到的就是标题像被碾碎了。所以内容层永远按**还开着时**的宽度排版，由 aside 的
+ * `overflow: hidden` 负责裁切；展开方向读的是同一个值，拉开时也不会跳。
+ *
+ * 与 `isExclusive` 无关：独占视图（设置页）下侧栏整块隐藏，但那段收起补间同样要这个宽度。
+ */
+export function resolveSidebarContentWidth({
+  containerWidth,
+  settings,
+  agentOpen,
+}: Omit<ResolveWorkspaceLayoutInput, 'sidebarOpen' | 'isExclusive'>): number {
+  return resolveWorkspaceLayout({
+    containerWidth,
+    settings,
+    agentOpen,
+    sidebarOpen: true,
+    isExclusive: false,
+  }).sidebarWidth;
+}
+
+/**
+ * 侧栏内容层（真正承载侧栏视图的那个 div）该有的宽度。
+ *
+ * 两条约束一起决定它，缺一条都会出事：
+ *
+ * 1. **收起补间期间不能跟着变窄**：aside 的 `width` 走 300ms 过渡，求解器却当场把宽度
+ *    归零。内容层若跟着归零，「已保存的连接」这标题会先被挤成一字一行再被裁掉——用户
+ *    看到的就是「像被碾了一样」。所以补间途中给 `contentWidth`（按侧栏开着算的宽度），
+ *    由 aside 的 `overflow: hidden` 负责裁切；补间落定后再收回 0。
+ *
+ * 2. **承载插件视图时必须跟 aside 同步**：插件的侧栏视图是原生 WebView，挂在 DOM 之外，
+ *    CSS 的 `overflow` 裁不到它，尺寸还是槽位 `getBoundingClientRect()` 量出来回灌后端的。
+ *    这种视图只能让内容层跟着 `asideWidth` 走，否则收起那 300ms 里 WebView 会以固定
+ *    宽高浮在主区域上面。
+ */
+export function resolveSidebarInnerWidth({
+  sidebarOpen,
+  collapseSettled,
+  contentWidth,
+  asideWidth,
+  hostsPluginWebview,
+}: {
+  sidebarOpen: boolean;
+  /** 收起补间是否已经走完（由调用方按过渡时长计时，不靠 transitionend）。 */
+  collapseSettled: boolean;
+  /** 侧栏按「开着」求解出来的排版宽度。 */
+  contentWidth: number;
+  /** aside 这一刻的宽度（收起时是 0）。 */
+  asideWidth: number;
+  /** 当前侧栏视图是不是插件的原生 WebView。 */
+  hostsPluginWebview: boolean;
+}): number {
+  if (hostsPluginWebview) return asideWidth;
+  if (!sidebarOpen && collapseSettled) return 0;
+  return contentWidth;
+}
+
 export type PanelSide = 'sidebar' | 'dock';
 
 export interface PanelBaseBounds {

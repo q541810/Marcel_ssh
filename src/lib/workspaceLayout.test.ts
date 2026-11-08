@@ -8,6 +8,8 @@ import {
   mergeWorkspaceLayout,
   normalizeWorkspaceLayout,
   resolvePanelBaseBounds,
+  resolveSidebarContentWidth,
+  resolveSidebarInnerWidth,
   resolveWorkspaceLayout,
   WORKSPACE_LAYOUT_LIMITS,
 } from './workspaceLayout';
@@ -476,5 +478,111 @@ describe('终端与 Agent 互换位置', () => {
       expect(swap.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
       expect(swap.sidebarWidth + swap.mainWidth + swap.dockWidth).toBe(containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
     }
+  });
+});
+
+/**
+ * 收起侧栏时 aside 的宽度走 300ms 补间，求解器却当场把 sidebarWidth 归零。
+ * 内容层必须继续按「开着时」的宽度排版，否则这 300ms 里侧栏标题会被挤成一字一行
+ * （用户看到的「像被碾了一样」）。这组用例钉住这条不变量。
+ */
+describe('侧栏收起补间期间的内容层宽度', () => {
+  const containers = [1136, 1280, 1440, 1920, 2560];
+
+  it('侧栏收起时内容层宽度不归零，且等于展开后的宽度', () => {
+    for (const containerWidth of containers) {
+      const contentWidth = resolveSidebarContentWidth({
+        containerWidth,
+        settings: DEFAULT_WORKSPACE_LAYOUT,
+        agentOpen: true,
+      });
+      const opened = resolveWorkspaceLayout({
+        containerWidth,
+        settings: DEFAULT_WORKSPACE_LAYOUT,
+        sidebarOpen: true,
+        agentOpen: true,
+      });
+      const closed = resolveWorkspaceLayout({
+        containerWidth,
+        settings: DEFAULT_WORKSPACE_LAYOUT,
+        sidebarOpen: false,
+        agentOpen: true,
+      });
+
+      expect(closed.sidebarWidth).toBe(0);
+      expect(contentWidth).toBeGreaterThan(0);
+      // 展开时内容层宽度与 aside 宽度逐像素一致：拉开/收起都不跳
+      expect(contentWidth).toBe(opened.sidebarWidth);
+      expect(contentWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
+    }
+  });
+
+  it('独占视图（设置页）里同样给出内容层宽度：它也要走过那段收起补间', () => {
+    const containerWidth = 1600;
+    const exclusive = resolveWorkspaceLayout({
+      containerWidth,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+      isExclusive: true,
+    });
+
+    expect(exclusive.sidebarWidth).toBe(0);
+    expect(
+      resolveSidebarContentWidth({ containerWidth, settings: DEFAULT_WORKSPACE_LAYOUT, agentOpen: true }),
+    ).toBe(
+      resolveWorkspaceLayout({ containerWidth, settings: DEFAULT_WORKSPACE_LAYOUT, agentOpen: true })
+        .sidebarWidth,
+    );
+  });
+
+  it('内容层宽度跟随窗口宽与用户拖出来的基准宽度，不是写死的默认值', () => {
+    const narrow = resolveSidebarContentWidth({
+      containerWidth: 1280,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+      agentOpen: true,
+    });
+    const wide = resolveSidebarContentWidth({
+      containerWidth: 2560,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: 400 },
+      agentOpen: true,
+    });
+
+    expect(wide).toBeGreaterThan(narrow);
+    expect(wide).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
+  });
+
+  it('收起补间途中给内容宽，落定之后才归零', () => {
+    const base = {
+      contentWidth: 280,
+      asideWidth: 0,
+      hostsPluginWebview: false,
+    };
+
+    // 刚开始收：aside 已经在窄，内容层还得按 280 排版（否则标题被挤成一字一行）
+    expect(resolveSidebarInnerWidth({ ...base, sidebarOpen: false, collapseSettled: false })).toBe(280);
+    // 补间走完：可以收干净了
+    expect(resolveSidebarInnerWidth({ ...base, sidebarOpen: false, collapseSettled: true })).toBe(0);
+    // 开着的时候永远是内容宽，补间状态无关
+    expect(resolveSidebarInnerWidth({ ...base, sidebarOpen: true, collapseSettled: false })).toBe(280);
+    expect(resolveSidebarInnerWidth({ ...base, sidebarOpen: true, collapseSettled: true })).toBe(280);
+  });
+
+  it('承载插件原生 WebView 时，内容层必须跟 aside 同步（CSS 裁不到 WebView）', () => {
+    const base = {
+      contentWidth: 280,
+      hostsPluginWebview: true,
+    };
+
+    // 收起途中 aside 在变窄：内容层跟着变，WebView 量出来的尺寸才不会浮在界面上
+    expect(
+      resolveSidebarInnerWidth({ ...base, sidebarOpen: false, collapseSettled: false, asideWidth: 180 }),
+    ).toBe(180);
+    // 收干净之后两边都是 0
+    expect(
+      resolveSidebarInnerWidth({ ...base, sidebarOpen: false, collapseSettled: true, asideWidth: 0 }),
+    ).toBe(0);
+    // 开着的时候两边同宽
+    expect(
+      resolveSidebarInnerWidth({ ...base, sidebarOpen: true, collapseSettled: false, asideWidth: 280 }),
+    ).toBe(280);
   });
 });

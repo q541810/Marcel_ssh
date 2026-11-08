@@ -47,6 +47,8 @@ import {
   mergeWorkspaceLayout,
   normalizeWorkspaceLayout,
   resolvePanelBaseBounds,
+  resolveSidebarContentWidth,
+  resolveSidebarInnerWidth,
   resolveWorkspaceLayout,
   resolveWorkspaceScale,
   type PanelBaseBounds,
@@ -119,6 +121,11 @@ interface LiveWidthOverride {
   side: PanelSide;
   base: number;
   layout: ResolvedWorkspaceLayout;
+  /**
+   * 侧栏内容层此刻该有的排版宽度（侧栏收着就是 0，与 JSX 走同一口径）。
+   * 它和 `layout.sidebarWidth` 不同源：收起补间期间 aside 已在变窄，内容层却还没动。
+   */
+  sidebarInnerWidth: number;
   containerWidth: number;
   sidebarOpen: boolean;
   agentOpen: boolean;
@@ -308,6 +315,51 @@ export default function App() {
   );
 
   const sidebarWidth = resolvedLayout.sidebarWidth;
+  /**
+   * 内容层的排版宽度：侧栏收起时 aside 的 `width` 走 300ms 补间，`sidebarWidth` 却当场归零。
+   * 内容层若跟着归零，「已保存的连接」会在这 300ms 里被挤成一字一行再被裁掉
+   * （看着像被碾过），所以内容层按「侧栏开着」的宽度排版。
+   */
+  const sidebarContentWidth = useMemo(
+    () =>
+      resolveSidebarContentWidth({
+        containerWidth: layoutWidth,
+        settings: workspaceLayout,
+        agentOpen: agentPanelOpen,
+      }),
+    [agentPanelOpen, layoutWidth, workspaceLayout],
+  );
+  /**
+   * 补间是否已经走完。用定时器而不是 transitionend：窗口拉伸期间过渡被临时关掉
+   * （`transition: none`），transitionend 就不会来了。时长与 aside 的补间同源。
+   * 落定后内容层才收回 0（见 `resolveSidebarInnerWidth`），补间途中一直撑在内容宽度上。
+   */
+  const [sidebarCollapseSettled, setSidebarCollapseSettled] = useState(!effectiveSidebarOpen);
+  useEffect(() => {
+    if (effectiveSidebarOpen) {
+      setSidebarCollapseSettled(false);
+      return;
+    }
+    const timer = setTimeout(
+      () => setSidebarCollapseSettled(true),
+      SETTINGS_LEFT_PANEL_COLLAPSE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [effectiveSidebarOpen]);
+  /**
+   * 内容层真正该有的宽度 —— 规则本身在 `resolveSidebarInnerWidth`（含两条约束的成因）。
+   * 直写 DOM 的手势路径也调它，两边口径必须一致，否则侧栏收起落定后再拖一下 dock，
+   * 内容层会被重新撑开、把收起的侧栏内容顶到主区域上。
+   */
+  const sidebarHostsPluginWebview =
+    sidebarProvider !== null && sidebarProvider.pluginId !== 'builtin';
+  const sidebarInnerWidth = resolveSidebarInnerWidth({
+    sidebarOpen: effectiveSidebarOpen,
+    collapseSettled: sidebarCollapseSettled,
+    contentWidth: sidebarContentWidth,
+    asideWidth: sidebarWidth,
+    hostsPluginWebview: sidebarHostsPluginWebview,
+  });
   const dockWidth = resolvedLayout.dockWidth;
   const dockVisible = effectiveAgentPanelOpen && dockWidth > 0;
   const isResizing = resizingSide !== null;
@@ -385,16 +437,24 @@ export default function App() {
     return () => window.removeEventListener(OPEN_AGENT_PANEL_EVENT, open);
   }, [agentPanelOpen, isExclusive, persistWorkspaceLayout]);
 
-  /** 把一次求解结果直接写到四块承载宽度的 DOM 上（不经过 React）。 */
-  const applyDragWidths = useCallback((layout: ResolvedWorkspaceLayout) => {
-    const { sidebarWidth, dockWidth } = layout;
-    if (sidebarAsideRef.current) sidebarAsideRef.current.style.width = `${sidebarWidth}px`;
-    if (sidebarInnerRef.current) sidebarInnerRef.current.style.width = `${sidebarWidth}px`;
-    if (dockWrapRef.current) {
-      dockWrapRef.current.style.width = `${dockWidth > 0 ? dockWidth + 4 : 0}px`;
-    }
-    if (dockAsideRef.current) dockAsideRef.current.style.width = `${dockWidth}px`;
-  }, []);
+  /**
+   * 把一次求解结果直接写到四块承载宽度的 DOM 上（不经过 React）。
+   *
+   * `sidebarInnerWidth` 单独传：aside 可以收到 0（收起补间就是这么走的），内容层不行——
+   * 它得按「侧栏开着」的宽度排版，否则收起那 300ms 里侧栏标题会被挤成一字一行。
+   */
+  const applyDragWidths = useCallback(
+    (layout: ResolvedWorkspaceLayout, sidebarInnerWidth: number) => {
+      const { sidebarWidth, dockWidth } = layout;
+      if (sidebarAsideRef.current) sidebarAsideRef.current.style.width = `${sidebarWidth}px`;
+      if (sidebarInnerRef.current) sidebarInnerRef.current.style.width = `${sidebarInnerWidth}px`;
+      if (dockWrapRef.current) {
+        dockWrapRef.current.style.width = `${dockWidth > 0 ? dockWidth + 4 : 0}px`;
+      }
+      if (dockAsideRef.current) dockAsideRef.current.style.width = `${dockWidth}px`;
+    },
+    [],
+  );
 
   /** 一帧拖动推进：算候选基准 → 求解三栏显示宽 → 写 DOM + 记覆盖值。 */
   const runResizeFrame = useCallback(() => {
@@ -414,15 +474,31 @@ export default function App() {
     if (base === session.baseCurrent && override?.side === session.side) return;
     // 容器宽取实时值：窗口缩放插进来的帧也按新宽求解
     const containerWidth = mainRowWidthRef.current;
+    const settings = {
+      ...session.workspaceLayout,
+      ...baseWidthPatch(session.side, session.workspaceLayout, base),
+    };
     const layout = resolveWorkspaceLayout({
       containerWidth,
-      settings: {
-        ...session.workspaceLayout,
-        ...baseWidthPatch(session.side, session.workspaceLayout, base),
-      },
+      settings,
       sidebarOpen: session.sidebarOpen,
       agentOpen: session.agentOpen,
       isExclusive: session.isExclusive,
+    });
+    // 内容层按「侧栏开着」求解：拖 dock 时侧栏可能被压窄，这一帧里它同样得跟手
+    const sidebarContentWidth = resolveSidebarContentWidth({
+      containerWidth,
+      settings,
+      agentOpen: session.agentOpen,
+    });
+    // 手势期间侧栏状态取本次手势的快照；补间是否落定照「此刻」算，
+    // 与 JSX 同一口径——收起途中拖 dock，内容层也该继续撑在内容宽度上被裁，而不是当场归零
+    const sidebarInnerWidth = resolveSidebarInnerWidth({
+      sidebarOpen: session.sidebarOpen,
+      collapseSettled: sidebarCollapseSettled,
+      contentWidth: sidebarContentWidth,
+      asideWidth: layout.sidebarWidth,
+      hostsPluginWebview: sidebarHostsPluginWebview,
     });
     session.baseCurrent = base;
     session.touchedOverride = true;
@@ -430,13 +506,14 @@ export default function App() {
       side: session.side,
       base,
       layout,
+      sidebarInnerWidth,
       containerWidth,
       sidebarOpen: session.sidebarOpen,
       agentOpen: session.agentOpen,
       isExclusive: session.isExclusive,
     };
-    applyDragWidths(layout);
-  }, [applyDragWidths]);
+    applyDragWidths(layout, sidebarInnerWidth);
+  }, [applyDragWidths, sidebarCollapseSettled, sidebarHostsPluginWebview]);
 
   const startPanelResize = useCallback(
     (side: PanelSide, e: React.PointerEvent<HTMLDivElement>) => {
@@ -559,23 +636,37 @@ export default function App() {
         Math.max(bounds.min, current + Math.round(delta / resolveWorkspaceScale(layoutWidth))),
       );
       if (base === current) return;
+      const settings = { ...layout, ...baseWidthPatch(side, layout, base) };
       const solved = resolveWorkspaceLayout({
         containerWidth,
-        settings: { ...layout, ...baseWidthPatch(side, layout, base) },
+        settings,
         sidebarOpen,
         agentOpen: agentPanelOpen,
         isExclusive,
+      });
+      const sidebarContentWidth = resolveSidebarContentWidth({
+        containerWidth,
+        settings,
+        agentOpen: agentPanelOpen,
+      });
+      const sidebarInnerWidth = resolveSidebarInnerWidth({
+        sidebarOpen: effectiveSidebarOpen,
+        collapseSettled: sidebarCollapseSettled,
+        contentWidth: sidebarContentWidth,
+        asideWidth: solved.sidebarWidth,
+        hostsPluginWebview: sidebarHostsPluginWebview,
       });
       liveOverrideRef.current = {
         side,
         base,
         layout: solved,
+        sidebarInnerWidth,
         containerWidth,
         sidebarOpen,
         agentOpen: agentPanelOpen,
         isExclusive,
       };
-      applyDragWidths(solved);
+      applyDragWidths(solved, sidebarInnerWidth);
       pendingNudgeRef.current = { side, base };
       if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
       nudgeTimerRef.current = setTimeout(() => {
@@ -596,9 +687,12 @@ export default function App() {
       applyDragWidths,
       commitPanelBase,
       dockBounds,
+      effectiveSidebarOpen,
       isExclusive,
       layoutWidth,
       sidebarBounds,
+      sidebarCollapseSettled,
+      sidebarHostsPluginWebview,
       sidebarOpen,
       workspaceLayout,
     ],
@@ -646,11 +740,11 @@ export default function App() {
       ) {
         liveOverrideRef.current = null;
       } else {
-        applyDragWidths(override.layout);
+        applyDragWidths(override.layout, override.sidebarInnerWidth);
         return;
       }
     }
-    applyDragWidths(resolvedLayout);
+    applyDragWidths(resolvedLayout, sidebarInnerWidth);
   });
 
   useEffect(
@@ -831,7 +925,12 @@ export default function App() {
                 : `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
             }}
           >
-            <div ref={sidebarInnerRef} style={{ width: `${sidebarWidth}px`, height: '100%' }}>
+            {/*
+              内容层按「侧栏开着」的宽度排版（`sidebarInnerWidth`），不跟 aside 的补间一起变窄：
+              aside 收到 0 的这 300ms 里内容层若跟着归零，标题会先被挤成一字一行再被裁掉，
+              看着像被碾过。裁切交给 aside 自己的 overflow-hidden，补间落定后内容层再收回 0。
+            */}
+            <div ref={sidebarInnerRef} style={{ width: `${sidebarInnerWidth}px`, height: '100%' }}>
               {sidebarProvider && sidebarProvider.pluginId !== 'builtin' ? (
                 <PluginWebviewSlot key={`${sidebarProvider.id}-${pluginRefreshKey}`} provider={sidebarProvider} />
               ) : SidebarView ? (
