@@ -1,6 +1,7 @@
 import { Check, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from "react";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
+import { useModePulse } from "@/hooks/useModePulse";
 import { AGENT_MODES } from "@/lib/constants";
 import type { AgentMode } from "@/lib/types";
 
@@ -14,6 +15,7 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const modeDrawerPresence = useAnimatedPresence(modeDrawerOpen);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const pulse = useModePulse(mode);
   const currentModeInfo =
     AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
@@ -38,7 +40,9 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
                 ${
                   modeDrawerOpen
                     ? "bg-state-mid text-fg"
-                    : "text-fg-secondary hover:text-fg hover:bg-state-mid/50"
+                    : pulse
+                      ? "bg-indigo-500/15 text-indigo-400"
+                      : "text-fg-secondary hover:text-fg hover:bg-state-mid/50"
                 }
               `}
         title={currentModeInfo.description}

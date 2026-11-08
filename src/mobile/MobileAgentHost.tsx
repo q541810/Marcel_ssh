@@ -33,6 +33,7 @@ import {
   deriveSubAgentDispatch,
 } from "@/lib/agentPanelDerived";
 import { AGENT_MODES } from "@/lib/constants";
+import { useModePulse } from "@/hooks/useModePulse";
 import { currentVision } from "@/lib/llmRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { AgentMessage, AgentMode, Skill } from "@/lib/types";
@@ -264,6 +265,7 @@ export default function MobileAgentHost({
 
   const currentModeInfo =
     AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
+  const modePulse = useModePulse(mode);
 
   useEffect(() => {
     if (!ids?.configId || !ids?.sessionId) return;
@@ -1098,7 +1100,7 @@ export default function MobileAgentHost({
                 <button
                   type="button"
                   onClick={() => setModeOpen((v) => !v)}
-                  className="flex items-center gap-1 rounded-full px-2 py-1.5 text-meta font-medium text-fg-secondary active:bg-state-soft pressable"
+                  className={`flex items-center gap-1 rounded-full px-2 py-1.5 text-meta font-medium active:bg-state-soft pressable ${modePulse ? "bg-indigo-500/15 text-indigo-400" : "text-fg-secondary"}`}
                   title={currentModeInfo.description}
                 >
                   {currentModeInfo.label}
