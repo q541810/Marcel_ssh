@@ -19,12 +19,39 @@ const reply = (toolCallId: string, question: string, text: string): AgentMessage
 describe('parseSuggestion', () => {
   it('trims and drops blank options; needs a question and at least one option', () => {
     expect(parseSuggestion({ question: ' 推送吗？ ', options: [' 好的 ', '', 3, '不需要'] })).toEqual({
-      question: '推送吗？', options: ['好的', '不需要'],
+      question: '推送吗？', options: [{ text: '好的' }, { text: '不需要' }],
     });
     expect(parseSuggestion({ question: '', options: ['a'] })).toBeNull();
     expect(parseSuggestion({ question: 'q', options: [] })).toBeNull();
     expect(parseSuggestion({ question: 'q' })).toBeNull();
     expect(parseSuggestion(undefined)).toBeNull();
+  });
+
+  it('reads an optional target mode; an unknown mode is ignored rather than trusted', () => {
+    expect(parseSuggestion({
+      question: '执行吗？',
+      options: [{ text: '执行', mode: 'agent' }, { text: '全自动', mode: ' auto ' }, { text: '改改', mode: 'yolo' }, '不用'],
+    })?.options).toEqual([
+      { text: '执行', mode: 'agent' }, { text: '全自动', mode: 'auto' }, { text: '改改' }, { text: '不用' },
+    ]);
+    // 没有文字的对象选项占不了名额
+    expect(parseSuggestion({ question: 'q', options: [{ mode: 'agent' }] })).toBeNull();
+  });
+});
+
+describe('回信记录切过的模式', () => {
+  it('composes a note the model can read, and survives validation', () => {
+    const input = {
+      version: 1 as const, text: '按计划执行', textAttachments: [],
+      replyTo: { toolCallId: 'c1', question: '执行吗？', switchedTo: 'agent' as const },
+    };
+    const content = composeUserInput(input);
+    expect(content).toContain('已把运行模式切换为 Agent 模式');
+    expect(validateUserInput(content, input)).toEqual(input);
+    // 没切过就一个字也不多说；坏模式名不采信元数据
+    const plain = { ...input, replyTo: { toolCallId: 'c1', question: '执行吗？' } };
+    expect(composeUserInput(plain)).not.toContain('运行模式');
+    expect(validateUserInput(content, { ...input, replyTo: { ...input.replyTo, switchedTo: 'yolo' } })).toBeUndefined();
   });
 });
 

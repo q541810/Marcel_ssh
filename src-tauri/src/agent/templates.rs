@@ -48,7 +48,7 @@
 //!
 //! # 改 X 要动哪里
 //!
-//! - 运行模式 / 需求澄清 / ask_user（干活途中弹窗，卡片须自足）与 suggest_next（做完后的不阻塞小建议卡片）/ 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析，文件交付只靠它）/ 风险分级 / 上下文管理 / 收尾
+//! - 运行模式 / 需求澄清 / ask_user（干活途中弹窗，卡片须自足）与 suggest_next（做完后的不阻塞小建议卡片，Plan 与 Agent/Auto 都有；选项可带 mode，Plan 规划完靠它让用户一键切到执行模式）/ 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析，文件交付只靠它）/ 风险分级 / 上下文管理 / 收尾
 //!   → `templates/agent/沟通.hbs`（仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
 //! - 人设、规则优先级、语言与风格、主动性、做事方式、命令规范、文档同步、临时文件清理、
 //!   后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`（各段用无编号标题，
@@ -504,6 +504,8 @@ mod tests {
         let prompt = build(&vars, false, &[], true);
         assert!(prompt.contains("Plan 模式"));
         assert!(prompt.contains("write_file"));
+        // 规划完靠 suggest_next 选项的 mode 让用户一键切到执行模式（只在 Plan 段里教）
+        assert!(prompt.contains("mode=agent") && prompt.contains("mode=auto"));
     }
 
     #[test]
@@ -1187,6 +1189,13 @@ mod tests {
     fn communication_teaches_ask_user_suggest_next_and_links_only() {
         let text = TemplateManager.render_fragment("沟通", &json!({}));
         assert!(text.contains("suggest_next"));
+        // 劝用而不是劝退：明确的下一步就该放卡片，结论末尾的问句改成卡片；
+        // Plan 规划完靠选项的 mode 让用户一键切到执行模式
+        assert!(text.contains("不要把问句写进正文"));
+        assert!(!text.contains("更不要每次都放"));
+        assert!(text.contains("选项可以带 mode"));
+        // 沟通段所有模式共用，不许出现 Plan 专属措辞（非 Plan 提示词有测试拦这个）
+        assert!(!text.contains("Plan 模式"));
         assert!(!text.contains("wrap_up"));
         assert!(text.contains("提问卡片必须自足"));
         assert!(!text.contains("anchor"));

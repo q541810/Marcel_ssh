@@ -524,6 +524,8 @@ export interface UserInputMetadata {
 export interface UserReplyRef {
   toolCallId: string;
   question: string;
+  /** 点这个选项时一并把运行模式切到了它（选项带 `mode` 才有）；模型要知道自己现在处在哪个模式。 */
+  switchedTo?: AgentMode;
 }
 
 export interface AgentMessage {

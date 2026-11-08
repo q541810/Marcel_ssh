@@ -6,7 +6,9 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
 import { isTaskBusy } from '@/lib/agentStatus';
 import { getErrorMessage } from '@/lib/errors';
-import { parseSuggestion, suggestionState } from '@/lib/suggestNext';
+import { AGENT_MODES } from '@/lib/constants';
+import { parseSuggestion, suggestionState, type SuggestionOption } from '@/lib/suggestNext';
+import type { AgentMode } from '@/lib/types';
 import { MessageJumpContext } from './messageJumpContext';
 import type { ToolViewProps } from './toolViews';
 
@@ -16,6 +18,7 @@ async function sendReply(
   toolCallId: string,
   question: string,
   text: string,
+  switchedTo?: AgentMode,
 ): Promise<void> {
   const bound = sessionConversationBindingManager.findOccupyingSession(conversationId);
   if (!bound || bound.session.status !== 'connected') {
@@ -29,7 +32,7 @@ async function sendReply(
     [],
     {
       conversationId,
-      userInput: { version: 1, text, textAttachments: [], replyTo: { toolCallId, question } },
+      userInput: { version: 1, text, textAttachments: [], replyTo: { toolCallId, question, ...(switchedTo ? { switchedTo } : {}) } },
     },
   );
 }
@@ -40,6 +43,9 @@ async function sendReply(
  * 用户有自己的输入框；完全不碰输入框和焦点，可以直接无视它继续打字。
  * 点选项 = 发一条带「回信指向这次调用」标记的普通消息；之后卡片自己消失（那条用户气泡
  * 带着引用，就是记录）。用户自己打了别的字，卡片同样消失。
+ * 选项可以带目标模式（Plan 规划完「按计划执行」）：右边灰字标出「→ Agent」，点下去**先切模式再发**
+ * （任务启动时读当前模式），发送失败把模式退回去——不留「模式变了、消息没发」的半截状态。
+ * 目标就是当前模式的选项不标、也不切。
  */
 function SuggestionCard({ message }: ToolViewProps) {
   const tr = message.toolResult;
@@ -58,6 +64,7 @@ function SuggestionCard({ message }: ToolViewProps) {
   );
   // 订阅会话表只为「断开 / 重连」时重算一次；真正的绑定关系每次点击时再查
   const sessions = useSessionStore((s) => s.sessions);
+  const currentMode = useTaskStore((s) => s.mode);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,13 +76,18 @@ function SuggestionCard({ message }: ToolViewProps) {
   const connected = !!occupying && sessions[occupying.sessionId]?.status === 'connected';
   const disabled = busy || sending || !connected;
 
-  const pick = async (text: string) => {
+  const pick = async (option: SuggestionOption) => {
     if (disabled) return;
     setSending(true);
     setError(null);
+    const task = useTaskStore.getState();
+    const before = task.mode;
+    const switchTo = option.mode && option.mode !== before ? option.mode : undefined;
     try {
-      await sendReply(conversationId, toolCallId, suggestion.question, text);
+      if (switchTo) task.setMode(switchTo);
+      await sendReply(conversationId, toolCallId, suggestion.question, option.text, switchTo);
     } catch (e) {
+      if (switchTo) useTaskStore.getState().setMode(before);
       setError(getErrorMessage(e));
       setSending(false);
     }
@@ -89,7 +101,7 @@ function SuggestionCard({ message }: ToolViewProps) {
       <div className="text-fg">{suggestion.question}</div>
       <ol className="mt-1 space-y-px">
         {suggestion.options.map((option, index) => (
-          <li key={`${index}:${option}`}>
+          <li key={`${index}:${option.text}`}>
             <button
               type="button"
               disabled={disabled}
@@ -99,7 +111,12 @@ function SuggestionCard({ message }: ToolViewProps) {
               } ${disabled ? 'cursor-default opacity-60' : ''}`}
             >
               <span className="flex-shrink-0 text-fg-tertiary">{index + 1}.</span>
-              <span className="min-w-0 [overflow-wrap:anywhere]">{option}</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{option.text}</span>
+              {option.mode && option.mode !== currentMode && (
+                <span className="ml-auto flex-shrink-0 pl-3 text-caption text-fg-tertiary">
+                  → {AGENT_MODES.find((m) => m.value === option.mode)?.label}
+                </span>
+              )}
             </button>
           </li>
         ))}

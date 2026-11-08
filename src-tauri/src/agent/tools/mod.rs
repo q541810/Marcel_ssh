@@ -1275,7 +1275,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     BuiltinToolSpec {
         name: "suggest_next",
         side: ToolSide::App,
-        modes: ToolModes::EXECUTE,
+        modes: ToolModes::ALL,
         roles: ToolRoles::MainOnly,
         switch: None,
         semantics: ToolSemantics::NONE,
@@ -1999,6 +1999,8 @@ mod tests {
         let plan_main = ToolRegistry::build_for_plan_mode(ToolAudience::Main, &[], &on);
         for name in [
             "ask_user",
+            // Plan 规划完要能让用户一键「按计划执行」（点选项时顺带切模式）
+            "suggest_next",
             "connection_info",
             "bash",
             "read_file",

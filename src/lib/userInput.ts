@@ -1,4 +1,4 @@
-import type { UserInputMetadata, UserReplyRef, UserSkillRef, UserTextAttachment } from './types';
+import type { AgentMode, UserInputMetadata, UserReplyRef, UserSkillRef, UserTextAttachment } from './types';
 import { wrapTextAttachment } from './attachmentAttach';
 
 /** 手动引用的 skill 在模型输入里的包裹形式（与文本附件同为「正文之后的段落」）。 */
@@ -7,14 +7,17 @@ export function wrapSkillRef(name: string, content: string): string {
 }
 
 /** 回信给模型看的开头：交代这是对哪张建议卡片的回复（模型不一定还记得自己问了什么）。 */
-export function wrapReplyNote(question: string): string {
-  return `（这是对你刚才放的建议卡片「${question}」的回复）
+export function wrapReplyNote(question: string, switchedTo?: AgentMode): string {
+  const switched = switchedTo ? `；用户点选时已把运行模式切换为 ${MODE_NAMES[switchedTo]} 模式` : '';
+  return `（这是对你刚才放的建议卡片「${question}」的回复${switched}）
 `;
 }
 
+const MODE_NAMES: Record<AgentMode, string> = { plan: 'Plan', agent: 'Agent', auto: 'Auto' };
+
 /** 完整模型输入的唯一拼装入口；不 trim 文件内容，不从普通文本猜附件。 */
 export function composeUserInput(input: UserInputMetadata): string {
-  return (input.replyTo ? wrapReplyNote(input.replyTo.question) : '')
+  return (input.replyTo ? wrapReplyNote(input.replyTo.question, input.replyTo.switchedTo) : '')
     + input.text
     + input.textAttachments
       .map((file) => wrapTextAttachment(file.name, file.content))
@@ -72,7 +75,13 @@ export function validateUserInput(
     const r = value.replyTo;
     if (!isRecord(r) || typeof r.toolCallId !== 'string' || r.toolCallId.length === 0
       || typeof r.question !== 'string') return undefined;
-    replyTo = { toolCallId: r.toolCallId, question: r.question };
+    if (r.switchedTo !== undefined && !(r.switchedTo === 'plan' || r.switchedTo === 'agent'
+      || r.switchedTo === 'auto')) return undefined;
+    replyTo = {
+      toolCallId: r.toolCallId,
+      question: r.question,
+      ...(r.switchedTo ? { switchedTo: r.switchedTo as AgentMode } : {}),
+    };
   }
   const input: UserInputMetadata = {
     version: 1,

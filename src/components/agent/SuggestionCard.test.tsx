@@ -82,6 +82,67 @@ describe('SuggestionCard（小建议卡片）', () => {
     });
   });
 
+  describe('选项带目标模式（点了顺带切模式）', () => {
+    const PLAN_ARGS = {
+      question: '按这个计划执行吗？',
+      options: [{ text: '按计划执行', mode: 'agent' }, { text: '全自动执行', mode: 'auto' }, '我再改改'],
+    };
+    const planMessage = () => toolMessage({
+      toolResult: { ...toolMessage().toolResult!, arguments: PLAN_ARGS },
+    });
+    const sentOptions = () => (mocks.startTask.mock.calls[0] as unknown as [
+      string, string, string, unknown[], unknown[], { userInput: { replyTo: unknown } },
+    ])[5];
+
+    beforeEach(() => useTaskStore.setState({ mode: 'plan' } as never));
+
+    it('labels only the options that would actually change the mode', () => {
+      mount(planMessage());
+      expect(buttons().map((b) => b.textContent)).toEqual([
+        '1.按计划执行→ Agent', '2.全自动执行→ Auto', '3.我再改改',
+      ]);
+      // 目标就是当前模式：不标，点了也不切
+      useTaskStore.setState({ mode: 'agent' } as never);
+      act(() => root.render(<div />));
+      mount(planMessage());
+      expect(buttons()[0].textContent).toBe('1.按计划执行');
+    });
+
+    it('switches the mode first, then sends, and tells the model about the switch', async () => {
+      const order: string[] = [];
+      useTaskStore.setState({
+        startTask: vi.fn(async () => { order.push(`send@${useTaskStore.getState().mode}`); return 't'; }),
+      } as never);
+      mount(planMessage());
+      await act(async () => buttons()[0].click());
+      expect(useTaskStore.getState().mode).toBe('agent');
+      expect(order).toEqual(['send@agent']);
+    });
+
+    it('records the switch on the reply so the bubble and the model input agree', async () => {
+      mount(planMessage());
+      await act(async () => buttons()[1].click());
+      expect(sentOptions().userInput.replyTo).toEqual({
+        toolCallId: 'call-1', question: PLAN_ARGS.question, switchedTo: 'auto',
+      });
+    });
+
+    it('puts the mode back when sending fails', async () => {
+      mocks.startTask.mockRejectedValueOnce(new Error('boom'));
+      mount(planMessage());
+      await act(async () => buttons()[0].click());
+      expect(useTaskStore.getState().mode).toBe('plan');
+      expect(container.textContent).toContain('没发出去');
+    });
+
+    it('an option without a mode never touches the mode', async () => {
+      mount(planMessage());
+      await act(async () => buttons()[2].click());
+      expect(useTaskStore.getState().mode).toBe('plan');
+      expect(sentOptions().userInput.replyTo).toEqual({ toolCallId: 'call-1', question: PLAN_ARGS.question });
+    });
+  });
+
   it('does not touch focus (the user can keep typing)', () => {
     const input = document.createElement('textarea');
     document.body.appendChild(input);
