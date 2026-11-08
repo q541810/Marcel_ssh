@@ -1,6 +1,8 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { useSyncStore } from '@/stores/syncStore';
+import { useConnectionStore } from '@/stores/connectionStore';
+import { isDebugConnection } from '@/lib/debugServer';
 import { getErrorMessage } from '@/lib/errors';
 import {
   buildStorageConfig,
@@ -9,11 +11,14 @@ import {
   canTestStorage,
   initialWizardState,
   isPlausibleRecoveryKey,
+  JOIN_STRATEGY_OPTIONS,
+  joinStrategyNote,
   normalizeRecoveryKey,
   wizardReducer,
   type JoinMethod,
   type WizardMode,
 } from '@/lib/syncModel';
+import type { JoinStrategy } from '@/lib/types';
 import { RecoveryKeyView } from './RecoveryKeyView';
 import { StorageForm, TestResult } from './StorageForm';
 import { Callout, SyncButton, SyncCheckbox, SyncChoice, SyncDialog, type SyncVariant } from './syncUi';
@@ -30,7 +35,7 @@ const inputClass =
  * 「开启同步」与「加入已有同步」的向导（桌面 Modal / 手机 Sheet 共用）。
  *
  * 开启：选存储 → 测试连接 → 开启 → **展示恢复密钥**（勾选"我已妥善保存"才能完成，这一步不可随手关掉）。
- * 加入：粘贴同步码，或手动填存储位置 + 恢复密钥。
+ * 加入：先选本机已有内容怎么对账，再粘贴同步码，或手动填存储位置 + 恢复密钥。
  *
  * 状态机在 `lib/syncModel.ts`（纯函数，有单测）；这里只负责把动作接到后端命令上。
  * 恢复密钥 / 同步码只存在于本组件的局部状态，关闭向导即清空。
@@ -54,6 +59,10 @@ export function SyncWizard({
   const create = useSyncStore((s) => s.create);
   const join = useSyncStore((s) => s.join);
   const joinManual = useSyncStore((s) => s.joinManual);
+  // 「以云端为准」会丢掉本机独有的服务器，点之前要让人看到有几台。
+  const localServerCount = useConnectionStore(
+    (s) => s.connections.filter((c) => !isDebugConnection(c.id)).length,
+  );
 
   // 每次打开都从干净的表单开始（上次填过的密码 / 恢复密钥不该留着）。
   useEffect(() => {
@@ -102,11 +111,16 @@ export function SyncWizard({
         return;
       }
       if (state.joinMethod === 'code') {
-        await join(state.syncCodeInput.trim());
+        await join(state.syncCodeInput.trim(), state.strategy);
       } else {
         const storage = buildStorageConfig(state);
         if (!storage) return;
-        await joinManual(storage, buildStorageSecret(state), normalizeRecoveryKey(state.recoveryKeyInput));
+        await joinManual(
+          storage,
+          buildStorageSecret(state),
+          normalizeRecoveryKey(state.recoveryKeyInput),
+          state.strategy,
+        );
       }
       onFinished('join');
       onClose();
@@ -202,10 +216,20 @@ export function SyncWizard({
           数据存在你自己选的位置，没有我们的服务器。
         </Callout>
       ) : (
-        <Callout>
-          加入后，这台设备上已有的数据会和云端合并：两边内容冲突时以云端为准；
-          这台设备独有的连接、技能等会保留，并同步给其它设备。
-        </Callout>
+        <div className="space-y-2">
+          <div className="text-body font-medium text-fg-secondary">这台设备上已有的内容怎么处理</div>
+          <SyncChoice<JoinStrategy>
+            variant={variant}
+            options={JOIN_STRATEGY_OPTIONS}
+            value={state.strategy}
+            onChange={(strategy) => dispatch({ type: 'setStrategy', strategy })}
+            ariaLabel="已有内容的处理方式"
+            disabled={working}
+          />
+          <Callout tone={joinStrategyNote(state.strategy, localServerCount).tone}>
+            {joinStrategyNote(state.strategy, localServerCount).text}
+          </Callout>
+        </div>
       )}
 
       {mode === 'join' && (

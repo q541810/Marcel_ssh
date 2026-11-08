@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -380,16 +380,16 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       await click(findButton('加入已有同步'));
     }
 
-    it('同步码：粘贴后加入；说明合并规则「冲突以云端为准」', async () => {
+    it('同步码：粘贴后加入；默认「合并」并说明冲突以云端为准', async () => {
       await openJoin();
-      expect(bodyText()).toContain('冲突时以云端为准');
+      expect(bodyText()).toContain('同一项两边不一样时，以云端为准');
       const join = () => buttons().filter((b) => b.textContent === '加入').pop()!;
       expect(join().disabled).toBe(true);
       await type(inputByLabel('同步码'), '  MSYNC1-' + 'a'.repeat(60) + '\n');
       expect(join().disabled).toBe(false);
       await click(join());
-      expect(tauri.syncJoin).toHaveBeenCalledWith('MSYNC1-' + 'a'.repeat(60));
-      await vi.waitFor(() => expect(bodyText()).not.toContain('冲突时以云端为准'));
+      expect(tauri.syncJoin).toHaveBeenCalledWith('MSYNC1-' + 'a'.repeat(60), 'merge');
+      await vi.waitFor(() => expect(bodyText()).not.toContain('同一项两边不一样时，以云端为准'));
       expect(bodyText()).toContain('已加入同步');
     });
 
@@ -399,7 +399,27 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       await type(inputByLabel('同步码'), 'MSYNC1-' + 'a'.repeat(60));
       await click(buttons().filter((b) => b.textContent === '加入').pop()!);
       expect(bodyText()).toContain('恢复密钥不对');
-      expect(bodyText()).toContain('冲突时以云端为准');
+      expect(bodyText()).toContain('同一项两边不一样时，以云端为准');
+    });
+
+    it('以云端为准：先看到会丢弃什么，选中后按 cloud 提交', async () => {
+      await openJoin();
+      expect(bodyText()).not.toContain('会被丢弃');
+      await click(findButton('以云端为准'));
+      expect(bodyText()).toContain('本机独有的连接');
+      expect(bodyText()).toContain('会被丢弃');
+      await type(inputByLabel('同步码'), 'MSYNC1-' + 'a'.repeat(60));
+      await click(buttons().filter((b) => b.textContent === '加入').pop()!);
+      expect(tauri.syncJoin).toHaveBeenCalledWith('MSYNC1-' + 'a'.repeat(60), 'cloud');
+    });
+
+    it('以本机为准：提示别给新设备选，按 local 提交', async () => {
+      await openJoin();
+      await click(findButton('以本机为准'));
+      expect(bodyText()).toContain('刚装的新设备');
+      await type(inputByLabel('同步码'), 'MSYNC1-' + 'a'.repeat(60));
+      await click(buttons().filter((b) => b.textContent === '加入').pop()!);
+      expect(tauri.syncJoin).toHaveBeenCalledWith('MSYNC1-' + 'a'.repeat(60), 'local');
     });
 
     it('手动输入：存储 + 恢复密钥；恢复密钥忽略大小写和分隔符', async () => {
@@ -417,6 +437,7 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
         { kind: 'webDav', url: 'https://dav.example.com/', username: 'me', root: 'marcel-sync' },
         'pw',
         KEY,
+        'merge',
       );
     });
   });
@@ -474,7 +495,17 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(bodyText()).toContain('MB');
 
       await click(findButton('打开同步'));
-      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', true);
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', true, 'merge');
+    });
+
+    it('打开「对话与记忆」时取消勾选「也上传已有的」：按 cloud 提交，本机内容不删', async () => {
+      await mountEnabled();
+      await click(document.body.querySelector('[data-tier="conversation"] [role="switch"]')!);
+      expect(bodyText()).toContain('把这台设备上已有的对话与记忆也上传');
+      await click(document.body.querySelector('input[type="checkbox"]')!);
+      expect(bodyText()).toContain('不会被删除，只是不上传');
+      await click(findButton('打开同步'));
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', true, 'cloud');
     });
 
     it('对话档估算失败：只说明并给重试，仍然放行', async () => {
@@ -502,7 +533,7 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(bodyText()).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY/);
 
       await click(findButton('打开同步'));
-      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', true);
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', true, 'merge');
     });
 
     it('关闭「机密」：先提示「已经同步出去的不会被收回」，确认后才 setTier(false)', async () => {
@@ -511,13 +542,13 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(tauri.syncSetTier).not.toHaveBeenCalled();
       expect(bodyText()).toContain('已经同步到其它设备的机密不会被收回');
       await click(findButton('仍然关闭'));
-      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', false);
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', false, 'merge');
     });
 
     it('关闭「对话与记忆」：不弹确认，直接关并给一句「别处的不会被删」', async () => {
       await mountEnabled(status({ tiers: { config: true, conversation: true, secret: false } }));
       await click(document.body.querySelector('[data-tier="conversation"] [role="switch"]')!);
-      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', false);
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', false, 'merge');
       await vi.waitFor(() => expect(bodyText()).toContain('已经同步到其它设备的对话不会被删除'));
     });
 

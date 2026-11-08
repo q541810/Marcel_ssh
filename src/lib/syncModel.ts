@@ -1,5 +1,6 @@
 import { relativeTime } from '@/lib/memory';
 import type {
+  JoinStrategy,
   SyncHistoryEntry,
   SyncStatus,
   SyncStorageConfig,
@@ -277,6 +278,48 @@ export function isPlausibleSyncCode(input: string): boolean {
 // ───── 向导（开启 / 加入）─────
 
 export type WizardMode = 'create' | 'join';
+/** 加入向导里三种对账方式的选项（桌面分段控件 / 手机选项组共用）。 */
+export const JOIN_STRATEGY_OPTIONS = [
+  { value: 'merge', label: '合并', desc: '两边都保留（推荐）' },
+  { value: 'cloud', label: '以云端为准', desc: '本机独有的会丢弃' },
+  { value: 'local', label: '以本机为准', desc: '冲突时本机赢' },
+] as const satisfies readonly { value: JoinStrategy; label: string; desc: string }[];
+
+/**
+ * 选中某种对账方式时给用户看的说明。`localServerCount` 是本机现有的服务器数——
+ * 「以云端为准」会丢掉本机独有的那些，要让用户在点之前就知道代价。
+ */
+export function joinStrategyNote(
+  strategy: JoinStrategy,
+  localServerCount: number,
+): { tone: 'info' | 'warn'; text: string } {
+  switch (strategy) {
+    case 'cloud':
+      return {
+        tone: 'warn',
+        text:
+          `这台设备会变成云端的样子：本机独有的连接${
+            localServerCount > 0 ? `（现有 ${localServerCount} 台）` : ''
+          }、快捷指令、技能等会被丢弃，它们保存的密码也会一并清掉。` +
+          '对话和机密不受影响，之后打开那两档时再选。',
+      };
+    case 'local':
+      return {
+        tone: 'warn',
+        text:
+          '两边同一项不一样时以这台设备为准，其它设备会跟着变成这台的值；云端独有的内容仍然保留。' +
+          '如果这是刚装的新设备，请不要选这个。',
+      };
+    default:
+      return {
+        tone: 'info',
+        text:
+          '两边的内容都会保留：这台设备独有的连接、技能等会同步给其它设备；' +
+          '同一项两边不一样时，以云端为准。适合大多数情况。',
+      };
+  }
+}
+
 export type JoinMethod = 'code' | 'manual';
 export type StorageKind = SyncStorageConfig['kind'];
 
@@ -298,6 +341,8 @@ export interface WizardState {
   created: { recoveryKey: string; syncCode: string } | null;
   /** 「我已妥善保存」。 */
   acknowledged: boolean;
+  /** 加入时本机已有内容怎么和云端对账（只在 join 模式用）。 */
+  strategy: JoinStrategy;
 }
 
 export function initialWizardState(mode: WizardMode): WizardState {
@@ -313,6 +358,7 @@ export function initialWizardState(mode: WizardMode): WizardState {
     submit: { status: 'idle', message: null },
     created: null,
     acknowledged: false,
+    strategy: 'merge',
   };
 }
 
@@ -330,7 +376,8 @@ export type WizardAction =
   | { type: 'submitStart' }
   | { type: 'submitFail'; message: string }
   | { type: 'created'; recoveryKey: string; syncCode: string }
-  | { type: 'acknowledge'; value: boolean };
+  | { type: 'acknowledge'; value: boolean }
+  | { type: 'setStrategy'; strategy: JoinStrategy };
 
 const IDLE_TEST: WizardState['test'] = { status: 'idle', message: null };
 const IDLE_SUBMIT: WizardState['submit'] = { status: 'idle', message: null };
@@ -339,6 +386,8 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
   switch (action.type) {
     case 'reset':
       return initialWizardState(action.mode);
+    case 'setStrategy':
+      return { ...state, strategy: action.strategy, submit: IDLE_SUBMIT };
     case 'setJoinMethod':
       return { ...state, joinMethod: action.method, test: IDLE_TEST, submit: IDLE_SUBMIT };
     case 'setStorageKind':

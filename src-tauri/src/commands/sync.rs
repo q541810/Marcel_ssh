@@ -9,7 +9,7 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::sync::storage::StorageConfig;
-use crate::sync::types::TierEstimate;
+use crate::sync::types::{JoinStrategy, TierEstimate};
 use crate::sync::{SyncCreateResult, SyncDevice, SyncHistoryEntry, SyncStatus};
 use crate::AppState;
 
@@ -38,10 +38,17 @@ pub async fn sync_create(
     state.sync.create(storage, secret).await
 }
 
-/// 用同步码加入已有同步。
+/// 用同步码加入已有同步。`strategy`：本机已有内容怎么和云端对账（缺省 = 合并，云端赢）。
 #[tauri::command]
-pub async fn sync_join(state: State<'_, AppState>, sync_code: String) -> Result<(), AppError> {
-    state.sync.join_code(sync_code).await
+pub async fn sync_join(
+    state: State<'_, AppState>,
+    sync_code: String,
+    strategy: Option<JoinStrategy>,
+) -> Result<(), AppError> {
+    state
+        .sync
+        .join_code(sync_code, strategy.unwrap_or_default())
+        .await
 }
 
 /// 手动加入：选存储位置 + 输入恢复密钥。
@@ -51,8 +58,12 @@ pub async fn sync_join_manual(
     storage: StorageConfig,
     secret: Option<String>,
     recovery_key: String,
+    strategy: Option<JoinStrategy>,
 ) -> Result<(), AppError> {
-    state.sync.join_manual(storage, secret, recovery_key).await
+    state
+        .sync
+        .join_manual(storage, secret, recovery_key, strategy.unwrap_or_default())
+        .await
 }
 
 /// 立即同步一次。前端在订阅好同步事件后第一次调用它，才会解除启动后的「等前端」闸门。
@@ -108,14 +119,19 @@ pub async fn sync_confirm_held(state: State<'_, AppState>, accept: bool) -> Resu
 /// 打开 / 关闭某一档（`"conversation"` / `"secret"`）。配置档恒为开，不能关。
 ///
 /// 打开时先把本机已有数据整份导出并上传（「加入这条流」），再追上别人的进度；
+/// `strategy` 为 `cloud` 时不上传本机已有内容（也不删它）。
 /// 关闭时**不删**远端文件、不删本机数据，只是之后不再上传 / 拉取。
 #[tauri::command]
 pub async fn sync_set_tier(
     state: State<'_, AppState>,
     tier: String,
     enabled: bool,
+    strategy: Option<JoinStrategy>,
 ) -> Result<(), AppError> {
-    state.sync.set_tier(tier, enabled).await
+    state
+        .sync
+        .set_tier(tier, enabled, strategy.unwrap_or_default())
+        .await
 }
 
 /// 某一档的规模估算（给「打开前先告诉用户大约要传多少」用）。

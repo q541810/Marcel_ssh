@@ -24,6 +24,7 @@ use super::super::core::crypto::{aad_tag, DataKey};
 use super::super::core::format;
 use super::super::core::{Hlc, HlcClock};
 use super::super::store::{StreamName, StreamState};
+use super::super::types::JoinStrategy;
 use super::super::{secret_baseline::SecretBaseline, secrets::SyncSecretStore};
 use super::{StreamApplied, StreamDriver, StreamProgress, StreamSnapshot, StreamSnapshotLayout};
 use crate::config::keychain::{CaptureSuppression, SecretSlot, SecretSlotCatalog};
@@ -782,6 +783,31 @@ impl StreamDriver for SecretStreamDriver {
             }
         }
         baseline.save()
+    }
+
+    async fn export_full_for_join(
+        &mut self,
+        strategy: JoinStrategy,
+    ) -> Result<Vec<Vec<u8>>, AppError> {
+        if strategy != JoinStrategy::Cloud {
+            return self.export_full().await;
+        }
+        // 以云端为准：本机已有的 Key 和私钥**不上传、也不删**。把它们记进基线当作「已同步」，
+        // 之后的捕获才不会把它们当成新改动发出去；云端有同名 Key 时，落地会用云端的值盖掉本机的。
+        // 注意这里不能走 `capture_keys`——它会顺手把私钥正文传到云端。
+        let mut baseline = SecretBaseline::load(&self.config_dir)?;
+        for slot in SecretSlot::enumerable_slots(&self.catalog) {
+            if let Some(value) = self.secrets.get(&slot)? {
+                baseline.upsert(&slot.account(), &value);
+            }
+        }
+        for meta in self.key_store.list() {
+            if let Some((_, pem)) = self.key_store.export_for_sync(&meta.id) {
+                baseline.key_upsert(&meta.id, pem.as_str());
+            }
+        }
+        baseline.save()?;
+        Ok(Vec::new())
     }
 
     async fn export_full(&mut self) -> Result<Vec<Vec<u8>>, AppError> {

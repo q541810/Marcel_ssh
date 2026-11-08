@@ -29,7 +29,7 @@ use super::secrets::{MemorySecrets, SyncSecretStore};
 use super::sources::{build_adapters, SourceStores};
 use super::storage::{MemoryStorage, StorageConfig, SyncStorage};
 use super::store::LedgerFiles;
-use super::types::{HistoryKind, SyncState, SyncStatus};
+use super::types::{HistoryKind, JoinStrategy, SyncState, SyncStatus};
 use crate::config::connections::{ConnectionStore, SavedConnection};
 use crate::config::keychain::SecretSlot;
 use crate::config::persist::JsonPersistable;
@@ -326,8 +326,16 @@ impl Dev {
     }
 
     async fn join_code(&mut self, code: &str) -> Result<(), crate::error::AppError> {
+        self.join_code_with(code, JoinStrategy::Merge).await
+    }
+
+    async fn join_code_with(
+        &mut self,
+        code: &str,
+        strategy: JoinStrategy,
+    ) -> Result<(), crate::error::AppError> {
         self.engine
-            .join(JoinSpec::Code(Zeroizing::new(code.to_string())))
+            .join(JoinSpec::Code(Zeroizing::new(code.to_string())), strategy)
             .await
     }
 
@@ -483,7 +491,7 @@ impl Dev {
     /// 打开对话档（走真实的 `enable_tier`：导出 + 上传 + 一轮完整同步）。
     async fn enable_conv_tier(&mut self) {
         self.engine
-            .enable_tier("conversation", true)
+            .enable_tier("conversation", true, JoinStrategy::Merge)
             .await
             .expect("打开对话档");
     }
@@ -798,6 +806,118 @@ async fn join_merges_cloud_wins_dedupes_the_same_server_and_keeps_local_only_ite
     );
 }
 
+/// 三种加入策略共用的场景：A 有两台服务器和一个快捷指令；B 手动加过同一台服务器（id 不同）、
+/// 一台本机独有的，还有自己的快捷指令。
+async fn strategy_pair() -> (Dev, Dev, String) {
+    let (mut a, mut b, _cloud) = pair().await;
+    a.add_conn("c1", "生产服务器", "1.1.1.1", "root").await;
+    a.add_conn("c2", "测试机", "2.2.2.2", "deploy").await;
+    a.settings
+        .mutate(|s| {
+            s.font_size = 20;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    a.quick
+        .mutate(|s| {
+            s.add("q-a".into(), qc_input("重启 nginx", None))
+                .map(|_| ())
+        })
+        .await
+        .unwrap();
+    let (_rk, code) = a.create().await;
+
+    b.add_conn("b1", "我手动加的", "1.1.1.1", "root").await;
+    b.add_conn("b2", "本机独有", "9.9.9.9", "me").await;
+    b.secrets
+        .set(&SecretSlot::SshPassword("b2".into()), "b2-password")
+        .unwrap();
+    b.quick
+        .mutate(|s| s.add("q-b".into(), qc_input("看日志", None)).map(|_| ()))
+        .await
+        .unwrap();
+    b.settings
+        .mutate(|s| {
+            s.font_size = 11;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    (a, b, code)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_with_cloud_strategy_drops_local_only_items_and_uploads_nothing_of_them() {
+    let (mut a, mut b, code) = strategy_pair().await;
+    b.join_code_with(&code, JoinStrategy::Cloud).await.unwrap();
+
+    // 本机独有的连接和快捷指令被丢弃，重复的那台去重；只剩云端的
+    let mut ids = b.conn_ids().await;
+    ids.sort();
+    assert_eq!(ids, ["c1", "c2"], "以云端为准：b2 丢弃，b1 与 c1 是同一台");
+    assert_eq!(b.quick.read().await.commands.len(), 1, "只剩云端的快捷指令");
+    assert_eq!(b.settings.snapshot().await.font_size, 20, "同名字段云端赢");
+    // 被丢掉的连接，它的密码也一并清掉（不留孤儿凭据）
+    assert!(
+        b.secrets
+            .get(&SecretSlot::SshPassword("b2".into()))
+            .unwrap()
+            .is_none(),
+        "丢弃的连接不留密码"
+    );
+    // 同步记录里说清楚丢了什么
+    let dropped = b
+        .history()
+        .iter()
+        .any(|e| e.label.contains("以云端为准") && e.label.contains("已丢弃"));
+    assert!(dropped, "同步记录里要有「以云端为准……已丢弃」");
+
+    // 丢弃的东西不会传给别的设备
+    b.sync().await;
+    a.sync().await;
+    let mut a_ids = a.conn_ids().await;
+    a_ids.sort();
+    assert_eq!(a_ids, ["c1", "c2"], "A 不会收到 B 本机独有的 b2");
+    assert_eq!(a.quick.read().await.commands.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_with_local_strategy_wins_conflicts_and_keeps_cloud_only_items() {
+    let (mut a, mut b, code) = strategy_pair().await;
+    b.join_code_with(&code, JoinStrategy::Local).await.unwrap();
+
+    // 同名字段本机赢；云端独有的 c2 仍然保留；本机独有的也在
+    assert_eq!(b.settings.snapshot().await.font_size, 11, "同名字段本机赢");
+    let mut ids = b.conn_ids().await;
+    ids.sort();
+    assert_eq!(ids, ["b2", "c1", "c2"]);
+    assert_eq!(b.quick.read().await.commands.len(), 2);
+
+    // 本机的值传给了 A
+    b.sync().await;
+    a.sync().await;
+    assert_eq!(
+        a.settings.snapshot().await.font_size,
+        11,
+        "A 跟着变成 B 的值"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn merge_strategy_is_unchanged_cloud_wins_conflicts() {
+    let (_a, mut b, code) = strategy_pair().await;
+    b.join_code_with(&code, JoinStrategy::Merge).await.unwrap();
+    assert_eq!(
+        b.settings.snapshot().await.font_size,
+        20,
+        "合并：同名字段云端赢"
+    );
+    let mut ids = b.conn_ids().await;
+    ids.sort();
+    assert_eq!(ids, ["b2", "c1", "c2"], "合并：本机独有的保留");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn join_with_wrong_recovery_key_fails_cleanly_without_leaking_it() {
     let (mut a, mut b, _cloud) = pair().await;
@@ -807,11 +927,14 @@ async fn join_with_wrong_recovery_key_fails_cleanly_without_leaking_it() {
     let wrong = "abcd-efgh-jkmn-pqrs-tuvw-xyz2-3456-789a";
     let err = b
         .engine
-        .join(JoinSpec::Manual {
-            storage: webdav(),
-            secret: Some(Zeroizing::new(PASSWORD.into())),
-            recovery_key: Zeroizing::new(wrong.into()),
-        })
+        .join(
+            JoinSpec::Manual {
+                storage: webdav(),
+                secret: Some(Zeroizing::new(PASSWORD.into())),
+                recovery_key: Zeroizing::new(wrong.into()),
+            },
+            JoinStrategy::Merge,
+        )
         .await
         .unwrap_err();
     let text = super::engine::plain_error(&err);
@@ -825,11 +948,14 @@ async fn join_with_wrong_recovery_key_fails_cleanly_without_leaking_it() {
     // 格式不对 / 位置上没有同步数据
     let junk = b
         .engine
-        .join(JoinSpec::Manual {
-            storage: webdav(),
-            secret: None,
-            recovery_key: Zeroizing::new("太短".into()),
-        })
+        .join(
+            JoinSpec::Manual {
+                storage: webdav(),
+                secret: None,
+                recovery_key: Zeroizing::new("太短".into()),
+            },
+            JoinStrategy::Merge,
+        )
         .await
         .unwrap_err();
     assert!(super::engine::plain_error(&junk).contains("恢复密钥格式不对"));
@@ -1700,7 +1826,10 @@ async fn actor_uploads_local_changes_after_the_debounce_and_syncs_on_demand() {
         .await
         .unwrap();
     assert!(mgr_a.status().enabled);
-    mgr_b.join_code(created.sync_code.clone()).await.unwrap();
+    mgr_b
+        .join_code(created.sync_code.clone(), JoinStrategy::Merge)
+        .await
+        .unwrap();
     assert!(mgr_b.status().enabled);
 
     // A 改设置：不调用任何同步命令，防抖到期后自动捕获并上传
@@ -1937,7 +2066,10 @@ async fn device_list_reports_the_tiers_written_in_the_file_headers() {
     assert_eq!(other.tiers, crate::sync::store::TierSwitches::default());
 
     // A 打开对话档之后，它写的段里就带上了 tiers；B 读到后设备列表跟上
-    a.engine.enable_tier("conversation", true).await.unwrap();
+    a.engine
+        .enable_tier("conversation", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.edit_conn("c1", |c| c.name = "开了对话档之后".into())
         .await;
     a.sync().await;
@@ -1959,11 +2091,22 @@ async fn tiers_can_be_switched_and_a_closed_tier_never_touches_the_network() {
     a.sync().await;
 
     // 未知档位 / 关配置档都拒绝
-    assert!(a.engine.enable_tier("nope", true).await.is_err());
-    assert!(a.engine.enable_tier("config", false).await.is_err());
+    assert!(a
+        .engine
+        .enable_tier("nope", true, JoinStrategy::Merge)
+        .await
+        .is_err());
+    assert!(a
+        .engine
+        .enable_tier("config", false, JoinStrategy::Merge)
+        .await
+        .is_err());
 
     // 对话档：开 —— 没有驱动（T2 之前）时什么都不写，但开关状态与 applied 标记要对
-    a.engine.enable_tier("conversation", true).await.unwrap();
+    a.engine
+        .enable_tier("conversation", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     assert!(a.status().tiers.conversation);
     assert!(a.engine.tier_enabled(crate::data::SyncTier::Conversation));
     let before = cloud.paths();
@@ -1971,7 +2114,10 @@ async fn tiers_can_be_switched_and_a_closed_tier_never_touches_the_network() {
     assert_eq!(cloud.paths(), before, "没有驱动时不该产生任何远端写入");
 
     // 关 —— 不删远端、不删本机数据
-    a.engine.enable_tier("conversation", false).await.unwrap();
+    a.engine
+        .enable_tier("conversation", false, JoinStrategy::Merge)
+        .await
+        .unwrap();
     assert!(!a.status().tiers.conversation);
     assert_eq!(cloud.paths(), before);
     assert_eq!(a.conn_ids().await.len(), 1);
@@ -2065,14 +2211,20 @@ async fn secrets_sync_between_two_devices_and_land_in_the_keychain() {
     // 用固定槽位（两台设备都「认识」它）。带参数的槽位（渠道 / 连接）要先在对方的
     // 配置里存在才认——那是 `from_account` 的 catalog 决定的，单测里另有覆盖。
     // A 打开机密档并写一个 Key
-    a.engine.enable_tier("secret", true).await.unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.secrets
         .set(&SecretSlot::WebSearchApiKey, A_SECRET)
         .unwrap();
     a.sync().await;
 
     // B 打开机密档并同步
-    b.engine.enable_tier("secret", true).await.unwrap();
+    b.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     b.sync().await;
     assert_eq!(
         b.secrets
@@ -2097,12 +2249,73 @@ async fn secrets_sync_between_two_devices_and_land_in_the_keychain() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn enabling_secret_tier_with_cloud_strategy_keeps_local_keys_but_does_not_upload_them() {
+    let (mut a, mut b, _cloud) = pair().await;
+    a.rebuild_engine_with_secrets();
+    b.rebuild_engine_with_secrets();
+    a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
+    let (_rk, code) = a.create().await;
+    b.join_code(&code).await.unwrap();
+    a.sync().await;
+
+    // B 本机原来就有一个 Key；A 没有
+    b.secrets
+        .set(&SecretSlot::WebSearchApiKey, "b-local-key")
+        .unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
+    a.sync().await;
+
+    // B 以云端为准打开机密档：本机的 Key 留着，但不传给 A
+    b.engine
+        .enable_tier("secret", true, JoinStrategy::Cloud)
+        .await
+        .unwrap();
+    b.sync().await;
+    a.sync().await;
+    assert_eq!(
+        b.secrets
+            .get(&SecretSlot::WebSearchApiKey)
+            .unwrap()
+            .as_deref(),
+        Some("b-local-key"),
+        "本机已有的 Key 不会被删"
+    );
+    assert!(
+        a.secrets
+            .get(&SecretSlot::WebSearchApiKey)
+            .unwrap()
+            .is_none(),
+        "以云端为准时本机已有的 Key 不上传"
+    );
+
+    // 之后 B 自己改了它，才算新改动、才会同步
+    b.secrets
+        .set(&SecretSlot::WebSearchApiKey, "b-new-key")
+        .unwrap();
+    b.sync().await;
+    a.sync().await;
+    assert_eq!(
+        a.secrets
+            .get(&SecretSlot::WebSearchApiKey)
+            .unwrap()
+            .as_deref(),
+        Some("b-new-key")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn secrets_never_land_in_plaintext_on_disk() {
     let (mut a, _b, _cloud) = pair().await;
     a.rebuild_engine_with_secrets();
     a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
     a.create().await;
-    a.engine.enable_tier("secret", true).await.unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.secrets
         .set(&SecretSlot::WebSearchApiKey, A_SECRET)
         .unwrap();
@@ -2144,7 +2357,10 @@ async fn closing_the_secret_tier_stops_uploading() {
     let (mut a, _b, cloud) = pair().await;
     a.rebuild_engine_with_secrets();
     a.create().await;
-    a.engine.enable_tier("secret", true).await.unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.secrets.set(&SecretSlot::WebSearchApiKey, "k1").unwrap();
     a.sync().await;
 
@@ -2153,7 +2369,10 @@ async fn closing_the_secret_tier_stops_uploading() {
     assert!(before > 0, "打开机密档并改 Key 之后应该已经传上去过");
 
     // 关掉机密档后再改 Key：不应该再产生 sec 段（段数必须保持不变）
-    a.engine.enable_tier("secret", false).await.unwrap();
+    a.engine
+        .enable_tier("secret", false, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.secrets.set(&SecretSlot::WebSearchApiKey, "k2").unwrap();
     a.sync().await;
     a.sync().await;
@@ -2173,8 +2392,14 @@ async fn private_keys_sync_and_survive_a_restart() {
     b.rebuild_engine_with_secrets();
     let (_rk, code) = a.create().await;
     b.join_code(&code).await.unwrap();
-    a.engine.enable_tier("secret", true).await.unwrap();
-    b.engine.enable_tier("secret", true).await.unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
+    b.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.sync().await;
     b.sync().await;
 
@@ -2224,8 +2449,14 @@ async fn synced_private_keys_never_land_in_plaintext_on_disk() {
     b.rebuild_engine_with_secrets();
     let (_rk, code) = a.create().await;
     b.join_code(&code).await.unwrap();
-    a.engine.enable_tier("secret", true).await.unwrap();
-    b.engine.enable_tier("secret", true).await.unwrap();
+    a.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
+    b.engine
+        .enable_tier("secret", true, JoinStrategy::Merge)
+        .await
+        .unwrap();
     a.sync().await;
 
     let pem = crate::ssh::key_store::tests_support::sample_key(None);
@@ -2652,7 +2883,7 @@ async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
 
     // 关掉 B 的对话档
     b.engine
-        .enable_tier("conversation", false)
+        .enable_tier("conversation", false, JoinStrategy::Merge)
         .await
         .expect("关闭对话档");
 
@@ -2826,8 +3057,14 @@ async fn three_devices_with_all_tiers_converge_under_out_of_order_sync() {
     b.join_code(&code).await.unwrap();
     c.join_code(&code).await.unwrap();
     for dev in [&mut a, &mut b, &mut c] {
-        dev.engine.enable_tier("conversation", true).await.unwrap();
-        dev.engine.enable_tier("secret", true).await.unwrap();
+        dev.engine
+            .enable_tier("conversation", true, JoinStrategy::Merge)
+            .await
+            .unwrap();
+        dev.engine
+            .enable_tier("secret", true, JoinStrategy::Merge)
+            .await
+            .unwrap();
     }
     a.sync().await;
     b.sync().await;
@@ -2934,8 +3171,16 @@ async fn three_devices_with_all_tiers_converge_under_out_of_order_sync() {
             .into_iter()
             .map(|m| m.title)
             .collect();
-        assert!(titles.contains(&"A 的偏好".to_string()), "{}: {titles:?}", dev.name);
-        assert!(titles.contains(&"B 的偏好".to_string()), "{}: {titles:?}", dev.name);
+        assert!(
+            titles.contains(&"A 的偏好".to_string()),
+            "{}: {titles:?}",
+            dev.name
+        );
+        assert!(
+            titles.contains(&"B 的偏好".to_string()),
+            "{}: {titles:?}",
+            dev.name
+        );
     }
 
     // 4) 机密：三台都拿到同一个 Key；私钥三台都有且正文一致

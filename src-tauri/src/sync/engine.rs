@@ -47,7 +47,7 @@ use super::streams::{
     StreamDriverContext, StreamDriverFactory, StreamFileKind, StreamProgress, StreamSnapshotLayout,
 };
 use super::types::{
-    HeldSummary, StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus,
+    HeldSummary, JoinStrategy, StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus,
 };
 use crate::config::connections::ConnectionStore;
 use crate::config::keychain::SecretSlot;
@@ -135,8 +135,8 @@ pub enum ApplyMode {
     Normal,
     /// 配置损坏恢复：不捕获（捕获到的只是「全变成默认值」），直接用镜像整份恢复。
     Restore,
-    /// 加入同步：本机数据以 `Hlc::zero_for` 并入镜像（云端赢），再整份落地。
-    Join,
+    /// 加入同步：本机数据按 [`JoinStrategy`] 并入镜像（默认以 `Hlc::zero_for` 并入、云端赢），再整份落地。
+    Join(JoinStrategy),
 }
 
 pub enum JoinSpec {
@@ -1222,9 +1222,15 @@ impl SyncEngine {
 
     /// 打开 / 关闭某一档。
     ///
-    /// 打开：先把本机已有数据整份导出并上传（相当于「加入这条流」），再跑一轮完整同步追上别人的进度。
+    /// 打开：先把本机已有数据整份导出并上传（相当于「加入这条流」；`strategy` 为 `Cloud` 时不上传
+    /// 本机已有内容，也不删它），再跑一轮完整同步追上别人的进度。
     /// 关闭：**不删**远端文件、不删本机数据，只是之后不再上传 / 拉取（关着的流在捕获阶段就跳过）。
-    pub async fn enable_tier(&mut self, tier: &str, enabled: bool) -> Result<(), AppError> {
+    pub async fn enable_tier(
+        &mut self,
+        tier: &str,
+        enabled: bool,
+        strategy: JoinStrategy,
+    ) -> Result<(), AppError> {
         if !self.ledger.enabled() {
             return Err(AppError::Other("还没有开启同步。".into()));
         }
@@ -1272,7 +1278,7 @@ impl SyncEngine {
         // 本机已有数据整份导出并上传（相当于「加入这条流」）。没有驱动（T2 / T6 之前）
         // 时什么都不做：开关照样记下来，等驱动接上后下一轮开始走这条流。
         if let Some(driver) = self.drivers.get_mut(&name) {
-            let segments = driver.export_full().await?;
+            let segments = driver.export_full_for_join(strategy).await?;
             self.pending_segments.insert(name, segments);
             self.upload_stream(name, &backend, &dk).await?;
         }
@@ -1500,7 +1506,7 @@ impl SyncEngine {
     }
 
     /// 加入已有同步。
-    pub async fn join(&mut self, spec: JoinSpec) -> Result<(), AppError> {
+    pub async fn join(&mut self, spec: JoinSpec, strategy: JoinStrategy) -> Result<(), AppError> {
         if self.ledger.enabled() {
             return Err(AppError::Other("同步已经开启了。".into()));
         }
@@ -1542,7 +1548,7 @@ impl SyncEngine {
             }
         };
 
-        let result = self.join_inner(storage, secret, rk).await;
+        let result = self.join_inner(storage, secret, rk, strategy).await;
         if result.is_err() {
             self.rollback_bundle(installed).await;
         }
@@ -1554,6 +1560,7 @@ impl SyncEngine {
         storage: StorageConfig,
         secret: Option<Zeroizing<String>>,
         rk: RecoveryKey,
+        strategy: JoinStrategy,
     ) -> Result<(), AppError> {
         let backend = self
             .deps
@@ -1583,7 +1590,7 @@ impl SyncEngine {
         self.ledger.st.storage = Some(storage.clone());
         self.ledger.st.last_app_version = self.deps.app_version.clone();
 
-        let outcome = self.join_pull_and_merge(&backend, &dk).await;
+        let outcome = self.join_pull_and_merge(&backend, &dk, strategy).await;
         let outcome = match outcome {
             Ok(()) => self.finish_join(&storage, secret.as_deref().map(|s| s.as_str()), &dk, &rk),
             Err(e) => Err(e),
@@ -1616,6 +1623,7 @@ impl SyncEngine {
         &mut self,
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
+        strategy: JoinStrategy,
     ) -> Result<(), AppError> {
         let report = {
             let mut driver = self.config_driver(Some(dk.clone()));
@@ -1638,7 +1646,9 @@ impl SyncEngine {
         for adapter in ordered {
             let adapter = adapter.clone();
             let mut driver = self.config_driver(Some(dk.clone()));
-            driver.merge_into_doc(&adapter, ApplyMode::Join).await?;
+            driver
+                .merge_into_doc(&adapter, ApplyMode::Join(strategy))
+                .await?;
         }
         // 加入同步时连接去重产生的别名要**落盘**：以后任何一次上传（对话、记忆、凭据）
         // 和在其它设备上落地时都要按它换算。

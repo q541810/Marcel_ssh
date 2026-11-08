@@ -36,6 +36,7 @@ import type {
   ApprovalOverview,
   AgentConversation,
   OrphanConversationGroup,
+  JoinStrategy,
   StoredMessage,
   UserInputMetadata,
   ConversationSearchResult,
@@ -1840,16 +1841,20 @@ export async function syncCreate(
   return invoke<SyncCreateResult>("sync_create", { storage, secret });
 }
 
-export async function syncJoin(syncCode: string): Promise<void> {
-  return invoke("sync_join", { syncCode });
+export async function syncJoin(
+  syncCode: string,
+  strategy: JoinStrategy = "merge",
+): Promise<void> {
+  return invoke("sync_join", { syncCode, strategy });
 }
 
 export async function syncJoinManual(
   storage: SyncStorageConfig,
   secret: string | null,
   recoveryKey: string,
+  strategy: JoinStrategy = "merge",
 ): Promise<void> {
-  return invoke("sync_join_manual", { storage, secret, recoveryKey });
+  return invoke("sync_join_manual", { storage, secret, recoveryKey, strategy });
 }
 
 export async function syncNow(): Promise<void> {
@@ -1883,8 +1888,12 @@ export async function syncUndo(entryId: string): Promise<void> {
 
 /** `accept=true` 放行大量删除；`false` 撤销本机删除（从云端镜像写回）。 */
 /** 打开 / 关闭某一档（`"conversation"` / `"secret"`）。配置档恒为开。 */
-export async function syncSetTier(tier: string, enabled: boolean): Promise<void> {
-  return invoke("sync_set_tier", { tier, enabled });
+export async function syncSetTier(
+  tier: string,
+  enabled: boolean,
+  strategy: JoinStrategy = "merge",
+): Promise<void> {
+  return invoke("sync_set_tier", { tier, enabled, strategy });
 }
 
 /** 某一档的规模估算（只有数量与名称）。 */

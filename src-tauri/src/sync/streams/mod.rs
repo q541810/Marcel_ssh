@@ -29,7 +29,7 @@ use super::core::crypto::DataKey;
 use super::core::format::{self, FormatError};
 use super::rows::AliasMap;
 use super::storage::{RemoteEntry, StorageError};
-use super::types::HeldSummary;
+use super::types::{HeldSummary, JoinStrategy};
 use crate::error::AppError;
 
 pub mod config;
@@ -144,6 +144,20 @@ pub trait StreamDriver: Send + Sync {
 
     /// 全量导出（首次开启该档 / 服务端还没有本机数据时）：返回若干明文段。
     async fn export_full(&mut self) -> Result<Vec<Vec<u8>>, AppError>;
+
+    /// 首次打开该档时按 [`JoinStrategy`] 导出本机已有数据。
+    ///
+    /// 默认：`Cloud`（以云端为准）不上传本机已有内容、也不删它——本机内容原样留着，只是不参与同步；
+    /// 其余走 [`Self::export_full`]。行同步的两条流（对话与记忆）直接用这个默认实现。
+    async fn export_full_for_join(
+        &mut self,
+        strategy: JoinStrategy,
+    ) -> Result<Vec<Vec<u8>>, AppError> {
+        match strategy {
+            JoinStrategy::Cloud => Ok(Vec::new()),
+            _ => self.export_full().await,
+        }
+    }
 
     /// 落地一个远端增量段（明文 JSON）。只更新这条流的镜像 / 缓存；真正写进本机数据的时机
     /// 由 [`Self::land`] 统一决定（配置流要等所有设备读完再一次性对齐，行为与一期一致）。

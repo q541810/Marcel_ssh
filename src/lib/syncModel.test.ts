@@ -14,6 +14,8 @@ import {
   isJianguoyunUrl,
   isPlausibleRecoveryKey,
   isPlausibleSyncCode,
+  JOIN_STRATEGY_OPTIONS,
+  joinStrategyNote,
   needsAttention,
   normalizeRecoveryKey,
   wizardReducer,
@@ -353,5 +355,35 @@ describe('向导状态机', () => {
       { type: 'reset', mode: 'join' },
     );
     expect(state).toEqual(initialWizardState('join'));
+  });
+});
+
+describe('加入时的对账方式', () => {
+  it('默认「合并」，三个选项齐全', () => {
+    expect(initialWizardState('join').strategy).toBe('merge');
+    expect(JOIN_STRATEGY_OPTIONS.map((o) => o.value)).toEqual(['merge', 'cloud', 'local']);
+  });
+
+  it('reducer 记下选择，并清掉上一次提交的失败提示', () => {
+    const failed = wizardReducer(initialWizardState('join'), { type: 'submitFail', message: '错了' });
+    const next = wizardReducer(failed, { type: 'setStrategy', strategy: 'cloud' });
+    expect(next.strategy).toBe('cloud');
+    expect(next.submit).toEqual({ status: 'idle', message: null });
+  });
+
+  it('「以云端为准」的说明带上本机服务器数，并提醒会丢弃、密码一并清掉', () => {
+    const note = joinStrategyNote('cloud', 3);
+    expect(note.tone).toBe('warn');
+    expect(note.text).toContain('现有 3 台');
+    expect(note.text).toContain('丢弃');
+    expect(note.text).toContain('密码');
+    expect(joinStrategyNote('cloud', 0).text).not.toContain('现有');
+  });
+
+  it('「以本机为准」提醒新设备别选；「合并」是中性说明', () => {
+    expect(joinStrategyNote('local', 0)).toMatchObject({ tone: 'warn' });
+    expect(joinStrategyNote('local', 0).text).toContain('刚装的新设备');
+    expect(joinStrategyNote('merge', 0)).toMatchObject({ tone: 'info' });
+    expect(joinStrategyNote('merge', 0).text).toContain('以云端为准');
   });
 });

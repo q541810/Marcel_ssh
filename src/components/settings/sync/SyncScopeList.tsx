@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, MessageSquareText } from 'lucide-react';
+import { KeyRound, MessageSquareText, SlidersHorizontal } from 'lucide-react';
 import Toggle from '@/components/ui/Toggle';
 import { useSyncStore } from '@/stores/syncStore';
 import { getErrorMessage } from '@/lib/errors';
 import { formatSize } from '@/lib/sftp-helpers';
-import type { SyncStatus, TierEstimate } from '@/lib/types';
-import { Callout, SyncButton, SyncDialog, type SyncVariant } from './syncUi';
+import type { JoinStrategy, SyncStatus, TierEstimate } from '@/lib/types';
+import { Callout, SyncButton, SyncCheckbox, SyncDialog, type SyncVariant } from './syncUi';
 
 /** 三档的名字与说明。顺序固定：配置 → 对话 → 机密。 */
 const TIERS = [
@@ -78,6 +78,37 @@ function EstimateBox({
 }
 
 /**
+ * 打开对话 / 机密档时「这台设备上已有的内容要不要也上传」。默认勾选（= 合并）；
+ * 不勾 = 以云端为准：本机已有的内容**不会被删**，只是不传上去，云端同名的内容会覆盖本机的。
+ */
+function UploadLocalChoice({
+  variant,
+  what,
+  checked,
+  onChange,
+  disabled,
+}: {
+  variant: SyncVariant;
+  what: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <SyncCheckbox variant={variant} checked={checked} onChange={onChange} disabled={disabled}>
+        把这台设备上已有的{what}也上传
+      </SyncCheckbox>
+      {!checked && (
+        <p className="pl-1 text-meta leading-relaxed text-fg-tertiary">
+          以云端为准：这台设备已有的{what}不会被删除，只是不上传；云端有同名内容时会用云端的覆盖本机。
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * 「打开 / 关闭某一档之前先讲清楚」的说明弹层：桌面居中 `Modal`、手机底部 `MobileSheet`
  * （都走 `SyncDialog`，与向导、停止同步同一个壳）。
  */
@@ -88,6 +119,8 @@ function TierExplainDialog({
   estimateError,
   estimating,
   busy,
+  uploadLocal,
+  onUploadLocalChange,
   onRetry,
   onClose,
   onConfirm,
@@ -98,6 +131,9 @@ function TierExplainDialog({
   estimateError: string | null;
   estimating: boolean;
   busy: boolean;
+  /** 打开时是否把这台设备上已有的内容也传上去（不勾 = 以云端为准）。 */
+  uploadLocal: boolean;
+  onUploadLocalChange: (value: boolean) => void;
   onRetry: () => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -169,6 +205,13 @@ function TierExplainDialog({
               </>
             )}
           </EstimateBox>
+          <UploadLocalChoice
+            variant={variant}
+            what="对话与记忆"
+            checked={uploadLocal}
+            onChange={onUploadLocalChange}
+            disabled={busy}
+          />
         </>
       )}
 
@@ -207,6 +250,13 @@ function TierExplainDialog({
             持有恢复密钥或同步码的人都能解开这些机密，所以它们是同一把钥匙下的东西：
             同步码 / 恢复密钥丢了，这些机密也就跟着丢了。
           </Callout>
+          <UploadLocalChoice
+            variant={variant}
+            what="机密"
+            checked={uploadLocal}
+            onChange={onUploadLocalChange}
+            disabled={busy}
+          />
         </>
       )}
 
@@ -240,6 +290,8 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
   const tierEstimate = useSyncStore((s) => s.tierEstimate);
 
   const [dialog, setDialog] = useState<DialogKind | null>(null);
+  /** 打开某档时是否连本机已有内容一起上传；每次打开说明弹层都回到默认（勾选）。 */
+  const [uploadLocal, setUploadLocal] = useState(true);
   const [estimate, setEstimate] = useState<TierEstimate | null>(null);
   const [estimateError, setEstimateError] = useState<string | null>(null);
   const [estimating, setEstimating] = useState(false);
@@ -266,6 +318,7 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
   // 每次打开说明弹层都重新估一次：用户可能刚删过对话、刚加过 Key。
   useEffect(() => {
     if (dialog === 'conversation' || dialog === 'secret') {
+      setUploadLocal(true);
       setEstimate(null);
       setEstimateError(null);
       void loadEstimate(dialog);
@@ -278,11 +331,15 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
     return () => clearTimeout(timer);
   }, [conversationOffNotice]);
 
-  const applyTier = async (tier: 'conversation' | 'secret', enabled: boolean) => {
+  const applyTier = async (
+    tier: 'conversation' | 'secret',
+    enabled: boolean,
+    strategy: JoinStrategy = 'merge',
+  ) => {
     setBusyTier(tier);
     setError(null);
     try {
-      await setTier(tier, enabled);
+      await setTier(tier, enabled, strategy);
       setDialog(null);
       if (tier === 'conversation' && !enabled) setConversationOffNotice(true);
     } catch (err) {
@@ -330,6 +387,9 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
               <div className={`flex items-center justify-between gap-3 ${checked ? '' : 'opacity-70'}`}>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-body text-fg">
+                    {item.key === 'config' && (
+                      <SlidersHorizontal className="h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" aria-hidden />
+                    )}
                     {item.key === 'conversation' && (
                       <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 text-fg-tertiary" aria-hidden />
                     )}
@@ -392,6 +452,8 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
           estimateError={estimateError}
           estimating={estimating}
           busy={busyTier !== null}
+          uploadLocal={uploadLocal}
+          onUploadLocalChange={setUploadLocal}
           onRetry={() => {
             if (dialog === 'conversation' || dialog === 'secret') void loadEstimate(dialog);
           }}
@@ -400,8 +462,9 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
           }}
           onConfirm={() => {
             if (dialog === 'secret-off') void applyTier('secret', false);
-            else if (dialog === 'conversation') void applyTier('conversation', true);
-            else void applyTier('secret', true);
+            else if (dialog === 'conversation')
+              void applyTier('conversation', true, uploadLocal ? 'merge' : 'cloud');
+            else void applyTier('secret', true, uploadLocal ? 'merge' : 'cloud');
           }}
         />
       )}

@@ -6,6 +6,22 @@ use super::storage::StorageConfig;
 use super::store::TierSwitches;
 use super::streams::StreamProgress;
 
+/// 加入同步 / 首次打开某一档时，本机已有的内容怎么和云端对账。
+///
+/// 只影响**这一刻**：对账完成后所有设备都是平等的，之后按字段「后写者赢」。
+/// - `Merge`（默认）：两边都留着，本机独有的上传；同一个字段两边不一样时**云端赢**。
+/// - `Cloud`：以云端为准。配置档里本机独有的条目（连接、快捷指令、skill……）会被丢弃；
+///   对话与机密档**不删**本机已有内容，只是不把它们传上去。
+/// - `Local`：以本机为准。同一个字段两边不一样时**本机赢**，云端独有的条目仍然保留。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JoinStrategy {
+    #[default]
+    Merge,
+    Cloud,
+    Local,
+}
+
 /// 同步状态机的对外形态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

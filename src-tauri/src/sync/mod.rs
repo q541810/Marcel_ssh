@@ -49,6 +49,6 @@ mod tests;
 pub use manager::{SyncManager, SyncWiring};
 pub use streams::StreamProgress;
 pub use types::{
-    SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice, SyncHistoryEntry,
-    SyncState, SyncStatus, TierEstimate,
+    JoinStrategy, SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice,
+    SyncHistoryEntry, SyncState, SyncStatus, TierEstimate,
 };

@@ -1344,6 +1344,14 @@ export interface QuestionAnswer {
 
 // -- stream event --
 
+/**
+ * 加入同步 / 首次打开某一档时，本机已有内容怎么和云端对账（与后端 `JoinStrategy` 一一对应）。
+ * - `merge`：两边都留着，同一项不一样时云端赢；
+ * - `cloud`：以云端为准，配置档里本机独有的会丢弃（对话与机密档不删本机内容，只是不上传）；
+ * - `local`：同一项不一样时本机赢，云端独有的仍保留。
+ */
+export type JoinStrategy = 'merge' | 'cloud' | 'local';
+
 // Conversation types
 
 /**

@@ -36,8 +36,8 @@ use super::sources::{build_adapters, SourceStores};
 use super::storage::StorageConfig;
 use super::store::LedgerFiles;
 use super::types::{
-    SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice, SyncHistoryEntry,
-    SyncStatus, TierEstimate,
+    JoinStrategy, SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice,
+    SyncHistoryEntry, SyncStatus, TierEstimate,
 };
 use crate::config::keychain::SecretSlot;
 use crate::data::{DataChange, DataChangeBus, DataSourceId};
@@ -209,6 +209,7 @@ enum Cmd {
     },
     Join {
         spec: JoinSpec,
+        strategy: JoinStrategy,
         reply: Reply<()>,
     },
     SetDeviceName {
@@ -228,6 +229,7 @@ enum Cmd {
     SetTier {
         tier: String,
         enabled: bool,
+        strategy: JoinStrategy,
         reply: Reply<()>,
     },
     Disable {
@@ -568,9 +570,14 @@ impl SyncManager {
         .await
     }
 
-    pub async fn join_code(&self, code: String) -> Result<(), AppError> {
+    pub async fn join_code(&self, code: String, strategy: JoinStrategy) -> Result<(), AppError> {
         let spec = JoinSpec::Code(Zeroizing::new(code));
-        self.request(|reply| Cmd::Join { spec, reply }).await
+        self.request(|reply| Cmd::Join {
+            spec,
+            strategy,
+            reply,
+        })
+        .await
     }
 
     pub async fn join_manual(
@@ -578,13 +585,19 @@ impl SyncManager {
         storage: StorageConfig,
         secret: Option<String>,
         recovery_key: String,
+        strategy: JoinStrategy,
     ) -> Result<(), AppError> {
         let spec = JoinSpec::Manual {
             storage,
             secret: secret.map(Zeroizing::new),
             recovery_key: Zeroizing::new(recovery_key),
         };
-        self.request(|reply| Cmd::Join { spec, reply }).await
+        self.request(|reply| Cmd::Join {
+            spec,
+            strategy,
+            reply,
+        })
+        .await
     }
 
     pub async fn set_device_name(&self, name: String) -> Result<(), AppError> {
@@ -598,10 +611,16 @@ impl SyncManager {
     }
 
     /// 打开 / 关闭某一档（`"conversation"` / `"secret"`）。
-    pub async fn set_tier(&self, tier: String, enabled: bool) -> Result<(), AppError> {
+    pub async fn set_tier(
+        &self,
+        tier: String,
+        enabled: bool,
+        strategy: JoinStrategy,
+    ) -> Result<(), AppError> {
         self.request(|reply| Cmd::SetTier {
             tier,
             enabled,
+            strategy,
             reply,
         })
         .await
@@ -882,8 +901,12 @@ async fn handle_cmd(engine: &mut SyncEngine, sched: &mut Scheduler, cmd: Cmd) {
             sched.reset(engine.enabled(), Instant::now());
             let _ = reply.send(result);
         }
-        Cmd::Join { spec, reply } => {
-            let result = engine.join(spec).await;
+        Cmd::Join {
+            spec,
+            strategy,
+            reply,
+        } => {
+            let result = engine.join(spec, strategy).await;
             sched.reset(engine.enabled(), Instant::now());
             if result.is_ok() {
                 // 本机独有的数据（ZERO 并入的）在队列里，马上传上去；失败了由退避重试，不影响「加入成功」
@@ -903,9 +926,10 @@ async fn handle_cmd(engine: &mut SyncEngine, sched: &mut Scheduler, cmd: Cmd) {
         Cmd::SetTier {
             tier,
             enabled,
+            strategy,
             reply,
         } => {
-            let result = engine.enable_tier(&tier, enabled).await;
+            let result = engine.enable_tier(&tier, enabled, strategy).await;
             // 打开某一档会顺带跑一轮完整同步：按「刚跑完一轮」记时（成功重排周期、失败退避）。
             // 关闭不跑同步，不必动调度器。
             if enabled {

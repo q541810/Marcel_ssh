@@ -4,6 +4,7 @@ import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import { getErrorMessage } from '@/lib/errors';
 import { handleSyncDataApplied } from '@/lib/syncRefresh';
 import type {
+  JoinStrategy,
   SyncCreateResult,
   SyncDataAppliedPayload,
   SyncDevice,
@@ -59,11 +60,13 @@ interface SyncStoreState {
 
   testStorage: (storage: SyncStorageConfig, secret: string | null) => Promise<void>;
   create: (storage: SyncStorageConfig, secret: string | null) => Promise<SyncCreateResult>;
-  join: (syncCode: string) => Promise<void>;
+  /** `strategy`：本机已有内容怎么和云端对账，缺省 = 合并（云端赢）。 */
+  join: (syncCode: string, strategy?: JoinStrategy) => Promise<void>;
   joinManual: (
     storage: SyncStorageConfig,
     secret: string | null,
     recoveryKey: string,
+    strategy?: JoinStrategy,
   ) => Promise<void>;
 
   /** 机密：直接返回，不进 store。 */
@@ -72,7 +75,7 @@ interface SyncStoreState {
 
   setDeviceName: (name: string) => Promise<void>;
   /** 打开 / 关闭某一档（`"conversation"` / `"secret"`）。成功后刷新状态。 */
-  setTier: (tier: string, enabled: boolean) => Promise<void>;
+  setTier: (tier: string, enabled: boolean, strategy?: JoinStrategy) => Promise<void>;
   /** 某一档的规模估算（只有数量与名称）。 */
   tierEstimate: (tier: string) => Promise<TierEstimate>;
   undo: (entryId: string) => Promise<void>;
@@ -158,15 +161,15 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     return result;
   },
 
-  join: async (syncCode) => {
-    await tauri.syncJoin(syncCode);
+  join: async (syncCode, strategy = 'merge') => {
+    await tauri.syncJoin(syncCode, strategy);
     await get().refreshStatus();
     void get().loadDevices();
     void get().loadHistory();
   },
 
-  joinManual: async (storage, secret, recoveryKey) => {
-    await tauri.syncJoinManual(storage, secret, recoveryKey);
+  joinManual: async (storage, secret, recoveryKey, strategy = 'merge') => {
+    await tauri.syncJoinManual(storage, secret, recoveryKey, strategy);
     await get().refreshStatus();
     void get().loadDevices();
     void get().loadHistory();
@@ -180,8 +183,8 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     await Promise.all([get().refreshStatus(), get().loadDevices()]);
   },
 
-  setTier: async (tier, enabled) => {
-    await tauri.syncSetTier(tier, enabled);
+  setTier: async (tier, enabled, strategy = 'merge') => {
+    await tauri.syncSetTier(tier, enabled, strategy);
     // 打开某一档会先导出本机数据再追进度，状态（tiers / streams）以后端为准。
     await get().refreshStatus();
     void get().loadDevices();

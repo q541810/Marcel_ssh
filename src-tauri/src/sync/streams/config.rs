@@ -9,7 +9,8 @@
 //! 引擎在每一轮里依次调用下面的阶段方法（捕获 / 上传 / 拉取 / 落地 / 压缩）。阶段之间会释放
 //! 借用、去处理别的流，所以状态都放在账本里，驱动本身不攒东西。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -25,7 +26,8 @@ use super::super::core::format::{
 use super::super::core::path::{split_platform_prefix, PrefixKind};
 use super::super::core::FileKind;
 use super::super::core::{
-    affected_vs_doc, apply_to_doc, export_all_at, flatten_scoped, Hlc, Op, OpKind, Path, Seg,
+    affected_vs_doc, apply_to_doc, export_all_at, flatten_scoped, Hlc, IdMapRegistry, Op, OpKind,
+    Path, Platform, ScopeRules, Seg,
 };
 use super::super::docedit;
 use super::super::engine::{plain_error, rfc3339_from_ms, ApplyMode, SharedView, SyncDeps};
@@ -34,6 +36,7 @@ use super::super::join::{reconcile_connections, remap_connection_refs};
 use super::super::ledger::Ledger;
 use super::super::sources::{AdapterUpdate, GuardWarning, SourceAdapter};
 use super::super::store::{Cursor, LedgerFiles, StreamName, StreamState};
+use super::super::types::JoinStrategy;
 use super::{
     StreamApplied, StreamDriver, StreamFileKind, StreamRemote, StreamSnapshot, StreamSnapshotLayout,
 };
@@ -365,7 +368,11 @@ impl<'a> ConfigStreamDriver<'a> {
         let platform = self.deps.platform;
         let wall = self.now_ms();
         let zero = Hlc::zero_for(self.ledger.device_id().to_string());
-        let remap = if mode == ApplyMode::Join {
+        let join_strategy = match mode {
+            ApplyMode::Join(strategy) => Some(strategy),
+            _ => None,
+        };
+        let remap = if join_strategy.is_some() {
             self.join_remap.clone()
         } else {
             BTreeMap::new()
@@ -377,6 +384,8 @@ impl<'a> ConfigStreamDriver<'a> {
             warnings: Vec<GuardWarning>,
             /// 加入同步时本机引用改写的落点（sync 路径 → 改写后的值）。落地之后要再确认一次。
             ref_fixes: Vec<(Path, Value)>,
+            /// 「以云端为准」加入时丢弃的本机独有条目数。
+            dropped: usize,
         }
         let mut scratch = Scratch::default();
 
@@ -393,7 +402,7 @@ impl<'a> ConfigStreamDriver<'a> {
                             ledger.capture_into(key, rules, platform, wall, current)?;
                         }
                         ApplyMode::Restore => {}
-                        ApplyMode::Join => {
+                        ApplyMode::Join(strategy) => {
                             if key == "connections" {
                                 let visible = ledger
                                     .mirrors
@@ -408,18 +417,38 @@ impl<'a> ConfigStreamDriver<'a> {
                                 // 云端（云端赢），落地后要把这些引用改回来，否则留下指向已删连接的悬空引用
                                 scratch.ref_fixes = ref_targets(key, &doc, rules, platform, ledger);
                             }
-                            // 本机已有数据以 ZERO 并入镜像：云端在任何冲突上都赢，本机独有的保留，
-                            // 并且要上传（别的设备也该有这些）
-                            let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
-                            let ops = export_all_at(key, &doc, rules, platform, idmaps, &zero);
-                            if !ops.is_empty() {
-                                let mirror = ledger.mirrors.entry(key.to_string()).or_default();
-                                for op in &ops {
-                                    mirror.merge(op);
+                            if strategy == JoinStrategy::Cloud {
+                                // 以云端为准：本机独有的条目丢弃、不上传；同名字段稍后由云端的值盖掉。
+                                // 引用改写（上面的 ref_fixes）是「本机比云端新」的修正，这里不适用。
+                                scratch.ref_fixes.clear();
+                                let visible = ledger
+                                    .mirrors
+                                    .get(key)
+                                    .map(|m| m.visible())
+                                    .unwrap_or_default();
+                                let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
+                                scratch.dropped =
+                                    prune_local_only(&mut doc, &visible, rules, platform, idmaps);
+                            } else {
+                                // 本机已有数据并入镜像并上传（别的设备也该有这些）：
+                                // 合并 = 以 ZERO 并入，同名字段云端赢、本机独有的保留；
+                                // 以本机为准 = 以当前时钟并入，同名字段本机赢。
+                                let hlc = if strategy == JoinStrategy::Local {
+                                    ledger.clock.now(wall)
+                                } else {
+                                    zero.clone()
+                                };
+                                let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
+                                let ops = export_all_at(key, &doc, rules, platform, idmaps, &hlc);
+                                if !ops.is_empty() {
+                                    let mirror = ledger.mirrors.entry(key.to_string()).or_default();
+                                    for op in &ops {
+                                        mirror.merge(op);
+                                    }
+                                    ledger.dirty.mirrors.insert(key.to_string());
+                                    ledger.outbox.extend(ops);
+                                    ledger.dirty.outbox = true;
                                 }
-                                ledger.dirty.mirrors.insert(key.to_string());
-                                ledger.outbox.extend(ops);
-                                ledger.dirty.outbox = true;
                             }
                         }
                     }
@@ -449,7 +478,7 @@ impl<'a> ConfigStreamDriver<'a> {
                     // 「云端也有这个字段」会输给云端（云端赢），一条指向已被去重掉的连接的引用就被
                     // 云端的旧值盖回去了（典型：云端的多机清单是空的）。悬空引用是错的，所以这里把
                     // 它按当前时钟写回来——这是本机的修正，不是要让云端旧值赢。
-                    if mode == ApplyMode::Join && !scratch.ref_fixes.is_empty() {
+                    if join_strategy.is_some() && !scratch.ref_fixes.is_empty() {
                         let mut ops = Vec::new();
                         for (path, value) in &scratch.ref_fixes {
                             let dpath = match split_platform_prefix(path, platform) {
@@ -515,7 +544,7 @@ impl<'a> ConfigStreamDriver<'a> {
                 at: &at,
             };
             let changes = change_records(&ctx, &before, &json);
-            if mode == ApplyMode::Join {
+            if join_strategy.is_some() {
                 if !changes.is_empty() {
                     records.push(HistoryRecord::summary(
                         key,
@@ -524,6 +553,18 @@ impl<'a> ConfigStreamDriver<'a> {
                         &format!(
                             "加入同步：把云端的 {} 处{}合并到了本机",
                             changes.len(),
+                            source_label(key)
+                        ),
+                    ));
+                }
+                if scratch.dropped > 0 {
+                    records.push(HistoryRecord::summary(
+                        key,
+                        &at,
+                        "本机",
+                        &format!(
+                            "以云端为准加入同步：本机独有的 {} 项{}已丢弃",
+                            scratch.dropped,
                             source_label(key)
                         ),
                     ));
@@ -780,6 +821,52 @@ impl<'a> StreamDriver for ConfigStreamDriver<'a> {
             total_items: mirrors.len(),
         }))
     }
+}
+
+/// 「以云端为准」加入：把文档里云端没有的 id 元素（连接、快捷指令、skill……含嵌套的，如渠道下的模型）
+/// 整条删掉，返回删了几条。
+///
+/// 云端这个源没有任何可见内容（云端从没上传过它）时什么都不动：没有可跟随的东西，就不该清空本机。
+/// 只处理共享叶子（不带平台前缀）里的元素；平台分开存的内容不在「跟随云端」的范围里。
+fn prune_local_only(
+    doc: &mut Value,
+    visible: &BTreeMap<Path, Value>,
+    rules: &ScopeRules,
+    platform: Platform,
+    idmaps: &mut IdMapRegistry,
+) -> usize {
+    if visible.is_empty() {
+        return 0;
+    }
+    let flat = flatten_scoped(doc, rules, platform, idmaps);
+    let mut prefixes: BTreeSet<Path> = BTreeSet::new();
+    for path in flat.keys() {
+        if !matches!(split_platform_prefix(path, platform).0, PrefixKind::None) {
+            continue;
+        }
+        for (i, seg) in path.iter().enumerate() {
+            if matches!(seg, Seg::Id { .. }) {
+                prefixes.insert(path[..=i].to_vec());
+            }
+        }
+    }
+    // 外层先于内层：外层元素整条删了，里面的就不用再看。
+    let mut ordered: Vec<Path> = prefixes.into_iter().collect();
+    ordered.sort_by_key(|p| p.len());
+    let mut removed: Vec<Path> = Vec::new();
+    for prefix in ordered {
+        if removed.iter().any(|r| prefix.starts_with(r)) {
+            continue;
+        }
+        let in_cloud = visible
+            .range::<[Seg], _>((Bound::Included(prefix.as_slice()), Bound::Unbounded))
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(&prefix));
+        if !in_cloud && docedit::remove_element(doc, &prefix) {
+            removed.push(prefix);
+        }
+    }
+    removed.len()
 }
 
 #[cfg(test)]
