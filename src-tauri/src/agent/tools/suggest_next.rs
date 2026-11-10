@@ -144,7 +144,7 @@ impl AgentTool for SuggestNextTool {
                 },
                 "options": {
                     "type": "array",
-                    "description": "2 到 4 个简短选项，每个的 text 都是用户点了就会原样发给你的话，如「好的，帮我推送到生产环境」「不需要」",
+                    "description": "2 到 4 个简短选项，每个的 text 都是用户点了就会原样发给你的话，如「好的，帮我推送到生产环境」。只放要做某件事的选项，不要放「不需要」「我再改改」这类拒绝选项（点了只会白发一条消息）",
                     "items": {
                         "type": "object",
                         "properties": {

@@ -37,9 +37,15 @@ export default function ContextMenu({ x, y, anchor = 'below', items, onClose }: 
     };
     window.addEventListener('click', onClose);
     window.addEventListener('keydown', onKeyDown);
+    // 在别处再点一次右键不会产生 click，只会产生 contextmenu；不监听的话旧菜单留着、
+    // 新菜单又开出来，屏幕上就叠了两张。必须挂捕获阶段：很多右键处理器（如文件链接芯片）
+    // 会 stopPropagation，冒泡阶段根本传不到 window。新菜单是在这次事件分发中途才挂上监听的，
+    // 而捕获阶段已经过了，所以不会把自己刚开出来的菜单关掉。
+    window.addEventListener('contextmenu', onClose, true);
     return () => {
       window.removeEventListener('click', onClose);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('contextmenu', onClose, true);
     };
   }, [onClose]);
 

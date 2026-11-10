@@ -2,15 +2,17 @@
 // 需要 jsdom：sessionStore 间接引入终端单例（xterm 在 import 期就取 `self`）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listenMock, agentStartTask, agentDeleteMessageImage } = vi.hoisted(() => ({
+const { listenMock, agentStartTask, agentDeleteMessageImage, agentStopTask } = vi.hoisted(() => ({
   listenMock: vi.fn(),
   agentStartTask: vi.fn(),
   agentDeleteMessageImage: vi.fn(),
+  agentStopTask: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 vi.mock('@/lib/tauri', () => ({
   agentStartTask,
+  agentStopTask,
   agentDeleteMessageImage,
   agentSaveUserMessage: vi.fn().mockResolvedValue(undefined),
   agentSaveMessageImages: vi.fn().mockResolvedValue(['/saved/new.webp']),
@@ -114,6 +116,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listenMock.mockResolvedValue(() => {});
   agentStartTask.mockResolvedValue(undefined);
+  agentStopTask.mockResolvedValue(undefined);
   agentDeleteMessageImage.mockResolvedValue(undefined);
   useAgentQueueStore.setState({ items: {}, paused: {} });
   useTaskStore.setState({ tasks: {}, activeTaskId: null, compacting: {} });
@@ -169,6 +172,26 @@ describe('发送队列：自然结束后自动发', () => {
 });
 
 describe('发送队列：停止 / 出错 / 断连 → 暂停而不是替用户做主', () => {
+  it('停止请求尚未返回就自然完成，也不自动发出下一条消息', async () => {
+    seedRunningTask();
+    queue('排着的');
+    let confirm!: () => void;
+    agentStopTask.mockReturnValueOnce(new Promise<void>((resolve) => { confirm = resolve; }));
+
+    const stopping = useTaskStore.getState().stopTask('task-1');
+    try {
+      useTaskStore.getState().updateTaskStatus('task-1', 'completed');
+      await settle();
+
+      expect(agentStartTask).not.toHaveBeenCalled();
+      expect(useAgentQueueStore.getState().paused[CONV]).toEqual({ kind: 'stopped' });
+      expect(useAgentQueueStore.getState().items[CONV]).toHaveLength(1);
+    } finally {
+      confirm();
+      await stopping;
+    }
+  });
+
   it('用户停止 → 暂停，不自动发；点继续后才发', async () => {
     seedRunningTask();
     queue('排着的');

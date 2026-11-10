@@ -21,6 +21,7 @@ type AgentComposerProps = {
   mode: AgentMode;
   setMode: (mode: AgentMode) => void;
   isRunning: boolean;
+  isStopping: boolean;
   isCompacting: boolean;
   canInteract: boolean;
   /** activeSession?.status —— 占位文案按连接状态降级。 */
@@ -56,6 +57,7 @@ export function AgentComposer({
   mode,
   setMode,
   isRunning,
+  isStopping,
   isCompacting,
   canInteract,
   activeSessionStatus,
@@ -208,6 +210,7 @@ export function AgentComposer({
 
           <SendControlButton
             isRunning={isRunning}
+            isStopping={isStopping}
             isCompacting={isCompacting}
             canQueue={
               hasContent && !attachments.sendBlockedReason && canInteract

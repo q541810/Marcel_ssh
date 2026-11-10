@@ -365,6 +365,20 @@ describe('jobWake（作业跑完自动继续）', () => {
   });
 
   describe('onTurnFinished 的哨兵 guard 按「归属对话」而不是「作业 session」判定', () => {
+    it('用户已请求停止时，早到的终态事件不重新唤醒任务', async () => {
+      bindConversationToSession();
+      const task = seedLocalSubTask(CONV);
+      useTaskStore.setState((state) => ({
+        tasks: { ...state.tasks, [task.id]: { ...task, stopRequested: true } },
+      }));
+
+      onTurnFinished(CONV, task.id);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(jobPendingNotice).not.toHaveBeenCalled();
+      expect(agentStartTask).not.toHaveBeenCalled();
+    });
+
     it('本机子任务收尾、其归属对话绑着活跃会话 → 照样唤醒', async () => {
       // 作业的 session 是哨兵，对话的会话是真的：唤醒资格属于后者。
       bindConversationToSession();

@@ -181,6 +181,7 @@ export interface TaskState {
 }
 
 const currentAssistantMessageId: Map<string, string> = new Map();
+const stopRequests = new Map<string, symbol>();
 
 const DEBUG_67_CHUNK_SIZE = 10;
 
@@ -269,7 +270,7 @@ export async function runDebug67Simulation(
  * 幂等：只处理仍在运行中的任务，已终态的跳过（避免把「子任务已自然完成、
  * 主任务仍在等结果」误标成取消）。
  *
- * 用它收尾的是「前端自己决定的终态」（用户停止 / 会话断连）；后端回灌的
+ * 用它收尾的是「前端自己决定的终态」（本地模拟停止 / 会话断连）；后端回灌的
  * 权威结论不经这里 —— 那是各 `handleXxx` 事件处理器的职责，它们的卡片与
  * 回合语义与本函数不同（completed 不算中断、failed 不是用户中断）。
  *
@@ -301,8 +302,7 @@ export function finalizeTaskLocally(
     convStore.markAbortedToolFlags(task.conversationId);
     cleanupTaskListeners(id);
     convStore.clearAllAssistantFlags(task.conversationId);
-    // 重试提示系统行：handleCancelled 的同款清理，但通道已拆、
-    // Cancelled 事件收不到（stopTask 先收尾后发命令是刻意的），这里补上。
+    // 本地收尾会拆通道，后续 Cancelled 事件未必能收到，重试提示也在这里清理。
     convStore.clearRetryingFlags(task.conversationId);
     convStore.markTailTurnState(task.conversationId, status);
   }
@@ -457,6 +457,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     // 先生成 taskId 并挂载事件 listener，再启动后端任务，消除 startTask 返回前
     // 后端已发出首批事件或终态事件的竞态。
     const taskId = crypto.randomUUID();
+    const debugState = useDebugStore.getState();
     const task: AgentTask = {
       id: taskId,
       sessionId,
@@ -464,6 +465,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       prompt: requestPrompt,
       mode,
       status: "planning",
+      localOnly: debugState.debug67Mode,
       hasPlan: false,
       createdAt: new Date().toISOString(),
     };
@@ -484,7 +486,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       // 新一轮的第一个 `contextUsage` 事件会带着后端算好的累计值覆盖过来。
     }));
 
-    if (useDebugStore.getState().debug67Mode) {
+    if (task.localOnly) {
       // Keep the task visible as running while the local simulator streams.
       // No listeners or backend command are created in this branch.
       set((state) => ({
@@ -493,7 +495,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           [taskId]: { ...state.tasks[taskId], status: "executing" },
         },
       }));
-      const debugState = useDebugStore.getState();
       void runDebug67Simulation(
         taskId,
         conversationId,
@@ -570,27 +571,36 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   stopTask: async (taskId: string) => {
-    // ── 先同步收尾（标记在飞的卡片 + 拆通道 + 落回合状态），**再**发停止命令 ──
-    // 顺序不能反，两条理由都是「晚到的终态事件收不得」：
-    // 1. 后端取消路径也会发终态事件（`StreamEvent::Cancelled`）。它要是抢在拆通道
-    //    之前落地，就会被当成模型自然结束处理：在飞的工具卡片按"没跑完的调用"
-    //    删掉、回合收尾状态写成 completed（→ 回合可折叠 → 过程卡片从界面上消失，
-    //    而模型侧其实仍看得到）。拆通道必须赶在它前面。
-    // 2. 晚到的 `toolResult` 同理收不到，卡片状态只能在这里同步写。
-    //
-    // 两条收尾时机（都要求这里同步标记，理由不同）：
-    // - 走 command_exec 的命令（agent bash）：后端会**立刻**打断 ——
-    //   agent_stop_task → cancel_with_reason(Task) → executor 的 select! 是
-    //   `biased`，取消优先于数据与超时，工具以「命令已取消」返回。
-    // - 其他工具（读文件 / 联网 / 子 agent / 插件…）：无法在飞途中打断，要等它
-    //   返回后循环才在收尾检查点停下。
-    //
-    // 后端也会把同样的中断说明持久化进 LLM 历史，保证对话链完整。
-    // 级联（任务及其全部后代子 agent）与「只动运行中任务」的判定都在
-    // `finalizeTaskLocally` 里 —— 会话断连等路径共用同一份收尾，见其注释。
-    finalizeTaskLocally(taskId, "cancelled");
-    // 本地已收尾，命令失败照旧上抛（界面不会卡在「正在停止」）。
-    await tauri.agentStopTask(taskId);
+    const task = get().tasks[taskId];
+    if (!task || !isTaskBusy(task.status)) return;
+    const request = Symbol();
+    stopRequests.set(taskId, request);
+    set((state) => {
+      const task = state.tasks[taskId];
+      if (!task || !isTaskBusy(task.status)) return state;
+      return { tasks: { ...state.tasks, [taskId]: { ...task, stopRequested: true, stopping: true } } };
+    });
+    try {
+      if (task.localOnly) {
+        finalizeTaskLocally(taskId, "cancelled");
+      } else {
+        // 命令返回只说明取消请求已记录，工具仍可能在收尾。
+        // 保留 busy、卡片和监听，等 cancelled / done / error 事件确认退出。
+        await tauri.agentStopTask(taskId);
+      }
+    } catch (error) {
+      // 重试可以与旧请求交叠；旧请求的失败不能覆盖新请求的等待状态。
+      if (stopRequests.get(taskId) !== request) return;
+      set((state) => {
+        const task = state.tasks[taskId];
+        if (!task || !isTaskBusy(task.status)) return state;
+        return { tasks: { ...state.tasks, [taskId]: { ...task, stopping: false } } };
+      });
+      // 停止意图保留到这次任务结束，队列与自动继续不自行恢复。
+      throw error;
+    } finally {
+      if (stopRequests.get(taskId) === request) stopRequests.delete(taskId);
+    }
   },
 
 

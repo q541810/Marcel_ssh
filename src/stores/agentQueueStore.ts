@@ -57,7 +57,7 @@ export interface QueuedMessage {
 export function queuePauseText(reason: QueuePauseReason): string {
   switch (reason.kind) {
     case "stopped":
-      return "任务已停止，排队的消息已暂停";
+      return "排队的消息已暂停";
     case "failed":
       return "任务异常结束，排队的消息已暂停";
     case "disconnected":
@@ -264,9 +264,9 @@ export async function drainQueue(conversationId: string): Promise<void> {
 /**
  * 挂上队列的全局监听（桌面与移动端各在 App 启动时调一次）。返回退订函数。
  *
- * 靠订阅任务表的「忙 → 非忙」跳变而不是 `onTurnFinished` 钩子：用户点停止走的是
- * `finalizeTaskLocally`（先拆了事件通道，收不到 cancelled 事件），断连也是；只有
- * 订阅状态才能把所有终态路径收在一个入口里。
+ * 任务表的同一条订阅同时看停止请求和「忙 → 非忙」跳变：停止请求先暂停队列，
+ * 终态再收尾，避免等待后端确认期间自然完成而自动发出下一条。不能只靠流事件，
+ * 因为本地收尾与断连可能已拆掉事件通道。
  */
 export function initAgentQueue(): () => void {
   const unsubTasks = useTaskStore.subscribe((state, prev) => {
@@ -274,11 +274,15 @@ export function initAgentQueue(): () => void {
     const queues = useAgentQueueStore.getState().items;
     for (const [id, task] of Object.entries(state.tasks)) {
       const before = prev.tasks[id];
-      if (!before || !isTaskBusy(before.status) || isTaskBusy(task.status)) continue;
       // 子 agent 在自己的子对话里跑；sessionId 为空是重启恢复的占位任务。
       if (task.parentTaskId || !task.sessionId) continue;
       if (!queues[task.conversationId]?.length) continue;
-      if (task.status === "completed") {
+      if (task.stopRequested && !before?.stopRequested) {
+        pauseQueue(task.conversationId, { kind: "stopped" });
+        continue;
+      }
+      if (!before || !isTaskBusy(before.status) || isTaskBusy(task.status)) continue;
+      if (task.status === "completed" && !task.stopRequested) {
         // 推迟到本次事件的同步收尾（清标记、拆通道、落回合状态）全部做完再开下一轮。
         const conversationId = task.conversationId;
         setTimeout(() => void drainQueue(conversationId), 0);

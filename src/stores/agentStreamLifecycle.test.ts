@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listenMock, agentGetConversation, agentLoadConversation } = vi.hoisted(() => ({
+const { listenMock, agentGetConversation, agentLoadConversation, agentStopTask } = vi.hoisted(() => ({
   listenMock: vi.fn(),
   agentGetConversation: vi.fn(),
   agentLoadConversation: vi.fn(),
+  agentStopTask: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
-vi.mock('@/lib/tauri', () => ({ agentGetConversation, agentLoadConversation }));
+vi.mock('@/lib/tauri', () => ({ agentGetConversation, agentLoadConversation, agentStopTask }));
 
 import {
   attachPlanListener,
@@ -104,6 +105,7 @@ describe('agentStreamLifecycle', () => {
     });
     agentGetConversation.mockResolvedValue(null);
     agentLoadConversation.mockResolvedValue([]);
+    agentStopTask.mockResolvedValue(undefined);
     useTaskStore.setState({ tasks: {}, activeTaskId: null });
     useConversationStore.setState({ conversations: {}, messages: {}, activeConversationId: null });
   });
@@ -111,6 +113,145 @@ describe('agentStreamLifecycle', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  describe('停止请求与实际退出', () => {
+    async function runningTask() {
+      seedTask();
+      useTaskStore.setState({ activeTaskId: 'task-1' });
+      seedMessages('conv-1', [
+        { id: 'u1', role: 'user', content: '跑一下', timestamp: '', turnState: 'running' },
+      ]);
+      await attachStreamListener('task-1', 'conv-1', 'loading-1');
+    }
+
+    it('停止请求失败后仍能看到运行状态、继续接收输出并重新停止', async () => {
+      await runningTask();
+      agentStopTask.mockRejectedValueOnce({ kind: 'Agent', message: '停止请求未送达' });
+
+      await expect(useTaskStore.getState().stopTask('task-1')).rejects.toMatchObject({
+        message: '停止请求未送达',
+      });
+
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('executing');
+      expect(bus.has('agent://stream/task-1')).toBe(true);
+      expect(useConversationStore.getState().messages['conv-1'][0].turnState).toBe('running');
+      emit('agent://stream/task-1', { type: 'textDelta', text: '任务仍在运行' });
+      rafCallbacks.forEach((cb) => cb());
+      const messages = useConversationStore.getState().messages['conv-1'];
+      expect(messages[messages.length - 1]?.content).toBe('任务仍在运行');
+
+      await useTaskStore.getState().stopTask('task-1');
+      expect(agentStopTask).toHaveBeenCalledTimes(2);
+    });
+
+    it('停止请求尚未确认时保留停止入口和流监听', async () => {
+      await runningTask();
+      let confirm!: () => void;
+      agentStopTask.mockReturnValueOnce(new Promise<void>((resolve) => { confirm = resolve; }));
+
+      const stopping = useTaskStore.getState().stopTask('task-1');
+      try {
+        expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+        expect(useTaskStore.getState().tasks['task-1'].status).toBe('executing');
+        expect(bus.has('agent://stream/task-1')).toBe(true);
+      } finally {
+        confirm();
+        await stopping;
+      }
+    });
+
+    it('停止命令已返回但工具尚未退出时保留按钮、卡片和监听，仍可重新停止', async () => {
+      await runningTask();
+      emit('agent://stream/task-1', { type: 'toolCallStart', id: 'call-1', name: 'bash' });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      expect(useTaskStore.getState().tasks['task-1']).toMatchObject({
+        status: 'executing', stopRequested: true, stopping: true,
+      });
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+      expect(bus.has('agent://stream/task-1')).toBe(true);
+      expect(useConversationStore.getState().messages['conv-1'].find((m) => m.role === 'tool')?.isExecuting).toBe(true);
+      await useTaskStore.getState().stopTask('task-1');
+      expect(agentStopTask).toHaveBeenCalledTimes(2);
+
+      emit('agent://stream/task-1', { type: 'cancelled' });
+
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('cancelled');
+      expect(useConversationStore.getState().messages['conv-1'][0].turnState).toBe('cancelled');
+      expect(bus.has('agent://stream/task-1')).toBe(false);
+    });
+
+    it('重试已送达时，旧停止请求晚到的失败不会覆盖新请求状态', async () => {
+      await runningTask();
+      let reject!: (error: unknown) => void;
+      agentStopTask.mockReturnValueOnce(new Promise<void>((_, fail) => { reject = fail; }));
+      const oldRequest = useTaskStore.getState().stopTask('task-1');
+      await useTaskStore.getState().stopTask('task-1');
+
+      reject({ kind: 'Agent', message: '旧请求超时' });
+      await oldRequest;
+
+      expect(useTaskStore.getState().tasks['task-1']).toMatchObject({
+        status: 'executing', stopping: true,
+      });
+      emit('agent://stream/task-1', { type: 'cancelled' });
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('cancelled');
+    });
+
+    it('主任务退出不会提前拆掉仍在收尾的子任务监听', async () => {
+      await runningTask();
+      seedTask({ id: 'sub-1', parentTaskId: 'task-1', conversationId: 'sub-conv-1' });
+      await attachStreamListener('sub-1', 'sub-conv-1', '');
+      await useTaskStore.getState().stopTask('task-1');
+
+      emit('agent://stream/task-1', { type: 'cancelled' });
+
+      expect(useTaskStore.getState().tasks['sub-1'].status).toBe('executing');
+      expect(bus.has('agent://stream/sub-1')).toBe(true);
+      emit('agent://stream/sub-1', { type: 'cancelled' });
+      expect(useTaskStore.getState().tasks['sub-1'].status).toBe('cancelled');
+      expect(bus.has('agent://stream/sub-1')).toBe(false);
+    });
+
+    it('取消事件先于停止命令返回时保留中断工具卡，回合不会被当成自然完成', async () => {
+      await runningTask();
+      emit('agent://stream/task-1', { type: 'toolCallStart', id: 'call-1', name: 'bash' });
+      agentStopTask.mockImplementationOnce(async () => {
+        emit('agent://stream/task-1', { type: 'cancelled' });
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      const messages = useConversationStore.getState().messages['conv-1'];
+      expect(messages[0].turnState).toBe('cancelled');
+      expect(messages.find((m) => m.toolResult?.toolCallId === 'call-1')?.toolResult?.wasAborted).toBe(true);
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('cancelled');
+      expect(bus.has('agent://stream/task-1')).toBe(false);
+    });
+
+    it('旧停止请求晚返回时不影响已经开始的新回合', async () => {
+      await runningTask();
+      let confirm!: () => void;
+      agentStopTask.mockReturnValueOnce(new Promise<void>((resolve) => { confirm = resolve; }));
+      const stopping = useTaskStore.getState().stopTask('task-1');
+      emit('agent://stream/task-1', { type: 'done' });
+      seedTask({ id: 'task-2' });
+      useTaskStore.setState({ activeTaskId: 'task-2' });
+      seedMessages('conv-1', [
+        { id: 'u2', role: 'user', content: '新任务', timestamp: '', turnState: 'running' },
+      ]);
+
+      confirm();
+      await stopping;
+
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('completed');
+      expect(useTaskStore.getState().tasks['task-2'].status).toBe('executing');
+      expect(useTaskStore.getState().activeTaskId).toBe('task-2');
+      expect(useConversationStore.getState().messages['conv-1'][0].turnState).toBe('running');
+    });
   });
 
   describe('attach 的顺序契约与取消', () => {

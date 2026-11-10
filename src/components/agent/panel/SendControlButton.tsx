@@ -1,7 +1,8 @@
-import { ArrowUp, X } from 'lucide-react';
+import { ArrowUp, Loader2, Square, X } from 'lucide-react';
 
 type SendControlButtonProps = {
   isRunning: boolean;
+  isStopping?: boolean;
   isCompacting: boolean;
   disabled: boolean;
   /** 任务运行中且输入区有内容：在停止键旁多出「加入队列」键。 */
@@ -21,6 +22,7 @@ type SendControlButtonProps = {
  *  误点队列只是多排一条，误点停止会中断长任务，破坏性大的不放在顺手的主位。 */
 export function SendControlButton({
   isRunning,
+  isStopping = false,
   isCompacting,
   disabled,
   canQueue = false,
@@ -50,25 +52,15 @@ export function SendControlButton({
                     : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-state-mid disabled:text-fg-tertiary disabled:cursor-not-allowed"
               }
             `}
-      title={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
-      aria-label={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
+      title={isRunning ? (isStopping ? "正在停止，点击可重试" : "停止") : isCompacting ? "取消压缩" : "发送"}
+      aria-label={isRunning ? (isStopping ? "正在停止，点击可重试" : "停止") : isCompacting ? "取消压缩" : "发送"}
     >
       {isRunning ? (
-        <svg
-          className="w-4 h-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <rect
-            x="6"
-            y="6"
-            width="12"
-            height="12"
-            rx="1"
-            fill="currentColor"
-          />
-        </svg>
+        isStopping ? (
+          <Loader2 size={16} className="animate-spin motion-reduce:animate-none" />
+        ) : (
+          <Square size={16} className="fill-current" />
+        )
       ) : isCompacting ? (
         <X size={16} strokeWidth={1.5} />
       ) : (

@@ -893,6 +893,65 @@ fn parent_task_fixture(task_id: &str, conversation_id: &str) -> AgentTask {
     }
 }
 
+#[test]
+fn scripted_production_loop_stop_covers_subagent_registering_after_parent_cancel() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(Vec::new()).await;
+        let exec = Arc::new(ScriptedExec::default());
+        let state = isolated_state(dir.path(), &model.base_url, exec.clone());
+        app.manage(state.clone());
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "parent")
+            .unwrap();
+        state.agent_tasks.write().insert(
+            "scripted-parent".into(),
+            parent_task_fixture("scripted-parent", &parent.id),
+        );
+        let child = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "late child", &parent.id)
+            .unwrap();
+        let (events, listener) = capture_events(&app);
+
+        // 子工具已准备好派发，但尚未进入 spawn 的登记步骤；此刻停止只能在表里找到父任务。
+        let spec = local_spec("late-child", &child.id, "不应开始执行", AgentMode::Auto);
+        stop_task_cascade(app.handle(), &state, "scripted-parent").await;
+        let handle = AgentManager::new(state.clone())
+            .spawn(app.handle(), spec)
+            .await
+            .unwrap();
+        assert!(tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("late child must stop")
+            .is_none());
+
+        assert_eq!(
+            state.agent_tasks.read()["late-child"].status,
+            AgentStatus::Cancelled,
+            "停止父任务之后才登记的子任务也必须被取消"
+        );
+        assert!(model.requests().is_empty(), "已停止的任务不得再请求模型");
+        assert!(exec.commands.lock().is_empty());
+        let rows = state.conversation_db.load_messages(&child.id).unwrap();
+        assert_eq!(rows[0].turn_state.as_deref(), Some("cancelled"));
+        assert!(events.lock().iter().any(|event| {
+            event["event"] == "agent://stream/late-child" && event["data"]["type"] == "cancelled"
+        }));
+        model.assert_consumed();
+        app.unlisten(listener);
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}
+
 /// 断言流事件里出现过 `type`（按通道过滤）。
 fn events_contain(events: &[Value], channel: &str, event_type: &str) -> bool {
     events

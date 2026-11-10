@@ -203,7 +203,8 @@ function handleJobEvent(job: JobInfo): void {
  */
 export function onTurnFinished(conversationId: string, taskId: string): void {
   const task = useTaskStore.getState().tasks[taskId];
-  if (!conversationId || !task?.sessionId) return;
+  // 停止请求的确认可能晚于终态事件：用户已要求停下时，不借收尾再自动开一轮。
+  if (!conversationId || !task?.sessionId || task.stopRequested) return;
   void maybeContinueForConversation(conversationId, task.sessionId);
 }
 

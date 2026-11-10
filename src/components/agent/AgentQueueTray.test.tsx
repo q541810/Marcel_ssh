@@ -99,7 +99,7 @@ describe('AgentQueueTray', () => {
     enqueue('排着的');
     useAgentQueueStore.setState({ paused: { [CONV]: { kind: 'stopped' } } });
     await render();
-    expect(container.textContent).toContain('任务已停止，排队的消息已暂停');
+    expect(container.textContent).toContain('排队的消息已暂停');
     const buttons = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
     expect(buttons).toContain('继续发送');
     expect(buttons).toContain('清空');

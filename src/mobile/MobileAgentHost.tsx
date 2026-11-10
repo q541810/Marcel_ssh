@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { ArrowUp, Bookmark, ChevronDown, ChevronRight, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Bookmark, ChevronDown, ChevronRight, Loader2, Plus, Square, X } from "lucide-react";
 import { Archive, ArchiveRestore, Pencil, Pin, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useAgentAttachments } from "@/hooks/useAgentAttachments";
@@ -123,6 +123,7 @@ export default function MobileAgentHost({
     setMode,
     setInputDraft,
     isRunning,
+    isStopping,
     conversations,
     activeConversationId,
     draftKey,
@@ -515,7 +516,7 @@ export default function MobileAgentHost({
             }`}
           >
             {statusText}
-            {isRunning ? " · 运行中" : ""}
+            {isRunning ? (isStopping ? " · 正在停止" : " · 运行中") : ""}
           </div>
         </div>
         <MobileMultiHostPicker disabled={!canInteract || !ids} />
@@ -1223,11 +1224,15 @@ export default function MobileAgentHost({
                     ? "bg-violet-600 active:bg-violet-500"
                     : "bg-indigo-600 active:bg-indigo-500"
               }`}
-              title={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
-              aria-label={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
+              title={isRunning ? (isStopping ? "正在停止，点击可重试" : "停止") : isCompacting ? "取消压缩" : "发送"}
+              aria-label={isRunning ? (isStopping ? "正在停止，点击可重试" : "停止") : isCompacting ? "取消压缩" : "发送"}
             >
               {isRunning ? (
-                <Square className="h-4 w-4 fill-current" />
+                isStopping ? (
+                  <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <Square className="h-4 w-4 fill-current" />
+                )
               ) : isCompacting ? (
                 <X className="h-4 w-4" />
               ) : (

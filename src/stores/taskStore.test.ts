@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useTaskStore } from '@/stores/taskStore';
+import { finalizeTaskLocally, useTaskStore } from '@/stores/taskStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { cleanupTaskListeners } from '@/stores/agentStreamManager';
+import { useDebugStore } from '@/stores/debugStore';
 import type { AgentTaskPlan, AgentMessage } from '@/lib/types';
 
-const { agentStopTask, cleanupTaskListenersMock } = vi.hoisted(() => ({
+const { agentStartTask, agentStopTask, cleanupTaskListenersMock } = vi.hoisted(() => ({
+  agentStartTask: vi.fn(),
   agentStopTask: vi.fn(),
   cleanupTaskListenersMock: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
+  agentStartTask,
   agentStopTask,
 }));
 vi.mock('@/stores/agentStreamManager', () => ({
@@ -103,7 +106,58 @@ describe('taskStore', () => {
     expect(useTaskStore.getState().getActivePlan()).toBeNull();
   });
 
-  describe('stopTask', () => {
+  describe('stopTask 与本地收尾', () => {
+    it('本地模拟任务运行中关闭模拟开关，停止仍能退出且不发原生请求', async () => {
+      const previousDebugState = useDebugStore.getState();
+      vi.useFakeTimers();
+      try {
+        useDebugStore.setState({ debug67Mode: true, debug67Thinking: false });
+        useConversationStore.setState({ activeConversationId: 'conv-1' });
+        const taskId = await useTaskStore.getState().startTask(
+          's1', '模拟输出', undefined, undefined, undefined, { conversationId: 'conv-1' },
+        );
+        useDebugStore.setState({ debug67Mode: false });
+
+        await useTaskStore.getState().stopTask(taskId);
+        await vi.runAllTimersAsync();
+
+        expect(useTaskStore.getState().tasks[taskId].status).toBe('cancelled');
+        expect(useTaskStore.getState().activeTaskId).toBeNull();
+        expect(agentStopTask).not.toHaveBeenCalled();
+        expect(agentStartTask).not.toHaveBeenCalled();
+        expect(useConversationStore.getState().messages['conv-1']
+          .filter((m) => m.role === 'assistant')
+          .every((m) => !m.content && !m.isLoading && !m.isThinking)).toBe(true);
+      } finally {
+        useDebugStore.setState(previousDebugState);
+        vi.useRealTimers();
+      }
+    });
+
+    it('原生任务运行中打开模拟开关，停止仍发给后端并等待终态', async () => {
+      const previousDebugState = useDebugStore.getState();
+      try {
+        useDebugStore.setState({ debug67Mode: false });
+        useConversationStore.setState({ activeConversationId: 'conv-1' });
+        agentStartTask.mockResolvedValue(undefined);
+        agentStopTask.mockResolvedValue(undefined);
+        const taskId = await useTaskStore.getState().startTask(
+          's1', '真实任务', undefined, undefined, undefined, { conversationId: 'conv-1' },
+        );
+        useDebugStore.setState({ debug67Mode: true });
+
+        await useTaskStore.getState().stopTask(taskId);
+
+        expect(agentStopTask).toHaveBeenCalledWith(taskId);
+        expect(useTaskStore.getState().tasks[taskId]).toMatchObject({
+          status: 'planning', stopping: true, localOnly: false,
+        });
+        expect(cleanupTaskListenersMock).not.toHaveBeenCalled();
+      } finally {
+        useDebugStore.setState(previousDebugState);
+      }
+    });
+
     it('marks executing tool messages as aborted before unlistening stream events', async () => {
       agentStopTask.mockResolvedValue(undefined);
       const runningTool: AgentMessage = {
@@ -139,7 +193,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       // Tool message was marked aborted: isExecuting cleared, wasAborted set,
       // result appended with streaming interruption note.
@@ -163,7 +217,7 @@ describe('taskStore', () => {
         },
       });
 
-      // 第一次 stopTask 已把 task-1 置 cancelled；新逻辑对已终态任务不再重复
+      // 第一次收尾已把 task-1 置 cancelled；对已终态任务不再重复
       // mark/cleanup，这里重置为运行中再验证顺序。
       useTaskStore.setState({
         tasks: {
@@ -180,7 +234,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       expect(clearOrder.indexOf('mark')).toBeLessThan(clearOrder.indexOf('cleanup'));
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
@@ -188,10 +242,7 @@ describe('taskStore', () => {
       useConversationStore.setState({ markAbortedToolFlags: origMark });
     });
 
-    it('本地收尾发在停止命令之前——后端取消路径的终态事件再也抢不到前面', async () => {
-      // 竞态回归：后端取消路径会发 StreamEvent::Cancelled。它若抢在拆通道之前
-      // 落地，就会被当成模型自然结束处理（删掉在飞卡片、把回合写成 completed
-      // → 折叠把过程卡片吞掉）。所以收尾必须发生在 agent_stop_task 之前。
+    it('停止命令返回后仍保留 busy、监听与工具卡，等待实际退出事件', async () => {
       let cleanedAtStopCall: boolean | undefined;
       let cardExecutingAtStopCall: boolean | undefined;
       let turnStateAtStopCall: string | undefined;
@@ -241,10 +292,16 @@ describe('taskStore', () => {
 
       await useTaskStore.getState().stopTask('task-1');
 
-      expect(cleanedAtStopCall).toBe(true);
-      expect(cardExecutingAtStopCall).toBe(false);
-      expect(turnStateAtStopCall).toBe('cancelled');
-      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+      expect(cleanedAtStopCall).toBe(false);
+      expect(cardExecutingAtStopCall).toBe(true);
+      expect(turnStateAtStopCall).toBeUndefined();
+      expect(cleanupTaskListenersMock).not.toHaveBeenCalled();
+      expect(useConversationStore.getState().messages['conv-1'][0].turnState).toBeUndefined();
+      expect(useConversationStore.getState().messages['conv-1'][1].isExecuting).toBe(true);
+      expect(useTaskStore.getState().tasks['task-1']).toMatchObject({
+        status: 'executing', stopRequested: true, stopping: true,
+      });
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
     });
 
     it('marks non-streaming tool messages as aborted with non-streaming note', async () => {
@@ -282,7 +339,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       const toolMsg = useConversationStore.getState().messages['conv-1'][0];
       expect(toolMsg.toolResult?.wasAborted).toBe(true);
@@ -292,7 +349,7 @@ describe('taskStore', () => {
       expect(toolMsg.toolResult?.result).not.toContain('远端命令');
     });
 
-    it('marks the task as cancelled and clears active', async () => {
+    it('本地模拟任务没有后端事件，停止直接收尾且不调用原生停止命令', async () => {
       agentStopTask.mockResolvedValue(undefined);
       useTaskStore.setState({
         tasks: {
@@ -303,6 +360,7 @@ describe('taskStore', () => {
             prompt: 'p',
             mode: 'agent',
             status: 'executing',
+            localOnly: true,
             createdAt: new Date().toISOString(),
           },
         },
@@ -314,6 +372,7 @@ describe('taskStore', () => {
       const task = useTaskStore.getState().tasks['task-1'];
       expect(task.status).toBe('cancelled');
       expect(useTaskStore.getState().activeTaskId).toBeNull();
+      expect(agentStopTask).not.toHaveBeenCalled();
     });
 
     it('把尾回合标成 cancelled —— 手动停止的回合不再折叠（过程留在眼前）', async () => {
@@ -357,7 +416,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       // 状态写在回合锚点（首条 user）上，别的消息不带
       const msgs = useConversationStore.getState().messages['conv-1'];
@@ -366,7 +425,7 @@ describe('taskStore', () => {
     });
 
     it('removes the retrying system pill on stop —— 重试等待中点停止不残留「正在重试请求」', async () => {
-      // 回归：点停止走本地收尾（先拆通道再发命令），后端的 Cancelled 事件
+      // 回归：本地收尾时会拆通道，后端的 Cancelled 事件
       // 收不到，handleCancelled 里过滤 isRetrying 行的清理不会执行。残留的
       // 倒计时胶囊会在本地倒计时归零后翻成「正在重试请求 (n/m)…」永挂。
       agentStopTask.mockResolvedValue(undefined);
@@ -407,7 +466,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       const conv1 = useConversationStore.getState().messages['conv-1'];
       expect(conv1.some((m) => m.role === 'system' && m.isRetrying)).toBe(false);
@@ -417,7 +476,7 @@ describe('taskStore', () => {
       expect(conv2.some((m) => m.role === 'system' && m.isRetrying)).toBe(true);
     });
 
-    it('marks tool messages even when agentStopTask throws', async () => {
+    it('停止失败时保留运行状态、工具卡片和监听，允许用户重新停止', async () => {
       agentStopTask.mockRejectedValue(new Error('backend gone'));
       useConversationStore.setState({
         activeConversationId: 'conv-1',
@@ -458,9 +517,13 @@ describe('taskStore', () => {
       await expect(useTaskStore.getState().stopTask('task-1')).rejects.toThrow('backend gone');
 
       const toolMsg = useConversationStore.getState().messages['conv-1'][0];
-      expect(toolMsg.isExecuting).toBe(false);
-      expect(toolMsg.toolResult?.wasAborted).toBe(true);
-      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+      expect(toolMsg.isExecuting).toBe(true);
+      expect(toolMsg.toolResult?.wasAborted).toBeUndefined();
+      expect(useTaskStore.getState().tasks['task-1'].status).toBe('executing');
+      expect(useTaskStore.getState().tasks['task-1'].stopRequested).toBe(true);
+      expect(useTaskStore.getState().tasks['task-1'].stopping).toBe(false);
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+      expect(cleanupTaskListenersMock).not.toHaveBeenCalled();
     });
 
     it('only marks tool cards in the stopped task conversation (subagents stay intact)', async () => {
@@ -515,7 +578,7 @@ describe('taskStore', () => {
         activeTaskId: 'task-1',
       });
 
-      await useTaskStore.getState().stopTask('task-1');
+      finalizeTaskLocally('task-1', 'cancelled');
 
       const conv1Msg = useConversationStore.getState().messages['conv-1'][0];
       expect(conv1Msg.toolResult?.wasAborted).toBe(true);
@@ -584,7 +647,7 @@ describe('taskStore', () => {
         activeTaskId: 'main-1',
       });
 
-      await useTaskStore.getState().stopTask('main-1');
+      finalizeTaskLocally('main-1', 'cancelled');
 
       const tasks = useTaskStore.getState().tasks;
       expect(tasks['main-1'].status).toBe('cancelled');
@@ -628,7 +691,7 @@ describe('taskStore', () => {
         activeTaskId: 'main-1',
       });
 
-      await useTaskStore.getState().stopTask('main-1');
+      finalizeTaskLocally('main-1', 'cancelled');
 
       const tasks = useTaskStore.getState().tasks;
       expect(tasks['main-1'].status).toBe('cancelled');

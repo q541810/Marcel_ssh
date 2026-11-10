@@ -284,13 +284,11 @@ pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id
     // 级联取消：停掉该任务及其全部子agent。子任务与主任务一样要置
     // Cancelled——子agent loop 的退出检查（is_task_cancelled）只看 status，
     // 不置状态的话取消场景会被 subagent 工具误报为「执行失败」。
-    let tasks_to_cancel = {
-        let tasks = state.agent_tasks.read();
-        collect_descendant_tasks(&tasks, task_id)
-    };
-
-    let requested_while_absent = {
+    // 收集后代与置取消态必须在同一把写锁里：否则新子任务可能插在快照与写入之间，
+    // 既没被本次级联收走，登记时又看到父任务仍在运行。
+    let (tasks_to_cancel, requested_while_absent) = {
         let mut tasks = state.agent_tasks.write();
+        let tasks_to_cancel = collect_descendant_tasks(&tasks, task_id);
         let mut found = false;
         for tid in &tasks_to_cancel {
             if let Some(task) = tasks.get_mut(tid) {
@@ -300,7 +298,7 @@ pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id
                 found = true;
             }
         }
-        !found
+        (tasks_to_cancel, !found)
     };
 
     // 任务还没在册：组装期间点停止（`spawn` 要先做设置/MCP/skill 读取与模型解析
@@ -749,9 +747,8 @@ impl AgentManager {
 
         // 所有可能失败的组装步骤完成后再提交运行态。spawn 返回 Err 时，
         // 不会留下前端拿不到 task_id、后端却永久视为 running 的幽灵任务。
-        self.state.agent_tasks.write().insert(
-            task_id.clone(),
-            AgentTask {
+        {
+            let mut task = AgentTask {
                 id: task_id.clone(),
                 session_id: spec.session_id.clone(),
                 conversation_id: spec.conversation_id.clone(),
@@ -768,8 +765,20 @@ impl AgentManager {
                 turn_anchor_id: None,
                 parent_history_upto,
                 failure: None,
-            },
-        );
+            };
+            let mut tasks = self.state.agent_tasks.write();
+            // 子工具的准备/组装可能跨过父任务的停止。与级联停止共用同一把锁，
+            // 保证「先登记就被级联找到；后登记就继承父任务取消态」。
+            if task
+                .parent_task_id
+                .as_deref()
+                .and_then(|parent_id| tasks.get(parent_id))
+                .is_some_and(|parent| parent.status.is_cancelled())
+            {
+                task.transition_to(AgentStatus::Cancelled);
+            }
+            tasks.insert(task_id.clone(), task);
+        }
         if spec.role == AgentRole::Main {
             self.restore_latest_plan(&task_id, &spec.conversation_id);
             // 后台复盘：本会话还在继续（挂着的空闲定时器作废）；同一台机器上别的
@@ -810,7 +819,15 @@ impl AgentManager {
         // 两次取用分开写（不用 `||` 短路）：组装**期间**记下的那枚墓碑也必须
         // 被消费掉，否则它会留在表里，之后被同一 id 的另一次启动误领。
         let cancel_requested_during_spawn = take_pending_cancel(&task_id);
-        if cancel_requested_before_spawn || cancel_requested_during_spawn {
+        // 任务登记后、取消通道登记前也可能收到停止；继承父任务取消态走同一条路。
+        // 此时补发信号，避免只改了状态却没取消正在进行的模型调用。
+        let already_cancelled = self
+            .state
+            .agent_tasks
+            .read()
+            .get(&task_id)
+            .is_some_and(|task| task.status.is_cancelled());
+        if cancel_requested_before_spawn || cancel_requested_during_spawn || already_cancelled {
             log::info!(
                 "Agent task {} 在组装期间已被要求停止，注册取消表后立即收场",
                 task_id

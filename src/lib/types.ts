@@ -481,6 +481,12 @@ export interface AgentTask {
   prompt: string;
   mode: AgentMode;
   status: AgentStatus;
+  /** 前端已请求停止；保留到任务结束，队列与自动继续先让路。 */
+  stopRequested?: boolean;
+  /** 正在等待取消终态；请求失败时复位，保留停止入口供重试。 */
+  stopping?: boolean;
+  /** 本地模拟任务没有后端事件，停止时由前端直接收尾。 */
+  localOnly?: boolean;
   /** Whether this task produced a plan (`create_plan` / `edit_plan` were called). */
   hasPlan?: boolean;
   createdAt: string;

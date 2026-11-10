@@ -34,6 +34,21 @@ async function render(props: Partial<React.ComponentProps<typeof ContextMenu>> =
 }
 const buttons = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menu"] button'));
 
+describe('ContextMenu 关闭', () => {
+  it('在别处再点右键会关掉自己，即使那处的右键处理器 stopPropagation（否则两张菜单叠在一起）', async () => {
+    // 右键不产生 click，只产生 contextmenu；文件链接芯片的右键处理器还会 stopPropagation，
+    // 所以必须在捕获阶段监听，才不会旧菜单留着、新菜单又开出来。
+    const onClose = vi.fn();
+    await render({ onClose });
+    const other = document.createElement('button');
+    other.addEventListener('contextmenu', (e) => e.stopPropagation());
+    document.body.append(other);
+    other.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    other.remove();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 // jsdom 不做布局，量不出宽高与圆角；下面钉住的是各自的「原因」。
 describe('ContextMenu 版式', () => {
   it('每一项都是块级：菜单宽度取最宽一项，而不是各项并排之和', async () => {

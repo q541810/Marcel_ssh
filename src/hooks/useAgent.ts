@@ -7,6 +7,7 @@ import { draftConversationIdFor, draftKeyFor, EMPTY_DRAFT, useAgentDraftStore } 
 import { bus } from '@/plugins/injection/bus';
 import { isTaskBusy } from '@/lib/agentStatus';
 import { conversationUsageView } from '@/lib/tokenUsage';
+import { getErrorMessage } from '@/lib/errors';
 import type { AgentMessage } from '@/lib/types';
 
 // 缺少消息缓存时也返回稳定引用；这里只读取，不向 store 补写/清空旧数据。
@@ -82,6 +83,7 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
   );
 
   const isRunning = activeTask ? isTaskBusy(activeTask.status) : false;
+  const isStopping = isRunning && activeTask?.stopping === true;
 
   // ── Plugin agent-activity bridge ─────────────────────────────────────
   // Emits `ui://agent-activity` (running bool only — never task content) so
@@ -108,8 +110,18 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
   );
 
   const stopActiveTask = useCallback(async () => {
-    if (activeTask) {
-      return stopTask(activeTask.id);
+    if (!activeTask) return;
+    try {
+      await stopTask(activeTask.id);
+    } catch (error) {
+      const current = useTaskStore.getState().tasks[activeTask.id];
+      if (!current || !isTaskBusy(current.status)) return;
+      useConversationStore.getState().appendMessages(activeTask.conversationId, [{
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: `停止失败：${getErrorMessage(error)}。任务可能仍在运行，请再次点击停止。`,
+        timestamp: new Date().toISOString(),
+      }]);
     }
   }, [activeTask, stopTask]);
 
@@ -117,6 +129,7 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
     ...conversation,
     activeTask,
     isRunning,
+    isStopping,
     mode: task.mode,
     draftKey,
     draftConversationId,

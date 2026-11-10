@@ -80,6 +80,7 @@ export default function AgentPanel() {
     setMode,
     setInputDraft: setInput,
     isRunning,
+    isStopping,
     conversations,
     activeConversationId,
     draftKey,
@@ -538,6 +539,7 @@ export default function AgentPanel() {
           mode={mode}
           setMode={setMode}
           isRunning={isRunning}
+          isStopping={isStopping}
           isCompacting={isCompacting}
           canInteract={canInteract}
           activeSessionStatus={activeSession?.status}

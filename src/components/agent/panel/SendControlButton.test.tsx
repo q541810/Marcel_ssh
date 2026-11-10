@@ -62,6 +62,24 @@ describe('SendControlButton 三态（停止 / 取消压缩 / 发送）', () => {
     expect(h.onSend).not.toHaveBeenCalled();
   });
 
+  it('正在停止时保留按钮和重试入口，终态后才恢复发送', async () => {
+    const h = handlers();
+    const button = await render({
+      isRunning: true, isStopping: true, isCompacting: false, disabled: false, ...h,
+    });
+    expect(button.title).toBe('正在停止，点击可重试');
+    expect(button.disabled).toBe(false);
+    expect(button.querySelector('.animate-spin')).not.toBeNull();
+    await act(async () => { button.click(); });
+    expect(h.onStop).toHaveBeenCalledTimes(1);
+    expect(h.onSend).not.toHaveBeenCalled();
+
+    const idleButton = await render({
+      isRunning: false, isStopping: false, isCompacting: false, disabled: false, ...h,
+    });
+    expect(idleButton.title).toBe('发送');
+  });
+
   it('压缩中：文案「取消压缩」，点击走 onCancelCompaction', async () => {
     const h = handlers();
     // 真实组件里 disabled 由 Composer 计算：isCompacting 时恒为 false（压缩中唯一出路就是这个键）

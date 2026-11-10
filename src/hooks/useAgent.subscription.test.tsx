@@ -11,7 +11,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import { createDefaultStreamHandler } from '@/stores/storeStreamAdapter';
-import { cleanupStreamState, handleTextDelta } from '@/stores/agentStreamHandlers';
+import { cleanupStreamState, handleCancelled, handleTextDelta } from '@/stores/agentStreamHandlers';
 import { bus } from '@/plugins/injection/bus';
 import { agentLoadActiveMessages, agentStopTask, installUpdateNow } from '@/lib/tauri';
 import type { AgentConversation, AgentTask, AgentTaskPlan, ContextUsageEvent } from '@/lib/types';
@@ -330,9 +330,37 @@ describe('Agent 订阅隔离（真实 store + stream + React 挂载）', () => {
     expect(agent.activeTask?.id).toBe(backgroundTaskId);
     await act(async () => { await agent.stopActiveTask(); });
     expect(agentStopTask).toHaveBeenCalledWith(backgroundTaskId);
-    expect(agent.activeTask).toBeNull();
+    expect(agent.isRunning).toBe(true);
+    expect(agent.isStopping).toBe(true);
+    expect(activity).toHaveBeenLastCalledWith('ui://agent-activity', { running: true });
+    await act(async () => { handleCancelled(stream, backgroundTaskId, BACKGROUND, ''); });
+    expect(agent.activeTask?.status).toBe('cancelled');
     expect(agent.isRunning).toBe(false);
+    expect(agent.isStopping).toBe(false);
     expect(activity).toHaveBeenLastCalledWith('ui://agent-activity', { running: false });
+  });
+
+  it('停止失败时双端共用入口显示错误，停止按钮仍可重试', async () => {
+    await mount(<AgentConsumer />);
+    vi.mocked(agentStopTask).mockRejectedValueOnce({
+      kind: 'Agent',
+      message: '停止请求未送达',
+    });
+
+    await act(async () => { await agent.stopActiveTask(); });
+
+    expect(agent.isRunning).toBe(true);
+    expect(agent.isStopping).toBe(false);
+    expect(agent.activeTask?.id).toBe(currentTaskId);
+    expect(agent.messages[agent.messages.length - 1]?.content).toBe(
+      '停止失败：停止请求未送达。任务可能仍在运行，请再次点击停止。',
+    );
+    await act(async () => { await agent.stopActiveTask(); });
+    expect(agentStopTask).toHaveBeenCalledTimes(2);
+    expect(agent.isStopping).toBe(true);
+    expect(agent.isRunning).toBe(true);
+    await act(async () => { handleCancelled(stream, currentTaskId, CURRENT, ''); });
+    expect(agent.isRunning).toBe(false);
   });
 
   it('用量保持实时优先、持久化兜底，元数据变化仍传给双端', async () => {
