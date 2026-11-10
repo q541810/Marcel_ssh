@@ -24,6 +24,8 @@
  * stack is mirrored to native via `setBackInterceptEnabled`.
  */
 
+import { afterFrame } from './motion';
+
 type BackCloseFn = () => void;
 
 export type BackEdge = 'left' | 'right';
@@ -101,6 +103,15 @@ export interface BackDiagnostics {
   topHadPreview: boolean | null;
   /** The webview reports prefers-reduced-motion (previews are skipped). */
   reducedMotion: boolean;
+  /**
+   * The last gesture, as the page managed to draw it while the finger was down:
+   * frames drawn, how many of them came late (a frame was skipped before them),
+   * and the longest wait for a frame, ms. Says on the phone itself whether a
+   * gesture "felt stuck" because frames were dropped.
+   */
+  heldFrames: number;
+  heldLate: number;
+  heldWorstMs: number;
 }
 
 let diag: BackDiagnostics = {
@@ -113,6 +124,9 @@ let diag: BackDiagnostics = {
   lastProgress: 0,
   topHadPreview: null,
   reducedMotion: false,
+  heldFrames: 0,
+  heldLate: 0,
+  heldWorstMs: 0,
 };
 const diagListeners = new Set<() => void>();
 
@@ -203,6 +217,12 @@ interface GestureSession {
   current: BackGestureFrame;
   raf: number | null;
   lastT: number;
+  /** Frame pacing while held (see BackDiagnostics.heldFrames). */
+  frames: number;
+  late: number;
+  worstMs: number;
+  /** The loop was running at the previous tick (so the gap between ticks is a frame time). */
+  paced: boolean;
 }
 
 /** Native reports Y in physical px; the page works in CSS px. */
@@ -244,8 +264,16 @@ function tick(now: number): void {
     s.entry.preview?.cancel();
     return;
   }
-  const dt = Math.min(Math.max(now - s.lastT, 1), 64);
+  const gap = now - s.lastT;
+  const dt = Math.min(Math.max(gap, 1), 64);
   s.lastT = now;
+  s.frames += 1;
+  if (s.paced) {
+    s.worstMs = Math.max(s.worstMs, gap);
+    // Later than one and a half frames of a 60Hz screen: at least one was skipped.
+    if (gap > 25) s.late += 1;
+  }
+  s.paced = true;
   const k = 1 - Math.exp(-dt / SMOOTH_TAU_MS);
   const cur = s.current;
   const tgt = s.target;
@@ -270,6 +298,7 @@ function tick(now: number): void {
   }
   s.entry.preview?.update({ ...cur });
   if (!settled) s.raf = requestAnimationFrame(tick);
+  else s.paced = false;
 }
 
 function ensureLoop(s: GestureSession): void {
@@ -283,7 +312,12 @@ function endSession(mode: 'cancel' | 'commit'): void {
   if (!s) return;
   session = null;
   stopLoop(s);
+  reportPacing(s);
   if (mode === 'cancel') s.entry.preview?.cancel();
+}
+
+function reportPacing(s: GestureSession): void {
+  bumpDiag({ heldFrames: s.frames, heldLate: s.late, heldWorstMs: Math.round(s.worstMs) });
 }
 
 /** Native X is optional (APKs before it was sent pass only three arguments). */
@@ -317,6 +351,10 @@ function startGesture(edge: number, physicalY: number, physicalX?: number): void
     current: frame(),
     raf: null,
     lastT: 0,
+    frames: 0,
+    late: 0,
+    worstMs: 0,
+    paced: false,
   };
   top.preview.start(e);
 }
@@ -367,12 +405,15 @@ function popAndClose(): boolean {
   bumpDiag({ commits: diag.commits + 1 });
   const top = stack[stack.length - 1];
   const s = session;
+  let flying = false;
   if (s) {
     if (top && s.entry === top) {
       // Freeze at the last frame the user saw, then let the layer continue.
       stopLoop(s);
       session = null;
+      reportPacing(s);
       top.preview?.commit();
+      flying = top.preview != null;
     } else {
       endSession('cancel');
     }
@@ -383,7 +424,12 @@ function popAndClose(): boolean {
   // unregister the same entry twice.
   stack.pop();
   queueNativeSync();
-  top.close();
+  // The preview has just started the release motion. Closing the layer is a
+  // React update — on a phone, tens of ms on the same thread that still has to
+  // hand that motion to the screen. Close once the frame carrying it is out, so
+  // letting go never hitches. Nothing to wait for without a preview in flight.
+  if (flying) afterFrame(top.close, 80);
+  else top.close();
   return true;
 }
 

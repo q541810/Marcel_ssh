@@ -224,7 +224,7 @@ describe("predictive back gesture", () => {
     expect(calls.length).toBe(before);
   });
 
-  it("commit freezes the preview, then closes the layer", () => {
+  it("commit freezes the preview, then closes the layer once the release frame is out", async () => {
     const { preview, calls } = makePreview();
     const close = vi.fn(() => calls.push("close"));
     registerBackHandler(close, preview);
@@ -233,12 +233,53 @@ describe("predictive back gesture", () => {
     flushFrames(3);
 
     expect(window.__marcelHandleBack?.()).toBe(true);
+    // The preview starts its release motion at once; the (React) close waits
+    // for the frame that carries it, so letting go does not hitch.
+    expect(calls[calls.length - 1]).toBe("commit");
+    expect(close).not.toHaveBeenCalled();
+    flushFrames(1);
+    await new Promise((r) => setTimeout(r, 0));
     expect(calls.slice(-2)).toEqual(["commit", "close"]);
 
     // No further frames after the commit.
     const before = calls.length;
     flushFrames(5);
     expect(calls.length).toBe(before);
+  });
+
+  it("still closes after a commit when frames do not tick (hidden page)", async () => {
+    const { preview } = makePreview();
+    const close = vi.fn();
+    registerBackHandler(close, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.5, 0, 0);
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("a back press with no gesture in flight closes at once", () => {
+    const { preview, calls } = makePreview();
+    const close = vi.fn();
+    registerBackHandler(close, preview);
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(calls).not.toContain("commit");
+  });
+
+  it("reports how the held frames were paced", () => {
+    const { preview } = makePreview();
+    registerBackHandler(() => {}, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.5, 0, 0);
+    flushFrames(4, 16);
+    window.__marcelBackProgress?.(0.8, 0, 0);
+    flushFrames(1, 70);
+    window.__marcelBackCancel?.();
+    const d = getBackDiagnostics();
+    expect(d.heldFrames).toBeGreaterThanOrEqual(5);
+    expect(d.heldLate).toBe(1);
+    expect(d.heldWorstMs).toBe(70);
   });
 
   it("a new gesture settles one the system never resolved", () => {

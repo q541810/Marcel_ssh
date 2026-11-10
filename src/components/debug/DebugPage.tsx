@@ -43,6 +43,12 @@ function BackGestureDiagnostics() {
     ["确认返回", String(d.commits)],
     ["栈顶层带预览", d.topHadPreview == null ? "—" : d.topHadPreview ? "是" : "否"],
     ["系统开了减弱动画", d.reducedMotion ? "是（预览会被跳过）" : "否"],
+    [
+      "上次手势按住期间",
+      d.heldFrames > 0
+        ? `画了 ${d.heldFrames} 帧，掉帧 ${d.heldLate} 次，最慢一帧 ${d.heldWorstMs}ms`
+        : "—",
+    ],
   ];
   return (
     <section
