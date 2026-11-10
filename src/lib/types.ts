@@ -1301,7 +1301,7 @@ export interface QuestionItem {
   multiple: boolean;
 }
 
-export type InteractionKind = 'approval' | 'question';
+export type InteractionKind = 'approval' | 'question' | 'credential';
 
 export interface ActiveInteractionPayload {
   type: 'interactionActive';
@@ -1314,6 +1314,7 @@ export interface ActiveInteractionPayload {
   sessionTarget?: { username: string; host: string; port: number };
   conversationTitle: string;
   queueLength: number;
+  credential?: { username: string; command: string; rejected: boolean };
   approval?: {
     toolCallId: string;
     toolName: string;

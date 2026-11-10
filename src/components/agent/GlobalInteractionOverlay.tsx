@@ -8,6 +8,7 @@ import { sessionConversationBindingManager } from '@/stores/sessionConversationB
 import { useTaskStore } from '@/stores/taskStore';
 import ApprovalDialog from '@/components/agent/ApprovalDialog';
 import QuestionPanel from '@/components/agent/QuestionPanel';
+import SudoPasswordDialog from '@/components/agent/SudoPasswordDialog';
 import { InteractionFloatingCapsule } from './InteractionFloatingCapsule';
 import { flyToInteractionCapsule } from '@/stores/capsuleFlyAnimation';
 import { openRiskRule } from '@/lib/riskRuleNav';
@@ -137,6 +138,10 @@ export default function GlobalInteractionOverlay() {
         isCurrentContext={isCurrentContext}
       />
     );
+  }
+
+  if (current.kind === 'credential' && current.credential) {
+    return <SudoPasswordDialog key={current.interactionId} interaction={current} onMinimize={minimizeInteraction} />;
   }
 
   if (current.kind === 'approval' && current.approval) {

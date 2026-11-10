@@ -8,6 +8,7 @@ import { useConversationStore } from '@/stores/conversationStore';
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
 import MobileApprovalSheet from '@/mobile/MobileApprovalSheet';
 import MobileQuestionPanel from '@/mobile/MobileQuestionPanel';
+import SudoPasswordDialog from '@/components/agent/SudoPasswordDialog';
 import { InteractionFloatingCapsule } from '@/components/agent/InteractionFloatingCapsule';
 import { openRiskRule } from '@/lib/riskRuleNav';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
@@ -121,6 +122,10 @@ export default function MobileGlobalInteractionOverlay() {
         isCurrentContext={isCurrentContext}
       />
     );
+  }
+
+  if (current.kind === 'credential' && current.credential) {
+    return <SudoPasswordDialog key={current.interactionId} interaction={current} onMinimize={() => setMinimized(true)} />;
   }
 
   if (current.kind === 'approval' && current.approval) {

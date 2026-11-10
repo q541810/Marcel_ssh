@@ -35,6 +35,9 @@ pub struct SshConnection {
     /// is created for the same session_id (reconnect). Used by cleanup to
     /// prevent a stale driver task from removing a newer connection.
     pub generation: u64,
+    /// 仅当前连接有效；按 sudo 实际索取密码的账户分开，断线后随连接一起清零。
+    pub(crate) sudo_passwords:
+        parking_lot::Mutex<std::collections::HashMap<String, zeroize::Zeroizing<String>>>,
     /// Sender to the per-session driver task (for the interactive shell).
     pub(crate) cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     /// Shared russh Handle — used to open additional exec channels for

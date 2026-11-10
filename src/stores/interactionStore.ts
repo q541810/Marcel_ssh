@@ -3,6 +3,7 @@ import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import type { ActiveInteractionPayload, QuestionAnswer } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { useTaskStore } from '@/stores/taskStore';
+import { isTaskBusy } from '@/lib/agentStatus';
 
 export interface InteractionState {
   currentInteraction: ActiveInteractionPayload | null;
@@ -12,17 +13,17 @@ export interface InteractionState {
   answerQuestion: (taskId: string, questionId: string, answers: QuestionAnswer[]) => Promise<void>;
 }
 
-export const useInteractionStore = create<InteractionState>((set, get) => ({
+export const useInteractionStore = create<InteractionState>((set) => ({
   currentInteraction: null,
 
   setCurrentInteraction: (interaction) => {
-    const prev = get().currentInteraction;
     set({ currentInteraction: interaction });
 
     const taskStore = useTaskStore.getState();
 
     // 联动 taskStore 状态指示器：
-    if (interaction?.taskId) {
+    if (interaction?.taskId && taskStore.tasks[interaction.taskId] &&
+      isTaskBusy(taskStore.tasks[interaction.taskId].status)) {
       // 1. 点亮当前活动交互所属 task 为 waiting_approval
       taskStore.updateTaskStatus(interaction.taskId, 'waiting_approval');
     }

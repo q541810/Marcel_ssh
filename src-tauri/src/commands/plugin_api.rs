@@ -162,14 +162,16 @@ async fn execute_command<R: Runtime>(
                 return Err("sessionId and command required".into());
             }
             // 经 command_exec 统一管理器执行（登记记录 + 断连级联取消）。
-            // 插件路径无流式输出（旧实现也不 emit 事件），故无需 AppHandle。
+            // 插件必须显式选择密码交互，轮询类调用默认不会弹框。
             // 默认 120s 超时与旧 `SshManager::exec_command` 一致。
             let ticket = crate::command_exec::CommandTicket::new(
                 sid,
                 command,
                 crate::command_exec::CommandSource::Plugin,
-            );
-            let outcome = state.command_exec.submit_opt(None, ticket).await;
+            ).interactive_sudo(args.get("interactiveSudo").and_then(|v| v.as_bool()).unwrap_or(false));
+            // Production uses Wry; mock runtimes have no password UI.
+            let ui = (app as &dyn std::any::Any).downcast_ref::<tauri::AppHandle>();
+            let outcome = state.command_exec.submit_opt(ui, ticket).await;
             match outcome {
                 crate::command_exec::SubmitOutcome::Completed { output, .. } => {
                     Ok(serde_json::Value::String(output))

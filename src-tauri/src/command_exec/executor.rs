@@ -154,6 +154,9 @@ impl ExecTransport for SshExecTransport {
         app: Option<&AppHandle>,
         cancel: Option<&watch::Receiver<CancelReason>>,
     ) -> Result<ExecOutcome, AppError> {
+        if super::sudo::needed(ticket) {
+            return super::sudo::run(&self.ssh, ticket, app, String::new(), cancel).await;
+        }
         let streaming = ticket
             .streaming
             .as_ref()
@@ -177,6 +180,9 @@ impl ExecTransport for SshExecTransport {
         on_chunk: ChunkCallback,
         cancel: Option<&watch::Receiver<CancelReason>>,
     ) -> Result<ExecOutcome<()>, AppError> {
+        if super::sudo::needed(ticket) {
+            return super::sudo::run(&self.ssh, ticket, app, on_chunk, cancel).await;
+        }
         let streaming = ticket
             .streaming
             .as_ref()
@@ -198,7 +204,7 @@ impl ExecTransport for SshExecTransport {
 /// 语义只是「我们不再等这条通道」——**不是杀远端进程**：无 pty 会话下 sshd
 /// 不会给子进程发信号，静默运行 / 重定向了输出 / 已脱离会话的命令会在远端
 /// 继续跑完（详见模块注释）。
-async fn graceful_close<S>(channel: &mut Channel<S>)
+pub(crate) async fn graceful_close<S>(channel: &mut Channel<S>)
 where
     S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static,
 {
@@ -312,13 +318,35 @@ async fn read_channel<S, O: OutputSink>(
     channel: &mut Channel<S>,
     deadline: tokio::time::Instant,
     streaming: Option<(&AppHandle, &str, &str)>,
-    mut output: O,
+    output: O,
     cancel: Option<&watch::Receiver<CancelReason>>,
 ) -> Result<ExecOutcome<O::Output>, AppError>
 where
     S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static,
 {
-    let deadline = tokio::time::sleep_until(deadline);
+    read_channel_paused(
+        channel,
+        deadline.saturating_duration_since(tokio::time::Instant::now()),
+        streaming,
+        output,
+        cancel,
+        &super::auth_wait::AuthWait::default(),
+    )
+    .await
+}
+
+pub(crate) async fn read_channel_paused<S, O: OutputSink>(
+    channel: &mut Channel<S>,
+    timeout: Duration,
+    streaming: Option<(&AppHandle, &str, &str)>,
+    mut output: O,
+    cancel: Option<&watch::Receiver<CancelReason>>,
+    auth_wait: &super::auth_wait::AuthWait,
+) -> Result<ExecOutcome<O::Output>, AppError>
+where
+    S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static,
+{
+    let deadline = auth_wait.sleep_active(timeout);
     tokio::pin!(deadline);
     let mut ended_without_close = false;
     // 远端回报的退出事实。OpenSSH 在 EOF / close 之前先发 exit-status，

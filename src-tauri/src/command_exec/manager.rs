@@ -20,7 +20,7 @@
 //! 4. **可测性**：执行经 [`ExecTransport`] 抽象注入，单测用 mock transport，
 //!    不需要真实 SSH 连接。
 //!
-//! 安全约定：`ticket.command` 可能含 sudo 密码，绝不进入
+//! 安全约定：sudo 密码不进入 ticket；实际执行文本也不进入
 //! [`ExecutionRecord`] / [`ExecutionSnapshot`] / 日志——记录里只有
 //! 调用方声明的 `display_command`（已截断）。
 
@@ -788,7 +788,7 @@ impl CommandExecutionManager {
 
         let early = tokio::select! {
             joined = &mut handle => Some(joined),
-            _ = tokio::time::sleep(soft_timeout) => None,
+            _ = ticket.auth_wait.sleep_active(soft_timeout) => None,
         };
         // 计时器恰好与结束同刻到：已经结束就按正常结束处理，别为一个刚跑完的命令
         // 造一个作业再立刻结算（模型会先被告知「已转后台」、随后又收到「已完成」）。

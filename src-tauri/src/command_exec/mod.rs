@@ -27,14 +27,17 @@
 //!   运行单调递增、旧 id 永不复用。
 //! - `SshManager::exec_command*` 系列保留为兼容 shim（内部委托 executor
 //!   核心，不登记记录）；新代码一律走 manager。
-//! - 安全：`ticket.command` 可能含 sudo 密码，绝不进入记录 / 快照 / 日志。
+//! - 安全：sudo 密码走独立 SSH stdin，不拼入命令、事件或日志。
 
+mod auth_wait;
 pub(crate) mod executor;
 mod job;
 mod ledger;
 /// 本机执行的传输层（与远端同构，见 `local_transport.rs` 模块注释）。
 mod local_transport;
 mod manager;
+pub(crate) mod sudo;
+mod sudo_script;
 mod ticket;
 
 pub use executor::ExecExit;

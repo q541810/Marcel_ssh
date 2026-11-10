@@ -72,6 +72,8 @@ pub enum AppError {
     KeyAuth { code: KeyAuthCode, message: String },
     #[error("跳板机认证失败：{message}")]
     JumpAuth { code: KeyAuthCode, message: String },
+    #[error("sudo 需要账户密码，但这次调用未启用密码交互。命令可能已部分执行，请勿整段重试")]
+    SudoAuthRequired,
     #[error("{0}")]
     Other(String),
 }
@@ -140,6 +142,7 @@ impl Serialize for AppError {
                     AppError::Serde(_) => "Serde",
                     AppError::HostKeyVerification(_) => "HostKeyVerification",
                     AppError::KeyAuth { .. } | AppError::JumpAuth { .. } => "KeyAuth",
+                    AppError::SudoAuthRequired => "SudoAuthRequired",
                     AppError::Other(_) => "Other",
                     AppError::HostKeyMismatch { .. } => unreachable!(),
                 };

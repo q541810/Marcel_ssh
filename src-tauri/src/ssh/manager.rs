@@ -334,6 +334,7 @@ impl SshManager {
         };
 
         let connection = Arc::new(SshConnection {
+            sudo_passwords: Default::default(),
             id: session_id.clone(),
             host: host.clone(),
             port,
@@ -1247,6 +1248,7 @@ impl SshManager {
         self.connections.write().await.insert(
             session_id.to_string(),
             Arc::new(SshConnection {
+                sudo_passwords: Default::default(),
                 id: session_id.to_string(),
                 host: "127.0.0.1".into(),
                 port: 22,
@@ -1366,6 +1368,7 @@ impl SshManager {
         self.connections.write().await.insert(
             session_id.to_string(),
             Arc::new(SshConnection {
+                sudo_passwords: Default::default(),
                 id: session_id.to_string(),
                 host: "127.0.0.1".into(),
                 port: 22,
@@ -1553,6 +1556,7 @@ mod shared_sftp_tests {
         manager.connections.write().await.insert(
             "s1".into(),
             Arc::new(SshConnection {
+                sudo_passwords: Default::default(),
                 id: "s1".into(),
                 host: "127.0.0.1".into(),
                 port: 22,

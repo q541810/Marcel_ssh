@@ -197,6 +197,22 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
+    fn prepare_remote_ticket(
+        &self,
+        mut ticket: crate::command_exec::CommandTicket,
+    ) -> crate::command_exec::CommandTicket {
+        if !self.local_side {
+            ticket.interactive_sudo = true;
+            if ticket.task_id.is_none() {
+                ticket.task_id = self.task_id.clone();
+            }
+            if ticket.owner_conversation_id.is_none() {
+                ticket.owner_conversation_id = self.owner_conversation_id.clone()
+                    .or_else(|| self.conversation_id.clone());
+            }
+        }
+        ticket
+    }
     /// `conversation_id` 是**必填**参数而不是可选 builder：工具拿不到"我在哪个
     /// 会话里"就只能报错（回读历史全靠它）。放进构造函数，漏注入是**编译错误**
     /// 而不是运行时才发现。
@@ -341,7 +357,7 @@ impl ToolContext {
             // 不可能到达：无 manager 时调用方走 ssh 回退分支
             AppError::Agent("command_exec manager not configured".into())
         })?;
-        Self::map_finished(mgr.submit(&self.app_handle, ticket).await)
+        Self::map_finished(mgr.submit(&self.app_handle, self.prepare_remote_ticket(ticket)).await)
     }
 
     /// 前台命令的结果映射（`submit_full` 与可转后台的路径共用）。
@@ -393,7 +409,7 @@ impl ToolContext {
             .command_exec
             .as_ref()
             .ok_or_else(|| AppError::Agent("command_exec manager not configured".into()))?;
-        mgr.submit_background(Some(&self.app_handle), ticket, description)
+        mgr.submit_background(Some(&self.app_handle), self.prepare_remote_ticket(ticket), description)
             .await
     }
 
@@ -407,7 +423,7 @@ impl ToolContext {
                 crate::command_exec::CommandSource::Agent,
             )
             .timeout(Duration::from_secs(120));
-            match mgr.submit(&self.app_handle, ticket).await {
+            match mgr.submit(&self.app_handle, self.prepare_remote_ticket(ticket)).await {
                 crate::command_exec::SubmitOutcome::Completed { output, .. } => return Ok(output),
                 crate::command_exec::SubmitOutcome::TimedOut { .. } => {
                     return Err(AppError::Ssh(format!(
@@ -415,8 +431,13 @@ impl ToolContext {
                         crate::command_exec::executor::timeout_preview(command)
                     )))
                 }
-                crate::command_exec::SubmitOutcome::Cancelled { .. } => {
+                crate::command_exec::SubmitOutcome::Cancelled { reason: crate::command_exec::CancelReason::Disconnected } => {
                     return Err(AppError::Ssh("命令已取消（会话断开）".into()))
+                }
+                crate::command_exec::SubmitOutcome::Cancelled { .. } => {
+                    return Err(AppError::Cancelled(
+                        "已取消命令并关闭通道；远端已执行的操作不会回退".into()
+                    ))
                 }
                 crate::command_exec::SubmitOutcome::Failed { error } => return Err(error),
             }
@@ -475,9 +496,8 @@ impl ToolContext {
             .await
     }
 
-    /// 以完整 ticket 提交执行（`bash` 等需要区分「实际命令」与
-    /// 「展示命令」的调用方使用；sudo 重写后的命令只进 `command`，
-    /// 原始命令进 `display_command`，密码绝不入记录）。
+    /// 以完整 ticket 提交执行。原始命令保留在 `display_command`；
+    /// sudo 密码由执行器单独传送，不进入 ticket 或执行记录。
     ///
     /// **超时不掐断，而是转成后台作业**：`ticket.timeout` 是软超时，到点命令还没结束，
     /// 就把正在跑的同一个进程原地转成后台作业（见
@@ -528,7 +548,7 @@ impl ToolContext {
     ) -> Result<ExecTicketOutcome, AppError> {
         use crate::command_exec::{DetachableOutcome, SubmitOutcome};
         match mgr
-            .submit_detachable(Some(&self.app_handle), ticket, description)
+            .submit_detachable(Some(&self.app_handle), self.prepare_remote_ticket(ticket), description)
             .await
         {
             DetachableOutcome::Detached { job, output } => Ok(ExecTicketOutcome {

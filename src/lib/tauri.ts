@@ -1,4 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+
+export const sshRespondCredential = (interactionId: string, password: string | null) =>
+  invoke<void>('ssh_respond_credential', { interactionId, password });
 import { isDebugSession } from "@/lib/debugServer";
 import {
   POSIX_INTERFACES_COMMAND,
@@ -116,8 +119,9 @@ export async function sshListSessions(): Promise<string[]> {
 export async function sshExec(
   sessionId: string,
   command: string,
+  interactiveSudo = false,
 ): Promise<string> {
-  return invoke<string>("ssh_exec", { sessionId, command });
+  return invoke<string>("ssh_exec", { sessionId, command, interactiveSudo });
 }
 
 /**

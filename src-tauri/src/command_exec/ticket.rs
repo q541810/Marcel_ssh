@@ -6,10 +6,7 @@
 //! [`crate::command_exec::executor`] 统一处理。
 //!
 //! 安全约定：
-//! - `command` 是实际下发到远端的命令。Agent 的 sudo 自动填充发生在工具层
-//!   （`execute_cmd.rs` 的 `rewrite_sudo`），重写后的命令**含明文密码**，
-//!   只允许传入 [`CommandExecutionManager::submit`] 并直达 executor，
-//!   绝不进入 [`ExecutionRecord`] / [`ExecutionSnapshot`] / 事件 / 日志。
+//! - `command` 是实际下发到远端的命令，不得嵌入密码。sudo 密码只经独立 SSH stdin 发送。
 //! - `display_command` 是记录与快照使用的展示文本，调用方必须传原始命令
 //!   （未重写、不含密码）。
 
@@ -85,12 +82,15 @@ pub struct StreamTarget {
 #[derive(Debug, Clone)]
 pub struct CommandTicket {
     pub session_id: String,
-    /// 实际执行的命令（可能含 sudo 密码，绝不入记录/事件/日志）。
+    /// 实际执行的命令，不得含应用保存的密码。
     pub command: String,
     /// 展示用命令（原始命令，不含密码）。默认等于 `command`；调用方在
     /// command 被重写时必须通过 [`CommandTicket::display_as`] 显式指定。
     pub display_command: String,
     pub source: CommandSource,
+    /// 允许应用弹 sudo 密码框。插件直接调用、系统轮询等须显式启用。
+    pub interactive_sudo: bool,
+    pub(crate) auth_wait: super::auth_wait::AuthWait,
     pub timeout: Duration,
     /// 可取消标识：同时是取消注册表的键（`ssh_exec_long_cancel(task_id)`）。
     pub task_id: Option<String>,
@@ -116,6 +116,8 @@ impl CommandTicket {
             command,
             session_id: session_id.into(),
             source,
+            interactive_sudo: false,
+            auth_wait: Default::default(),
             timeout: DEFAULT_EXEC_TIMEOUT,
             task_id: None,
             owner_conversation_id: None,
@@ -124,13 +126,18 @@ impl CommandTicket {
         }
     }
 
+    pub fn interactive_sudo(mut self, enabled: bool) -> Self {
+        self.interactive_sudo = enabled;
+        self
+    }
+
     /// 声明归属对话（后台作业台账与访问围栏都用它）。
     pub fn owned_by(mut self, conversation_id: impl Into<String>) -> Self {
         self.owner_conversation_id = Some(conversation_id.into());
         self
     }
 
-    /// 覆盖展示命令。command 被重写（如 sudo 密码填充）时必须调用。
+    /// 覆盖展示命令。command 被执行适配层包装时仍保留用户提交的文本。
     pub fn display_as(mut self, display: impl Into<String>) -> Self {
         self.display_command = display.into();
         self

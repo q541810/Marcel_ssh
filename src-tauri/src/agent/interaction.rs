@@ -1,7 +1,7 @@
 //! Agent 阻塞式人机交互统一队列管理器（AgentInteractionManager）。
 //!
 //! 职责：
-//! 1. **统一队列管理**：所有 Agent 的危险操作审批（Approval）与用户提问（Question）
+//! 1. **统一队列管理**：危险操作审批（Approval）、用户提问（Question）与密码输入（Credential）
 //!    统一进入串行队列，全局同一时刻最多只向前端展示 **1** 个待处理弹窗/面板。
 //! 2. **上下文丰富**：向前端发出的交互请求包含关联的 SSH 会话名称、Agent 会话标题，
 //!    以及是否是当前聚焦的上下文，方便用户在后台 Agent 请求审批时直接识别或一键跳转。
@@ -27,12 +27,21 @@ use crate::notification::{send_notification, NotificationKind};
 pub const AGENT_INTERACTION_EVENT: &str = "agent://interaction-active";
 pub const AGENT_INTERACTION_CLEARED_EVENT: &str = "agent://interaction-cleared";
 
-/// 交互类型：审批 或 提问
+/// 交互类型。Credential 的回答只交给执行器，不进入模型对话。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum InteractionKind {
     Approval,
     Question,
+    Credential,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialDetail {
+    pub username: String,
+    pub command: String,
+    pub rejected: bool,
 }
 
 /// 审批请求详情
@@ -130,6 +139,8 @@ pub struct ActiveInteractionPayload {
     pub approval: Option<ApprovalDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question: Option<QuestionDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<CredentialDetail>,
 }
 
 /// 用户对一次审批的回答。
@@ -171,6 +182,7 @@ impl ApprovalAnswer {
 enum InteractionResponder {
     Approval(oneshot::Sender<ApprovalAnswer>),
     Question(oneshot::Sender<Vec<serde_json::Value>>),
+    Credential(oneshot::Sender<Option<zeroize::Zeroizing<String>>>),
 }
 
 /// 队列中的单个交互实体
@@ -184,6 +196,7 @@ struct QueuedInteraction {
     conversation_title: String,
     approval: Option<ApprovalDetail>,
     question: Option<QuestionDetail>,
+    credential: Option<CredentialDetail>,
     responder: Option<InteractionResponder>,
 }
 
@@ -201,6 +214,7 @@ impl QueuedInteraction {
             queue_length,
             approval: self.approval.clone(),
             question: self.question.clone(),
+            credential: self.credential.clone(),
         }
     }
 }
@@ -312,6 +326,7 @@ impl AgentInteractionManager {
                 conversation_title: conversation_title.clone(),
                 approval: Some(approval_detail),
                 question: None,
+                credential: None,
                 responder: Some(InteractionResponder::Approval(tx)),
             };
             inner.queue.push_back(queued);
@@ -396,6 +411,7 @@ impl AgentInteractionManager {
                 conversation_title: conversation_title.clone(),
                 approval: None,
                 question: Some(question_detail),
+                credential: None,
                 responder: Some(InteractionResponder::Question(tx)),
             };
             inner.queue.push_back(queued);
@@ -435,6 +451,84 @@ impl AgentInteractionManager {
 
         self.remove_and_advance(app, &task_id, &interaction_id);
         answers
+    }
+
+    /// 密码单独经过 oneshot 交给执行器，不进入 Question 的模型回答路径。
+    pub async fn request_credential(
+        &self,
+        app: &AppHandle,
+        task_id: String,
+        session_id: String,
+        conversation_id: String,
+        detail: CredentialDetail,
+    ) -> Option<zeroize::Zeroizing<String>> {
+        let interaction_id = format!("credential:{}", uuid::Uuid::new_v4());
+        let (session_target, conversation_title) =
+            Self::resolve_context_names(app, &session_id, &conversation_id).await;
+        let (tx, rx) = oneshot::channel();
+        let is_head = {
+            let mut inner = self.inner.write();
+            inner.queue.push_back(QueuedInteraction {
+                interaction_id: interaction_id.clone(),
+                kind: InteractionKind::Credential,
+                task_id: task_id.clone(),
+                session_id,
+                conversation_id,
+                session_target: session_target.clone(),
+                conversation_title,
+                approval: None,
+                question: None,
+                credential: Some(detail),
+                responder: Some(InteractionResponder::Credential(tx)),
+            });
+            inner.by_id.insert(interaction_id.clone(), task_id.clone());
+            inner.queue.len() == 1
+        };
+        // 执行器取消/断线会 drop 等待 future，仍必须从队列移除密码框。
+        let _guard = CredentialGuard {
+            manager: self.clone(),
+            app: app.clone(),
+            task_id,
+            interaction_id,
+        };
+        {
+            let state = app.state::<crate::AppState>();
+            let settings = state.settings.read().await;
+            let body = format!(
+                "[{}] 等待输入 sudo 账户密码",
+                notification_session_label(session_target.as_ref(), settings.privacy_mode)
+            );
+            send_notification(
+                app,
+                NotificationKind::AgentQuestion,
+                &settings.notification_settings,
+                "需要 sudo 密码",
+                &body,
+            );
+        }
+        if is_head {
+            self.notify_active_head(app);
+        }
+        rx.await.ok().flatten()
+    }
+
+    pub fn respond_credential(
+        &self,
+        id: &str,
+        password: Option<zeroize::Zeroizing<String>>,
+    ) -> bool {
+        let mut inner = self.inner.write();
+        let Some(item) = inner
+            .queue
+            .iter_mut()
+            .find(|i| i.interaction_id == id && i.kind == InteractionKind::Credential)
+        else {
+            return false;
+        };
+        let Some(InteractionResponder::Credential(tx)) = item.responder.take() else {
+            return false;
+        };
+        tx.send(password).is_ok()
     }
 
     /// 用户响应审批
@@ -545,6 +639,9 @@ impl AgentInteractionManager {
                         InteractionResponder::Question(tx) => {
                             let _ = tx.send(Vec::new());
                         }
+                        InteractionResponder::Credential(tx) => {
+                            let _ = tx.send(None);
+                        }
                     }
                 }
                 if i == 0 {
@@ -580,6 +677,9 @@ impl AgentInteractionManager {
                         InteractionResponder::Question(tx) => {
                             let _ = tx.send(Vec::new());
                         }
+                        InteractionResponder::Credential(tx) => {
+                            let _ = tx.send(None);
+                        }
                     }
                 }
                 if i == 0 {
@@ -595,6 +695,20 @@ impl AgentInteractionManager {
             self.notify_active_head(app);
         }
         cancelled
+    }
+}
+
+struct CredentialGuard {
+    manager: AgentInteractionManager,
+    app: AppHandle,
+    task_id: String,
+    interaction_id: String,
+}
+
+impl Drop for CredentialGuard {
+    fn drop(&mut self) {
+        self.manager
+            .remove_and_advance(&self.app, &self.task_id, &self.interaction_id);
     }
 }
 
@@ -648,6 +762,7 @@ mod tests {
             conversation_title: "title".into(),
             approval: None,
             question: None,
+            credential: None,
             responder: None,
         };
         let json = serde_json::to_value(q.to_payload(1)).unwrap();
@@ -655,6 +770,46 @@ mod tests {
         assert_eq!(json["sessionTarget"]["host"], "203.0.113.7");
         assert_eq!(json["sessionTarget"]["port"], 2222);
         assert!(!json.to_string().contains("root@203.0.113.7"));
+    }
+
+    #[tokio::test]
+    async fn credential_response_is_one_shot_and_never_in_payload() {
+        let manager = AgentInteractionManager::new();
+        let (tx, rx) = oneshot::channel();
+        let item = QueuedInteraction {
+            interaction_id: "credential:one".into(),
+            kind: InteractionKind::Credential,
+            task_id: "task".into(),
+            session_id: "session".into(),
+            conversation_id: "conv".into(),
+            session_target: Some(target()),
+            conversation_title: "title".into(),
+            approval: None,
+            question: None,
+            credential: Some(CredentialDetail {
+                username: "root".into(),
+                command: "sudo id".into(),
+                rejected: false,
+            }),
+            responder: Some(InteractionResponder::Credential(tx)),
+        };
+        let before = serde_json::to_value(item.to_payload(1)).unwrap();
+        manager.inner.write().queue.push_back(item);
+        assert!(!manager.respond_credential(
+            "credential:stale",
+            Some(zeroize::Zeroizing::new("not-sent".into()))
+        ));
+        assert!(manager.respond_credential(
+            "credential:one",
+            Some(zeroize::Zeroizing::new("actual-secret".into()))
+        ));
+        assert_eq!(rx.await.unwrap().unwrap().as_str(), "actual-secret");
+        assert!(!manager.respond_credential("credential:one", None));
+        let after = serde_json::to_value(manager.inner.read().queue.front().unwrap().to_payload(1))
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(!after.to_string().contains("actual-secret"));
+        assert!(after.get("question").is_none());
     }
 }
 

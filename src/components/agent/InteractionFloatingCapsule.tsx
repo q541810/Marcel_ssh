@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import type { ActiveInteractionPayload } from '@/lib/types';
 import { DISPOSITION_LABELS } from '@/lib/constants';
 import Badge from '@/components/ui/Badge';
-import { Maximize2, Check, X, ShieldAlert, HelpCircle } from 'lucide-react';
+import { Maximize2, Check, X, ShieldAlert, HelpCircle, KeyRound } from 'lucide-react';
 import { registerCapsuleTarget } from '@/stores/capsuleFlyAnimation';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatInteractionSessionLabel } from '@/lib/privacy';
@@ -33,7 +33,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
   }, []);
 
   const isApproval = interaction.kind === 'approval' && interaction.approval;
-  const isQuestion = interaction.kind === 'question' && interaction.question;
+  const isCredential = interaction.kind === 'credential';
 
   const toolName = interaction.approval?.toolName;
   const disposition = interaction.approval?.disposition;
@@ -52,7 +52,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
         <div className="relative flex items-center justify-center h-8 w-8 rounded-xl bg-surface-raised border border-edge shrink-0">
           {isApproval ? (
             <ShieldAlert className="w-4 h-4 text-amber-400" />
-          ) : (
+          ) : isCredential ? <KeyRound className="w-4 h-4 text-amber-400" /> : (
             <HelpCircle className="w-4 h-4 text-indigo-400" />
           )}
         </div>
@@ -61,7 +61,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
         <div className="min-w-0 flex-1 pr-1">
           <div className="flex items-center gap-2 mb-0.5">
             <span className="text-meta font-semibold text-fg truncate max-w-[200px]">
-              {isApproval ? `需要批准：${toolName}` : `回答提问 (${questionCount} 项)`}
+              {isApproval ? `需要批准：${toolName}` : isCredential ? '等待输入 sudo 密码' : `回答提问 (${questionCount} 项)`}
             </span>
             {disposition && (
               <Badge variant={disposition} size="sm">

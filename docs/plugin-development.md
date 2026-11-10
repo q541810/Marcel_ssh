@@ -303,7 +303,9 @@ await pluginCall('fs.write', { path: 'data.json', content: '...' });
 
 | 命令 | 参数 | 说明 |
 |------|------|------|
-| `ssh_exec` | `{sessionId, command}` | 在远程服务器执行命令 |
+| `ssh_exec` | `{sessionId, command, interactiveSudo?: boolean}` | 在远程服务器执行命令 |
+
+用户点击按钮执行 sudo 操作时，可传 `interactiveSudo: true`：能免密就直接执行，需要密码才由主应用弹框，并继续同一次命令。密码不会交给插件，等待输入不计入超时。默认关闭，后台轮询不要启用。`kind=ssh` 的 Agent 工具自动支持这个过程，无需插件自行询问或拼接密码。服务器须支持 POSIX shell 和 sudo askpass；临时文件优先放 `/tmp`，该目录禁止执行时改用用户家目录，结束后清理。手动终端及显式 `sudo -n` / `sudo -S` 行为不变。普通 sudo、绝对路径 sudo 和字面量 `sh -c` 可以弹框，运行时拼出的命令或另外启动的脚本不保证支持。
 
 ### 文件类
 

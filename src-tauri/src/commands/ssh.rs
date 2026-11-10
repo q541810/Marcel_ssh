@@ -11,6 +11,29 @@ use crate::AppState;
 use serde_json::json;
 use std::time::Duration;
 
+#[tauri::command]
+pub fn ssh_respond_credential(
+    state: State<'_, AppState>,
+    interaction_id: String,
+    password: Option<String>,
+) -> Result<(), AppError> {
+    let password = password.map(zeroize::Zeroizing::new);
+    if password
+        .as_ref()
+        .is_some_and(|p| p.contains(['\n', '\r', '\0']))
+    {
+        return Err(AppError::Config("sudo 密码不能包含换行或空字符".into()));
+    }
+    if state
+        .agent_interaction
+        .respond_credential(&interaction_id, password)
+    {
+        Ok(())
+    } else {
+        Err(AppError::Cancelled("这次密码请求已结束".into()))
+    }
+}
+
 /// Build runtime jump config from a saved connection + keychain secrets.
 /// Returns `Ok(None)` when jump is not enabled.
 /// `pub(crate)`：多机操控（multi_host）静默拉起复用同一构建逻辑。
@@ -235,16 +258,22 @@ pub async fn ssh_exec(
     state: State<'_, AppState>,
     session_id: String,
     command: String,
+    interactive_sudo: Option<bool>,
 ) -> Result<String, AppError> {
-    let ticket = CommandTicket::new(&session_id, &command, CommandSource::User);
+    let ticket = CommandTicket::new(&session_id, &command, CommandSource::User)
+        .interactive_sudo(interactive_sudo.unwrap_or(false));
     match state.command_exec.submit(&app, ticket).await {
         SubmitOutcome::Completed { output, .. } => Ok(output),
         SubmitOutcome::TimedOut { .. } => Err(AppError::Ssh(format!(
             "命令在 120 秒后超时: {}",
             crate::command_exec::executor::timeout_preview(&command)
         ))),
-        // ssh_exec 的 ticket 无 task_id，只有断连级联会取消
-        SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+        SubmitOutcome::Cancelled {
+            reason: CancelReason::Disconnected,
+        } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+        SubmitOutcome::Cancelled { .. } => Err(AppError::Cancelled(
+            "已取消密码输入并关闭命令通道；远端已执行的操作不会回退".into(),
+        )),
         SubmitOutcome::Failed { error } => Err(error),
     }
 }
