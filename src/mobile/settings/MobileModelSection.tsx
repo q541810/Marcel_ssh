@@ -25,7 +25,6 @@ import {
   shiftChannel,
 } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
-import YegouApiBanner from '@/components/settings/YegouApiBanner';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const inputClass =
@@ -1101,8 +1100,6 @@ export function MobileModelSection() {
             })}
           </div>
         )}
-
-        <YegouApiBanner className="mt-3" />
       </div>
 
       {/* 摘要模型选择 */}

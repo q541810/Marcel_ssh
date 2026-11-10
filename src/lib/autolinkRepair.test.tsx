@@ -20,13 +20,13 @@ function marketStyle(text: string) {
 
 describe('修复 GFM 字面自动链接吞全角标点', () => {
   it('URL 包在 **加粗** 里且后面跟全角括号：加粗恢复、链接干净、被吞的字回到正文', () => {
-    const html = compiled('访问地址：**https://feiyu.yegou.work/**（HTTP 会自动 301 跳转到 HTTPS）');
+    const html = compiled('访问地址：**https://api.example.com/**（HTTP 会自动 301 跳转到 HTTPS）');
     expect(html).toContain(
-      '<strong><a href="https://feiyu.yegou.work/">https://feiyu.yegou.work/</a></strong>',
+      '<strong><a href="https://api.example.com/">https://api.example.com/</a></strong>',
     );
     expect(html).toContain('（HTTP 会自动 301 跳转到 HTTPS）');
     expect(html).not.toContain('**');
-    expect(html).not.toContain('href="https://feiyu.yegou.work/**');
+    expect(html).not.toContain('href="https://api.example.com/**');
   });
 
   it('URL 后直接跟全角标点：链接在标点处截断，标点及其后内容留在正文', () => {
@@ -134,7 +134,7 @@ describe('修复 GFM 字面自动链接吞全角标点', () => {
 
   it('worker 路径与 react-markdown 直挂插件路径产出一致', () => {
     for (const text of [
-      '访问地址：**https://feiyu.yegou.work/**（HTTP 会自动 301 跳转到 HTTPS）',
+      '访问地址：**https://api.example.com/**（HTTP 会自动 301 跳转到 HTTPS）',
       '访问 https://example.com/（说明） 即可',
       '见 www.example.com/（说明）',
       '!https://example.com/（说明）',
