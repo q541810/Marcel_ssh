@@ -163,6 +163,67 @@ export function springPath<T extends Channels>(
   return { ms, samples, dt, path: sampled(samples, dt) };
 }
 
+/**
+ * One value on a spring, advanced by `dtMs` toward `target` (for a value that
+ * is driven frame by frame rather than played as a prepared trajectory, e.g.
+ * something that trails the finger with a little weight). Substeps keep it
+ * stable when a frame runs long.
+ */
+export function springStep(
+  state: { p: number; v: number },
+  target: number,
+  response: number,
+  damping: number,
+  dtMs: number,
+): void {
+  const omega = (2 * Math.PI) / (response * 1000);
+  let left = Math.min(Math.max(dtMs, 0), 64);
+  while (left > 0) {
+    const dt = Math.min(left, 4);
+    left -= dt;
+    const a = -omega * omega * (state.p - target) - 2 * damping * omega * state.v;
+    state.v += a * dt;
+    state.p += state.v * dt;
+  }
+}
+
+/**
+ * Run `fn` once the frame that is being built right now has been handed to the
+ * screen (a task after the next animation frame) — so work that would hold that
+ * frame up (a React update closing a layer) starts only after the motion the
+ * frame carries is on its way. `frames` = 2 waits one more frame (for a first
+ * paint to be through). Falls back to a timer where frames do not tick (a
+ * hidden page). Returns a cancel function.
+ */
+export function afterFrame(fn: () => void, fallbackMs = 80, frames = 1): () => void {
+  let done = false;
+  let raf = 0;
+  let task: ReturnType<typeof setTimeout> | null = null;
+  const run = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(backstop);
+    fn();
+  };
+  const backstop = setTimeout(run, fallbackMs);
+  if (typeof requestAnimationFrame === 'function') {
+    let left = frames;
+    const tick = () => {
+      if (done) return;
+      left -= 1;
+      if (left > 0) raf = requestAnimationFrame(tick);
+      else task = setTimeout(run, 0);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  return () => {
+    done = true;
+    clearTimeout(backstop);
+    if (task != null) clearTimeout(task);
+    if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
+  };
+}
+
 /** Linear interpolation over evenly spaced samples. */
 export function sampled<T extends Channels>(samples: T[], dt: number): Trajectory<T> {
   return (t) => {

@@ -2,17 +2,22 @@
  * Page transitions and predictive back for pages (`MobileStackPage`,
  * `MobileFullscreenPage`): **leave the way you came** (§7).
  *
+ * One object the whole way — the page as a card — that only ever moves, turns,
+ * scales and (at the very end, already tiny and sitting on its origin) melts
+ * away. Nothing is cropped, recoloured or swapped mid-air.
+ *
  * - **Open**: the page grows out of the control that opened it (the settings
- *   row, the button — see pageOrigin.ts): a card the shape of that row that
- *   expands to fill the screen while the screen behind it steps back.
+ *   row, the button — see pageOrigin.ts) while the screen behind steps back.
  * - **Predictive back**: the page lifts off into a card held by the finger
- *   (`cardPose` in backPreview.ts — shrink, turn toward the swipe, pitch).
- * - **Release**: the card flies home — from exactly where it is, at exactly the
- *   speed it was moving (§5) — and lands on the row it came out of, taking that
- *   row's shape. Nothing fades away in mid-air: the card only dissolves in the
- *   last stretch, when it already sits on the row, the way an iOS zoom
- *   transition hands over to its source. The back button and any other close
- *   take the same flight.
+ *   (`cardPose` in backPreview.ts — shrink, turn toward the swipe, pitch). The
+ *   tilt trails a quick finger with a little weight (`feel.sway`); size and
+ *   position follow at once. The origin lights up faintly: that is where the
+ *   card will go.
+ * - **Release**: the card flies home from exactly where it is, keeps shrinking,
+ *   and dives into its origin — carrying on at the speed it had, pushed along by
+ *   the finger's own speed (a flick flies faster than a gentle let-go). The
+ *   origin catches it: it dips and glows as the card arrives. The back button
+ *   and any other close take the same flight.
  * - **Cancel**: the card springs back to full screen.
  *
  * With no origin (opened by a notification, a jump from elsewhere, or the row
@@ -24,18 +29,21 @@
  * while the page is still growing, reopen it while it is flying home — it
  * never jumps.
  *
- * ## How the card is drawn (cost)
- * The card is described in screen space — centre, width, height, corner
- * radius, two tilts — and drawn with a transform plus a `clip-path` that crops
- * the page to the card's shape (top-anchored, so a row-shaped card shows the
- * page's own header). While the finger holds the card the clip never changes,
- * so every frame is transform/opacity only (compositor). Only the flights
- * change the clip, i.e. repaint one layer for a few hundred ms.
+ * ## Cost: the compositor plays it
+ * A flight animates `transform` and `opacity` only — on the card, on its shadow
+ * (a separate element: the card's rounded clip would cut a box-shadow off), on
+ * the screen behind and on the scrim over it. Those are the properties the
+ * compositor animates by itself, so a flight keeps its frame rate while React
+ * is busy mounting or closing the page. The card's rounded clip is set once and
+ * never changes. **Do not add a property that needs a repaint (clip-path,
+ * border-radius, colours, sizes) to a flight's keyframes**: one such property
+ * moves the whole animation to the main thread, and it stutters or skips
+ * exactly when the page is loading — the old row-shaped landing did that.
  *
- * The card's shadow is a separate element behind it (transform/opacity only,
- * painted once): a clip-path would cut a box-shadow off, and this way the
- * shadow can dissolve as the card settles onto the surface, like a real one.
- * The dimming of the screen behind is a scrim whose opacity moves, not a filter.
+ * Nothing heavy happens at release either: the origin is measured when the
+ * gesture starts, and `backHandler` closes the layer a frame after the flight
+ * has been handed over. An opening page gets its first paint through before it
+ * starts to grow, so a slow first frame cannot eat the start of the motion.
  */
 
 import { holdExitFallback } from '@/hooks/useAnimatedPresence';
@@ -51,6 +59,7 @@ import {
 } from './backPreview';
 import {
   absorbable,
+  afterFrame,
   Blend,
   clamp,
   keyframes,
@@ -60,6 +69,7 @@ import {
   smoothstep,
   speedAt,
   springPath,
+  springStep,
   zeroLike,
   type Channels,
   type Trajectory,
@@ -68,24 +78,39 @@ import { claimOrigin } from './pageOrigin';
 
 /** Corner radius of the lifted page, in the page's own (unscaled) px. */
 const CARD_RADIUS = 28;
-/** Share of the way, at the origin end, over which the shadow settles. */
-const SHADOW_SPAN = 0.6;
 /** After a commit, how long the page gets to start closing before the flight turns back. */
 const COMMIT_GRACE_MS = 220;
 /** Fallback (no origin): how far past the right edge the page parks, px. */
-const OFFSCREEN_GAP_PX = 40;
+const OFFSCREEN_GAP_PX = 96;
+/** …and how far past it the card (shadow included) is out of sight: the flight out ends there. */
+const OFFSCREEN_CLEAR_PX = 52;
+/** The card never lands smaller than this share of the page (a dot would just vanish). */
+const MIN_CHIP_SCALE = 0.04;
+/**
+ * Where, on the way between full screen and the origin (0 = on the origin,
+ * 1 = full screen), the card is solid / gone. It melts only over the last
+ * stretch, when it is already small and sitting on the origin.
+ */
+const FADE_START = 0.16;
+const FADE_END = 0.03;
+/** How far past the origin the flight home aims, as a share of the way (it ends on the origin). */
+const HOME_REACH = 0.12;
+/** Share of the way, at the origin end, over which the shadow settles. */
+const SHADOW_SPAN = 0.6;
+/** How much of the finger's speed the released card is thrown with. */
+const THROW_GAIN = 0.5;
+/** Finger speed (px/ms) counted as a full-strength flick; anything faster is capped. */
+const FAST_THROW = 2;
+/** A full-strength flick shortens the flight home by this share. */
+const THROW_HURRY = 0.3;
 
-/** The card in screen space (viewport px), plus its look. */
+/** The card: where the page's centre is (from its resting place), its size and tilt, its look. */
 export interface Card extends Channels {
-  /** centre */
-  cx: number;
-  cy: number;
-  /** visible size */
-  w: number;
-  h: number;
-  /** top / bottom corner radius in the page's own px (scaled with the card) */
-  rt: number;
-  rb: number;
+  /** centre offset from rest, px */
+  x: number;
+  y: number;
+  /** uniform scale */
+  s: number;
   /** tilts, deg */
   rx: number;
   ry: number;
@@ -93,26 +118,6 @@ export interface Card extends Channels {
   o: number;
   /** opacity of its shadow */
   sh: number;
-  /**
-   * The stand-in for the origin row that rides on the card, in two layers so
-   * two sets of text are never seen at once: `src` is its plain surface (the
-   * row's background) covering the page content, `txt` the row's content on
-   * top of that surface. Landing: the surface comes first, then the text;
-   * growing out of the row: the reverse.
-   */
-  src: number;
-  txt: number;
-}
-
-/** What the card lands on: the origin's rect (screen behind at rest) and look. */
-export interface Origin {
-  el: Element;
-  rect: { left: number; top: number; width: number; height: number };
-  /** visible corner radii, px (taken from the clipping group for a row inside one) */
-  radT: number;
-  radB: number;
-  /** the colour behind its content */
-  bg: string;
 }
 
 /** The page's own box (viewport px), measured untransformed. */
@@ -122,6 +127,21 @@ export interface Box {
   w: number;
   h: number;
 }
+
+interface Rect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Where the card lands: the origin element and its rect once the screen behind is at rest. */
+interface Landing {
+  el: Element;
+  rect: Rect;
+}
+
+const REST: Card = { x: 0, y: 0, s: 1, rx: 0, ry: 0, o: 1, sh: 1 };
 
 /** The screen behind: its scale and the dimming over it. */
 interface Under extends Channels {
@@ -145,132 +165,45 @@ function underHeld(reveal: number): Under {
 // Geometry
 // ---------------------------------------------------------------------------
 
-function restCard(b: Box): Card {
-  return {
-    cx: b.left + b.w / 2,
-    cy: b.top + b.h / 2,
-    w: b.w,
-    h: b.h,
-    rt: CARD_RADIUS,
-    rb: CARD_RADIUS,
-    rx: 0,
-    ry: 0,
-    o: 1,
-    sh: 1,
-    src: 0,
-    txt: 0,
-  };
-}
-
 /** The held pose (translate / scale / tilt of the whole page) as a card. */
-function heldCard(p: Pose, b: Box): Card {
-  const rest = restCard(b);
-  return {
-    ...rest,
-    cx: rest.cx + p.x,
-    cy: rest.cy + p.y,
-    w: b.w * p.s,
-    h: b.h * p.s,
-    rx: p.rx,
-    ry: p.ry,
-  };
+function heldCard(p: Pose): Card {
+  return { x: p.x, y: p.y, s: p.s, rx: p.rx, ry: p.ry, o: 1, sh: 1 };
 }
 
 /**
- * Card that sits exactly on the origin, wearing it: the stand-in fully shown
- * (`src` 1), the page under it, the origin's own corner radii.
+ * The card as it lands: the whole page, shrunk until it fits inside the origin
+ * and centred on it — gone by then (`o` 0), the origin showing in its place.
  */
-function cardOn(origin: Pick<Origin, 'rect' | 'radT' | 'radB'>, b: Box): Card {
-  const rect = origin.rect;
-  // The crop keeps the page's full width and trims its bottom, so a card can
-  // be relatively shorter than the page (a row) but not taller: a tall origin
-  // gets a card as wide as it, centred on it.
-  const w = rect.width;
-  const h = Math.min(rect.height, (w * b.h) / b.w);
-  const s = w / b.w;
+function chipOn(rect: Rect, b: Box): Card {
+  const s = clamp(Math.min(rect.width / b.w, rect.height / b.h), MIN_CHIP_SCALE, 1);
   return {
-    cx: rect.left + rect.width / 2,
-    cy: rect.top + rect.height / 2,
-    w,
-    h,
-    rt: origin.radT / s,
-    rb: origin.radB / s,
+    x: rect.left + rect.width / 2 - (b.left + b.w / 2),
+    y: rect.top + rect.height / 2 - (b.top + b.h / 2),
+    s,
     rx: 0,
     ry: 0,
-    o: 1,
+    o: 0,
     sh: 0,
-    src: 1,
-    txt: 1,
   };
 }
 
-/** Parked past the right edge at size `w` × `h` (the fallback "where it came from"). */
-function offscreenCard(b: Box, w: number, h: number): Card {
-  return {
-    ...restCard(b),
-    cx: b.left + b.w + w / 2 + OFFSCREEN_GAP_PX,
-    w,
-    h,
-  };
+/** Parked past the right edge at scale `s` (the fallback "where it came from"). */
+function offscreenCard(b: Box, s: number): Card {
+  return { ...REST, x: b.w / 2 + (b.w * s) / 2 + OFFSCREEN_GAP_PX, s };
 }
 
-function cardTransform(c: Card, b: Box): string {
-  const s = Math.max(c.w / b.w, 1e-4);
-  const hc = Math.min(b.h, c.h / s);
-  // Origin at the page's top-left: move to the card centre, then project and
-  // tilt around that centre, scale, and centre the cropped part on it.
+function cardTransform(c: Card): string {
+  // Origin at the page's centre: move there, then project and tilt around it.
   return (
-    `translate3d(${(c.cx - b.left).toFixed(2)}px, ${(c.cy - b.top).toFixed(2)}px, 0) ` +
+    `translate3d(${c.x.toFixed(2)}px, ${c.y.toFixed(2)}px, 0) ` +
     `perspective(${PERSPECTIVE_PX}px) rotateX(${c.rx.toFixed(2)}deg) rotateY(${c.ry.toFixed(2)}deg) ` +
-    `scale(${s.toFixed(5)}) translate(${(-b.w / 2).toFixed(2)}px, ${(-hc / 2).toFixed(2)}px)`
+    `scale(${Math.max(c.s, 1e-4).toFixed(5)})`
   );
 }
 
-function cardClip(c: Card, b: Box): string {
-  const s = Math.max(c.w / b.w, 1e-4);
-  const hc = Math.min(b.h, c.h / s);
-  const rt = Math.max(0, c.rt).toFixed(1);
-  const rb = Math.max(0, c.rb).toFixed(1);
-  return `inset(0px 0px ${Math.max(0, b.h - hc).toFixed(1)}px 0px round ${rt}px ${rt}px ${rb}px ${rb}px)`;
-}
-
-function shadowTransform(c: Card, b: Box): string {
-  return (
-    `translate3d(${(c.cx - b.left).toFixed(2)}px, ${(c.cy - b.top).toFixed(2)}px, 0) ` +
-    `perspective(${PERSPECTIVE_PX}px) rotateX(${c.rx.toFixed(2)}deg) rotateY(${c.ry.toFixed(2)}deg) ` +
-    `scale(${(c.w / b.w).toFixed(5)}, ${(c.h / b.h).toFixed(5)}) ` +
-    `translate(${(-b.w / 2).toFixed(2)}px, ${(-b.h / 2).toFixed(2)}px)`
-  );
-}
-
-/**
- * The stand-in's box is the origin's own size; this maps it onto the card's
- * frame (same centre, tilt and size). Its content is then scaled back to
- * uniform (`standInnerTransform`) so the row's text is never squashed.
- */
-function standTransform(c: Card, b: Box, sw: number, sh: number): string {
-  return (
-    `translate3d(${(c.cx - b.left).toFixed(2)}px, ${(c.cy - b.top).toFixed(2)}px, 0) ` +
-    `perspective(${PERSPECTIVE_PX}px) rotateX(${c.rx.toFixed(2)}deg) rotateY(${c.ry.toFixed(2)}deg) ` +
-    `scale(${(c.w / sw).toFixed(5)}, ${(c.h / sh).toFixed(5)}) ` +
-    `translate(${(-sw / 2).toFixed(2)}px, ${(-sh / 2).toFixed(2)}px)`
-  );
-}
-
-function standInnerTransform(c: Card, sw: number, sh: number): string {
-  const sx = c.w / sw;
-  const sy = Math.max(c.h / sh, 1e-4);
-  return `scale(1, ${(sx / sy).toFixed(5)})`;
-}
-
-/** Sum of the distances of the four edges, px. */
-function rectGap(a: Card, b: Card): number {
-  return (
-    Math.abs(a.cx - a.w / 2 - (b.cx - b.w / 2)) +
-    Math.abs(a.cx + a.w / 2 - (b.cx + b.w / 2)) +
-    Math.abs(a.cy - a.h / 2 - (b.cy - b.h / 2)) +
-    Math.abs(a.cy + a.h / 2 - (b.cy + b.h / 2))
-  );
+/** How far apart two cards are, px: centre distance plus the size difference at the page's scale. */
+function gap(a: Card, b: Card, box: Box): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + (Math.abs(a.s - b.s) * (box.w + box.h)) / 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,66 +211,29 @@ function rectGap(a: Card, b: Card): number {
 // ---------------------------------------------------------------------------
 
 /**
- * How the look changes along a flight. The page itself never turns
- * see-through, and the page's content and the row's content are never shown
- * over each other:
- * - `home`: landing on the origin — in the first half of the last
- *   {@link handOver} px the row's plain surface covers the page content, in
- *   the second half the row's text appears on it; by touchdown the card *is*
- *   the row. The shadow settles over the last {@link SHADOW_SPAN} of the way.
- * - `grow`: leaving the origin — the mirror image.
- * - `plain`: no hand-over (cancel, the off-screen fallback).
+ * How the look changes along a flight — by where the card is, not by the clock,
+ * so an interrupted flight picks its look up where it left it:
+ * - `home`: into the origin (`chip`) — solid until the last stretch, then it
+ *   melts into the origin; the shadow settles on the way. Ends as soon as the
+ *   card is gone, without waiting out the spring's tail.
+ * - `grow`: out of the origin — the mirror image.
+ * - `leave`: out past the right edge; ends once the card is off screen.
+ * - `plain`: nothing special (cancel, coming in from the right).
  */
-type Look = 'home' | 'grow' | 'plain';
-
-/** Distance (sum of edge gaps, px) from the origin over which the row and page swap on the card. */
-function handOver(origin: Card): number {
-  return clamp(1.5 * Math.min(origin.w, origin.h), 24, 120);
-}
-
-/** 1 at the origin, 0 once `gap` is past the hand-over: [surface, text]. */
-function swapAt(gap: number, origin: Card): [number, number] {
-  const g = gap / handOver(origin);
-  return [1 - smoothstep((g - 0.5) / 0.5), 1 - smoothstep(g / 0.5)];
-}
-
-function lookAt(
-  look: Look,
-  from: Card,
-  to: Card,
-  c: Card,
-  left: number,
-): { o: number; sh: number; src: number; txt: number } {
-  if (look === 'home') {
-    const [surface, text] = swapAt(rectGap(c, to), to);
-    return {
-      o: from.o,
-      sh: from.sh * smoothstep(left / SHADOW_SPAN),
-      src: Math.max(from.src, surface),
-      txt: Math.max(from.txt, text),
-    };
-  }
-  if (look === 'grow') {
-    const [surface, text] = swapAt(rectGap(c, from), from);
-    return {
-      o: from.o,
-      sh: from.sh + (1 - from.sh) * smoothstep((1 - left) / SHADOW_SPAN),
-      src: Math.min(from.src, surface),
-      txt: Math.min(from.txt, text),
-    };
-  }
-  const mix = (k: 'o' | 'sh' | 'src' | 'txt') => to[k] + (from[k] - to[k]) * left;
-  return { o: mix('o'), sh: mix('sh'), src: mix('src'), txt: mix('txt') };
-}
+type Look = 'home' | 'grow' | 'leave' | 'plain';
 
 const CARD_TOLERANCE = (k: string): number =>
-  k === 'rx' || k === 'ry' ? 0.1 : k === 'o' || k === 'sh' || k === 'src' || k === 'txt' ? 0.01 : 0.4;
+  k === 'rx' || k === 'ry' ? 0.1 : k === 's' ? 0.0008 : k === 'o' || k === 'sh' ? 10 : 0.4;
+
+/** Solid beyond `solidAt` (share of the way from the origin), gone within {@link FADE_END}. */
+function solidity(near: number, solidAt: number): number {
+  return solidAt > FADE_END ? smoothstep((near - FADE_END) / (solidAt - FADE_END)) : 0;
+}
 
 /**
- * A spring flight from `from` (moving at `v` per ms) to `to`: geometry and
- * tilt are independent springs (tilts may overshoot a hair, the rest never);
- * the look follows the geometry ({@link lookAt}), so the hand-over happens
- * where the card is, not at some point in time.
+ * A spring flight from `from` (moving at `v` per ms) to `to`: position, size
+ * and tilt are independent springs (tilts may overshoot a hair, the rest
+ * never). `chip` is the card on the origin, for the looks that need it.
  */
 function flight(
   from: Card,
@@ -345,77 +241,97 @@ function flight(
   to: Card,
   look: Look,
   response: number,
+  box: Box,
+  chip: Card | null = null,
 ): { path: Trajectory<Card>; ms: number } {
-  const run = springPath(from, { ...v, o: 0, sh: 0, src: 0, txt: 0 }, to, {
+  const diving = look === 'home' && chip != null;
+  // Into the origin, the spring aims a little past it and the flight ends on
+  // it: the card arrives still moving and dives in, instead of slowing to a
+  // crawl just above the origin and hanging there half faded.
+  const reach = diving ? 1 + HOME_REACH : 1;
+  const aim: Card = diving
+    ? {
+        ...to,
+        x: from.x + (to.x - from.x) * reach,
+        y: from.y + (to.y - from.y) * reach,
+        s: from.s + (to.s - from.s) * reach,
+      }
+    : to;
+  const run = springPath(from, { ...v, o: 0, sh: 0 }, aim, {
     response,
     damping: { rx: 0.85, ry: 0.85 },
     tolerance: CARD_TOLERANCE,
   });
-  const total = rectGap(from, to);
-  const n = run.samples.length;
-  const samples = run.samples.map((c, i) => {
-    const left = total > 1 ? clamp(rectGap(c, to) / total, 0, 1) : 1 - i / Math.max(1, n - 1);
-    if (i < n - 1) return { ...c, ...lookAt(look, from, to, c, left) };
-    // Touchdown on the row: the stand-in is the row now; the page underneath
-    // is let go of (it unmounts) and the stand-in is removed onto the real row.
-    return look === 'home' ? { ...to, o: 0 } : { ...to };
-  });
-  return { path: sampled(samples, run.dt), ms: run.ms };
+  const body = run.samples.slice(0, -1);
+  const out: Card[] = [];
+  if (chip && (look === 'home' || look === 'grow')) {
+    const whole = Math.max(1, gap(REST, chip, box));
+    const near = (c: Card) => gap(c, chip, box) / whole;
+    if (look === 'home') {
+      const start = near(from);
+      // A flight that starts inside the fade or shadow range keeps what it had.
+      const solidAt = Math.min(FADE_START, start);
+      const shadowAt = Math.min(SHADOW_SPAN, Math.max(start, 1e-3));
+      const omega = (2 * Math.PI) / (response * 1000);
+      for (let i = 0; i < body.length; i++) {
+        // How much of the way to the origin is covered (1 = on it).
+        const wt = omega * i * run.dt;
+        const covered = reach * (1 - (1 + wt) * Math.exp(-wt));
+        const r = near(body[i]);
+        if (i > 0 && (covered >= 1 || r <= FADE_END)) break;
+        out.push({
+          ...body[i],
+          // By where it is; and gone by the time it is there, whatever a throw did to its path.
+          o: from.o * Math.min(solidity(r, solidAt), smoothstep((1 - covered) / 0.1)),
+          sh: from.sh * smoothstep(r / shadowAt),
+        });
+      }
+      out.push({ ...to, o: 0, sh: 0 });
+    } else {
+      // From whatever it had at the start (0 on the origin; something in between
+      // when a flight home is turned around) up to full, by where it is — or, if
+      // it is already past that range, over a moment.
+      const rise = (start: number, at: (r: number) => number) => {
+        const a = at(near(from));
+        return (r: number, t: number) =>
+          start + (1 - start) * (a < 0.999 ? clamp((at(r) - a) / (1 - a), 0, 1) : smoothstep(t / 80));
+      };
+      const solid = rise(from.o, (r) => solidity(r, FADE_START));
+      const shade = rise(from.sh, (r) => smoothstep(r / SHADOW_SPAN));
+      for (let i = 0; i < body.length; i++) {
+        const r = near(body[i]);
+        out.push({ ...body[i], o: solid(r, i * run.dt), sh: shade(r, i * run.dt) });
+      }
+      out.push({ ...to });
+    }
+  } else {
+    const total = gap(from, to, box);
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      // Off the right edge: nothing left to see.
+      if (look === 'leave' && i > 0 && c.x - (c.s * box.w) / 2 > box.w / 2 + OFFSCREEN_CLEAR_PX) break;
+      const left = total > 1 ? clamp(gap(c, to, box) / total, 0, 1) : 1 - i / Math.max(1, body.length);
+      out.push({ ...c, o: to.o + (from.o - to.o) * left, sh: to.sh + (from.sh - to.sh) * left });
+    }
+    out.push({ ...to });
+  }
+  return { path: sampled(out, run.dt), ms: (out.length - 1) * run.dt };
 }
 
 // ---------------------------------------------------------------------------
 // The page element
 // ---------------------------------------------------------------------------
 
-/**
- * A copy of the origin row, worn by the card while it lands on (or grows out
- * of) that row. Visual only: inert, hidden from assistive tech, no ids.
- */
-function makeStandIn(origin: Origin): { outer: HTMLDivElement; inner: HTMLDivElement } {
-  const { width: sw, height: sh } = origin.rect;
-  const outer = document.createElement('div');
-  outer.dataset.backStandIn = '';
-  outer.setAttribute('aria-hidden', 'true');
-  outer.inert = true;
-  outer.style.cssText =
-    `width:${sw}px;height:${sh}px;pointer-events:none;transform-origin:0 0;overflow:hidden;` +
-    `will-change:transform,opacity;opacity:0;background:${origin.bg};` +
-    `border-radius:${origin.radT}px ${origin.radT}px ${origin.radB}px ${origin.radB}px;`;
-  const inner = document.createElement('div');
-  inner.style.cssText = 'position:absolute;inset:0;transform-origin:50% 50%;will-change:transform;';
-  const copy = origin.el.cloneNode(true) as HTMLElement;
-  copy.removeAttribute('id');
-  copy.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
-  // Selectors like `:not(:first-child)` won't match the copy where it sits
-  // now: carry over the box styles that make it look the way it does.
-  const cs = getComputedStyle(origin.el);
-  const keep = [
-    'border-top',
-    'border-right',
-    'border-bottom',
-    'border-left',
-    'background-color',
-    'color',
-    'font-family',
-    'font-size',
-    'line-height',
-    'padding',
-    'box-sizing',
-  ];
-  for (const k of keep) copy.style.setProperty(k, cs.getPropertyValue(k));
-  copy.style.setProperty('width', '100%');
-  copy.style.setProperty('height', '100%');
-  copy.style.setProperty('margin', '0');
-  copy.style.setProperty('border-radius', '0');
-  inner.appendChild(copy);
-  outer.appendChild(inner);
-  return { outer, inner };
-}
-
 const SHADOW_CSS =
-  'pointer-events:none;transform-origin:0 0;will-change:transform,opacity;opacity:0;' +
+  'pointer-events:none;transform-origin:50% 50%;will-change:transform,opacity;opacity:0;' +
   `border-radius:${CARD_RADIUS}px;` +
   'box-shadow:0 0 0 1px rgb(128 128 128 / 0.22),0 18px 48px rgb(0 0 0 / 0.42);';
+
+/** Elapsed time of a running animation as the screen shows it, ms. */
+function elapsed(anim: Animation | undefined, started: number, ms: number): number {
+  const t = anim?.currentTime;
+  return clamp(typeof t === 'number' ? t : performance.now() - started, 0, ms);
+}
 
 /**
  * Owns the page element while it is a card (gesture or flight) and restores it
@@ -426,9 +342,7 @@ class PageCard {
   el: HTMLElement | null = null;
   box: Box = { left: 0, top: 0, w: 1, h: 1 };
   private shadow: HTMLDivElement | null = null;
-  private stand: { outer: HTMLDivElement; inner: HTMLDivElement; w: number; h: number } | null = null;
   private last: Card | null = null;
-  private clip = '';
   private anims: Animation[] = [];
   private playing: { path: Trajectory<Card>; ms: number; started: number } | null = null;
   private doneTimer: ReturnType<typeof setTimeout> | null = null;
@@ -436,10 +350,6 @@ class PageCard {
   private readonly blend = new Blend<Card>();
 
   constructor(private readonly resolve: () => HTMLElement | null) {}
-
-  get rest(): Card {
-    return restCard(this.box);
-  }
 
   get isPlaying(): boolean {
     return this.playing != null;
@@ -465,8 +375,9 @@ class PageCard {
     const s = el.style;
     s.transition = 'none';
     s.willChange = 'transform, opacity';
-    s.transformOrigin = '0 0';
-    this.clip = '';
+    s.transformOrigin = '50% 50%';
+    // Set once, never animated: the card's corners (see "Cost" above).
+    s.clipPath = `inset(0px round ${CARD_RADIUS}px)`;
     this.rec.reset();
     this.blend.clear();
     const parent = el.parentElement;
@@ -485,32 +396,6 @@ class PageCard {
     return true;
   }
 
-  /** Dress the card with a stand-in for `origin` (replacing any), or take it off. */
-  wear(origin: Origin | null): void {
-    this.dropStandIn();
-    const el = this.el;
-    if (!origin || !el?.parentElement) return;
-    const { outer, inner } = makeStandIn(origin);
-    const cs = getComputedStyle(el);
-    outer.style.position = cs.position === 'fixed' ? 'fixed' : 'absolute';
-    outer.style.left = `${el.offsetLeft}px`;
-    outer.style.top = `${el.offsetTop}px`;
-    outer.style.zIndex = cs.zIndex;
-    // Right above the card, in its stacking context.
-    el.parentElement.insertBefore(outer, el.nextSibling);
-    this.stand = { outer, inner, w: origin.rect.width, h: origin.rect.height };
-    if (this.last) this.write(this.last);
-  }
-
-  dropStandIn(): void {
-    const st = this.stand;
-    if (!st) return;
-    st.outer.getAnimations?.().forEach((a) => a.cancel());
-    st.inner.getAnimations?.().forEach((a) => a.cancel());
-    st.outer.remove();
-    this.stand = null;
-  }
-
   /** The element directly below the card in paint order that the scrim must go under. */
   get lowest(): HTMLElement | null {
     return this.shadow ?? this.el;
@@ -520,25 +405,33 @@ class PageCard {
   now(): [Card, Card] {
     const p = this.playing;
     if (p) {
-      const t = clamp(performance.now() - p.started, 0, p.ms);
+      const t = elapsed(this.anims[0], p.started, p.ms);
       return [p.path(t), speedAt(p.path, t)];
     }
-    const last = this.last ?? this.rest;
+    const last = this.last ?? REST;
     return [last, this.rec.velocity(last)];
+  }
+
+  /** Put the card somewhere, still (the pose a flight is about to start from). */
+  place(c: Card): void {
+    this.stop();
+    this.rec.reset();
+    this.blend.clear();
+    this.last = c;
+    this.write(c);
   }
 
   /** The finger takes over: stop any flight, blending from where it was shown. */
   hold(first: Card): void {
-    const shown = this.playing ? this.now()[0] : null;
+    const shown = this.playing ? this.now()[0] : this.last;
     this.stop();
     this.rec.reset();
     this.blend.from(shown, first);
     // Stopping the flight uncovers the inline pose (its end): keep showing where
     // the card was until the finger's first frame arrives.
-    if (shown) {
-      this.last = shown;
-      this.write(shown);
-    }
+    const start = shown ?? first;
+    this.last = start;
+    this.write(start);
   }
 
   set(c: Card): void {
@@ -552,42 +445,25 @@ class PageCard {
     const el = this.el;
     if (!el) return;
     this.stop();
-    const b = this.box;
     const end = path(ms);
     // The inline pose is what shows if Web Animations are unavailable.
     this.last = end;
     this.write(end);
     this.playing = { path, ms, started: performance.now() };
-    if (typeof el.animate !== 'function') {
+    if (typeof el.animate !== 'function' || ms <= 0) {
       onDone?.();
       return;
     }
+    // transform + opacity only: the compositor plays these by itself.
     const anim = el.animate(
-      keyframes(path, ms, (c) => ({
-        transform: cardTransform(c, b),
-        clipPath: cardClip(c, b),
-        opacity: c.o,
-      })),
+      keyframes(path, ms, (c) => ({ transform: cardTransform(c), opacity: c.o })),
       { duration: ms, fill: 'forwards' },
     );
     this.anims = [anim];
     if (this.shadow) {
       this.anims.push(
         this.shadow.animate(
-          keyframes(path, ms, (c) => ({ transform: shadowTransform(c, b), opacity: c.sh * c.o })),
-          { duration: ms, fill: 'forwards' },
-        ),
-      );
-    }
-    const st = this.stand;
-    if (st) {
-      this.anims.push(
-        st.outer.animate(
-          keyframes(path, ms, (c) => ({ transform: standTransform(c, b, st.w, st.h), opacity: c.src })),
-          { duration: ms, fill: 'forwards' },
-        ),
-        st.inner.animate(
-          keyframes(path, ms, (c) => ({ transform: standInnerTransform(c, st.w, st.h), opacity: c.txt })),
+          keyframes(path, ms, (c) => ({ transform: cardTransform(c), opacity: c.sh * c.o })),
           { duration: ms, fill: 'forwards' },
         ),
       );
@@ -601,8 +477,9 @@ class PageCard {
       onDone?.();
     };
     anim.onfinish = finish;
-    // Backstop: a backgrounded WebView may deliver `finish` late.
-    this.doneTimer = setTimeout(finish, ms + 120);
+    // Backstop: a backgrounded WebView may deliver `finish` late, and a busy
+    // first frame may start the animation late.
+    this.doneTimer = setTimeout(finish, ms + 250);
   }
 
   /** Remove the shadow element only (the card itself stays as it is). */
@@ -615,11 +492,9 @@ class PageCard {
   cleanup(): void {
     this.stop();
     this.dropShadow();
-    this.dropStandIn();
     const el = this.el;
     this.el = null;
     this.last = null;
-    this.clip = '';
     this.blend.clear();
     if (!el) return;
     delete el.dataset.back;
@@ -637,25 +512,12 @@ class PageCard {
   private write(c: Card): void {
     const el = this.el;
     if (!el) return;
-    const b = this.box;
-    el.style.transform = cardTransform(c, b);
+    const t = cardTransform(c);
+    el.style.transform = t;
     el.style.opacity = c.o.toFixed(3);
-    const clip = cardClip(c, b);
-    // Unchanged while held: no repaint, compositor only.
-    if (clip !== this.clip) {
-      this.clip = clip;
-      el.style.clipPath = clip;
-    }
     if (this.shadow) {
-      this.shadow.style.transform = shadowTransform(c, b);
+      this.shadow.style.transform = t;
       this.shadow.style.opacity = (c.sh * c.o).toFixed(3);
-    }
-    const st = this.stand;
-    if (st) {
-      st.outer.style.transform = standTransform(c, b, st.w, st.h);
-      st.outer.style.opacity = c.src.toFixed(3);
-      st.inner.style.transform = standInnerTransform(c, st.w, st.h);
-      st.inner.style.opacity = c.txt.toFixed(3);
     }
   }
 
@@ -690,7 +552,7 @@ class Underlay {
   private anims: Animation[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private last: Under = UNDER_SHOWN;
-  private playing: { path: Trajectory<Under>; ms: number; started: number } | null = null;
+  private playing: { path: Trajectory<Under>; ms: number; started: number; goal: Under } | null = null;
   private readonly rec = new Recorder<Under>();
   private readonly blend = new Blend<Under>();
 
@@ -742,21 +604,21 @@ class Underlay {
     this.apply(shown);
   }
 
-  /** Spring to `to` from the presented pose and speed; `onDone` once settled. */
-  to(to: Under, response: number, onDone?: () => void): void {
+  /** Spring to `to` from the presented pose and speed, then let go of the screen. */
+  to(to: Under, response: number): void {
     const [from, v] = this.now();
     const run = springPath(from, v, to, {
       response,
       tolerance: (k) => (k === 's' ? 0.0005 : 0.002),
     });
-    this.play(run.path, run.ms, onDone);
+    this.play(run.path, run.ms, to);
   }
 
   /**
    * Where `rect` (of an element inside this screen, as measured now) will be
    * once the screen is back at its normal scale.
    */
-  unscale(el: Element, rect: DOMRect): { left: number; top: number; width: number; height: number } {
+  unscale(el: Element, rect: DOMRect): Rect {
     const under = this.el;
     const s = this.now()[0].s;
     if (!under || !under.contains(el) || Math.abs(s - 1) < 1e-4) return rect;
@@ -774,8 +636,17 @@ class Underlay {
   now(): [Under, Under] {
     const p = this.playing;
     if (!p) return [this.last, this.rec.velocity(this.last)];
-    const t = clamp(performance.now() - p.started, 0, p.ms);
+    const t = elapsed(this.anims[0], p.started, p.ms);
     return [p.path(t), speedAt(p.path, t)];
+  }
+
+  /**
+   * The page is gone. A screen on its way back to normal finishes coming
+   * forward (it lets go by itself); anything else is dropped now.
+   */
+  release(): void {
+    if (this.playing?.goal === UNDER_SHOWN) return;
+    this.cleanupNow();
   }
 
   private apply(p: Under): void {
@@ -785,13 +656,13 @@ class Underlay {
     this.scrim.style.opacity = p.o.toFixed(3);
   }
 
-  private play(path: Trajectory<Under>, ms: number, onDone?: () => void): void {
+  private play(path: Trajectory<Under>, ms: number, goal: Under): void {
     const el = this.el;
     const scrim = this.scrim;
     if (!el || !scrim) return;
     this.stop();
     this.apply(path(ms));
-    this.playing = { path, ms, started: performance.now() };
+    this.playing = { path, ms, started: performance.now(), goal };
     if (typeof el.animate === 'function') {
       this.anims = [
         el.animate(keyframes(path, ms, (p) => ({ transform: `scale(${p.s})` })), {
@@ -806,7 +677,7 @@ class Underlay {
     }
     this.timer = setTimeout(() => {
       this.timer = null;
-      onDone?.();
+      this.cleanupNow();
     }, ms + 20);
   }
 
@@ -837,35 +708,8 @@ class Underlay {
 }
 
 // ---------------------------------------------------------------------------
-// The origin's look
+// The origin's answer
 // ---------------------------------------------------------------------------
-
-function px(v: string): number {
-  return parseFloat(v) || 0;
-}
-
-/**
- * Visible top / bottom corner radii of `el` (layout px). A row inside a
- * rounded group has square corners of its own but is clipped round by the
- * group where it touches the group's corners — that is what shows, so that
- * is what the card must land with.
- */
-function cornerRadii(el: Element, rect: DOMRect): { radT: number; radB: number } {
-  const cs = getComputedStyle(el);
-  let radT = px(cs.borderTopLeftRadius);
-  let radB = px(cs.borderBottomLeftRadius);
-  let p = el.parentElement;
-  for (let i = 0; i < 4 && p && (!radT || !radB); i++, p = p.parentElement) {
-    const pcs = getComputedStyle(p);
-    if (pcs.overflow === 'visible' && pcs.overflowX === 'visible') continue;
-    const pr = p.getBoundingClientRect();
-    const tol = 1.5;
-    const sameLeft = Math.abs(pr.left - rect.left) < tol;
-    if (!radT && sameLeft && Math.abs(pr.top - rect.top) < tol) radT = px(pcs.borderTopLeftRadius);
-    if (!radB && sameLeft && Math.abs(pr.bottom - rect.bottom) < tol) radB = px(pcs.borderBottomLeftRadius);
-  }
-  return { radT, radB };
-}
 
 /** Alpha of a computed colour in any notation (`rgba(…)`, `oklch(… / a)`, `transparent`). */
 function alphaOf(color: string): number {
@@ -880,13 +724,144 @@ function alphaOf(color: string): number {
   return 1;
 }
 
-/** The first solid background behind `el`'s content (its own or an ancestor's). */
-function backdropOf(el: Element): string {
-  for (let n: Element | null = el; n; n = n.parentElement) {
-    const bg = getComputedStyle(n).backgroundColor;
-    if (alphaOf(bg) > 0.5) return bg;
+/** How strongly the origin is tinted with its own text colour: while the card is held / as it lands. */
+const TINT_HELD = 9;
+const TINT_LANDING = 22;
+/** How long the origin takes to calm down after the card has landed, ms. */
+const PULSE_TAIL_MS = 420;
+
+/**
+ * The origin's part in the transition: it lights up faintly while the card is
+ * held (that is where it will go) and, when the card lands, dips and glows as
+ * if it caught it. Done entirely with Web Animations on the origin element — no
+ * inline style, no class, no extra element — so nothing can be left behind on
+ * an element React owns: cancelling the animations is a complete undo.
+ */
+class OriginPulse {
+  private el: HTMLElement | null = null;
+  private base = '';
+  private fg = '';
+  private tint: Animation | null = null;
+  private dip: Animation | null = null;
+
+  private take(el: Element | null): HTMLElement | null {
+    if (el === this.el && el) return this.el;
+    this.clear();
+    if (!(el instanceof HTMLElement) || typeof el.animate !== 'function') return null;
+    const cs = getComputedStyle(el);
+    this.el = el;
+    this.base = cs.backgroundColor;
+    this.fg = cs.color;
+    return el;
   }
-  return getComputedStyle(document.body).backgroundColor || '#000';
+
+  private lit(percent: number): string {
+    const under = alphaOf(this.base) > 0.02 ? this.base : 'transparent';
+    return `color-mix(in srgb, ${this.fg} ${percent}%, ${under})`;
+  }
+
+  private shownTint(): string {
+    return this.el && this.tint ? getComputedStyle(this.el).backgroundColor : this.base;
+  }
+
+  private run(el: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions): Animation | null {
+    try {
+      return el.animate(frames, options);
+    } catch {
+      // A colour syntax this engine does not know: the pulse is decoration.
+      return null;
+    }
+  }
+
+  /** The card is held: show where it will go back to. */
+  hold(origin: Element | null): void {
+    const el = this.take(origin);
+    if (!el) return;
+    const from = this.shownTint();
+    this.tint?.cancel();
+    this.dip?.cancel();
+    this.dip = null;
+    this.tint = this.run(
+      el,
+      [{ backgroundColor: from }, { backgroundColor: this.lit(TINT_HELD) }],
+      { duration: 180, easing: 'ease-out', fill: 'forwards' },
+    );
+  }
+
+  /** The card lands in `ms`: glow as it arrives, dip as it touches down (`force` 0 … 1), then calm down. */
+  land(origin: Element | null, ms: number, force: number): void {
+    const el = this.take(origin);
+    if (!el) return;
+    const from = this.shownTint();
+    this.tint?.cancel();
+    this.dip?.cancel();
+    const touch = Math.max(60, ms * 0.85);
+    const total = touch + PULSE_TAIL_MS;
+    const k = touch / total;
+    const depth = 0.014 + 0.02 * clamp(force, 0, 1);
+    this.tint = this.run(
+      el,
+      [
+        { backgroundColor: from, offset: 0, easing: 'ease-in' },
+        { backgroundColor: this.lit(TINT_LANDING), offset: k, easing: 'ease-out' },
+        { backgroundColor: this.base, offset: 1 },
+      ],
+      { duration: total },
+    );
+    // Added on top of whatever transform the origin has of its own.
+    this.dip = this.run(
+      el,
+      [
+        { transform: 'scale(1)', offset: 0 },
+        { transform: 'scale(1)', offset: k * 0.55, easing: 'ease-in' },
+        { transform: `scale(${(1 - depth).toFixed(4)})`, offset: k, easing: 'ease-out' },
+        { transform: `scale(${(1 + depth * 0.3).toFixed(4)})`, offset: k + (1 - k) * 0.45, easing: 'ease-in-out' },
+        { transform: 'scale(1)', offset: 1 },
+      ],
+      { duration: total, composite: 'add' },
+    );
+    // Not filled: both remove themselves when they end.
+    const tint = this.tint;
+    if (tint) {
+      tint.onfinish = () => {
+        if (this.tint === tint) this.clear();
+      };
+    }
+  }
+
+  /** The card is going back to full screen: fade the light out. */
+  release(): void {
+    const el = this.el;
+    if (!el || !this.tint) return this.clear();
+    const from = this.shownTint();
+    this.tint.cancel();
+    this.dip?.cancel();
+    this.dip = null;
+    const tint = this.run(el, [{ backgroundColor: from }, { backgroundColor: this.base }], {
+      duration: 200,
+      easing: 'ease-out',
+    });
+    this.tint = tint;
+    if (tint) {
+      tint.onfinish = () => {
+        if (this.tint === tint) this.clear();
+      };
+    } else this.clear();
+  }
+
+  /** The page is gone: a landing pulse plays out, a held light is switched off. */
+  settle(): void {
+    if (this.dip) return;
+    this.clear();
+  }
+
+  clear(): void {
+    this.tint?.cancel();
+    this.dip?.cancel();
+    this.tint = null;
+    this.dip = null;
+    this.el = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -904,6 +879,11 @@ export interface PageMotion {
   dispose(): void;
 }
 
+interface Point extends Channels {
+  x: number;
+  y: number;
+}
+
 /**
  * One page's transitions. `getUnder` is the screen it covers — by default the
  * shell's content area; for a page stacked inside a tab, the screen beneath it.
@@ -914,21 +894,49 @@ export function createPageMotion(
 ): PageMotion {
   const card = new PageCard(getEl);
   const under = new Underlay();
+  const pulse = new OriginPulse();
+  const finger = new Recorder<Point>();
   let feel: BackFeel = getBackFeel();
   let origin: Element | null = null;
+  /** Where the card will land, measured when the gesture started (nothing is measured at release). */
+  let landing: Landing | null = null;
+  /** The card on the origin of the last flight home, for a reopen that turns it around. */
+  let homeChip: Card | null = null;
   /** A flight home is under way (gesture commit or close). */
   let flyingHome = false;
   /** The page's own close has started this open cycle. */
   let closing = false;
   let grace: ReturnType<typeof setTimeout> | null = null;
+  /** An opening page waiting for its first paint before it starts to grow. */
+  let cancelOpen: (() => void) | null = null;
+
+  // While held: what the finger asks for, and the tilt that trails it.
+  let holding = false;
+  let heldTarget: Card = REST;
+  let underTarget: Under = UNDER_COVERED;
+  const tiltX = { p: 0, v: 0 };
+  const tiltY = { p: 0, v: 0 };
+  let lastStep = 0;
+  let swayRaf = 0;
 
   const clearGrace = () => {
     if (grace != null) clearTimeout(grace);
     grace = null;
   };
 
-  /** Where the origin is (as it will be once the screen behind is back at rest), and its look. */
-  function measureOrigin(): Origin | null {
+  const dropPendingOpen = () => {
+    cancelOpen?.();
+    cancelOpen = null;
+  };
+
+  const stopHolding = () => {
+    holding = false;
+    if (swayRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(swayRaf);
+    swayRaf = 0;
+  };
+
+  /** Where the origin is (as it will be once the screen behind is back at rest). */
+  function measureOrigin(): Landing | null {
     const o = origin;
     const el = card.el;
     if (!o || !o.isConnected || (el && el.contains(o))) return null;
@@ -939,78 +947,137 @@ export function createPageMotion(
     if (r.top + r.height < 0 || r.top > viewportHeight() || r.left + r.width < 0 || r.left > viewportWidth()) {
       return null;
     }
-    const { radT, radB } = cornerRadii(o, measured);
-    return {
-      el: o,
-      rect: r,
-      radT: Math.min(radT, r.height / 2),
-      radB: Math.min(radB, r.height / 2),
-      bg: backdropOf(o),
-    };
+    return { el: o, rect: r };
   }
 
-  function holdFrame(p: Pose): Card {
-    return heldCard(p, card.box);
+  /**
+   * One frame of the held card: size and position go where the finger puts
+   * them; the tilt follows on a soft spring (`feel.sway`), so a quick move
+   * leans the card and it settles a moment later. True once nothing moves.
+   */
+  function stepHold(): boolean {
+    const now = performance.now();
+    const dt = lastStep ? now - lastStep : 16;
+    lastStep = now;
+    const sway = clamp(feel.sway, 0, 1);
+    let settled = true;
+    if (sway > 0) {
+      const response = 0.14 + 0.12 * sway;
+      const damping = 1 - 0.45 * sway;
+      springStep(tiltX, heldTarget.rx, response, damping, dt);
+      springStep(tiltY, heldTarget.ry, response, damping, dt);
+      settled =
+        Math.abs(tiltX.p - heldTarget.rx) < 0.05 &&
+        Math.abs(tiltY.p - heldTarget.ry) < 0.05 &&
+        Math.abs(tiltX.v) * 16 < 0.05 &&
+        Math.abs(tiltY.v) * 16 < 0.05;
+    } else {
+      tiltX.p = heldTarget.rx;
+      tiltY.p = heldTarget.ry;
+      tiltX.v = tiltY.v = 0;
+    }
+    card.set({ ...heldTarget, rx: tiltX.p, ry: tiltY.p });
+    under.set(underTarget);
+    return settled;
+  }
+
+  /** Keeps the tilt settling on frames where the finger sends nothing new. */
+  function swayOn(): void {
+    if (swayRaf || !holding || typeof requestAnimationFrame !== 'function') return;
+    swayRaf = requestAnimationFrame(() => {
+      swayRaf = 0;
+      if (!holding || !card.el) return;
+      // A finger frame may already have stepped this display frame.
+      const settled = performance.now() - lastStep < 6 ? false : stepHold();
+      if (!settled) swayOn();
+    });
   }
 
   /** Release / close: fly from where the card is shown into the origin (or out right). */
-  function flyHome(): void {
+  function flyHome(throwV: Point, target: Landing | null): void {
     const el = card.el;
     if (!el) return;
+    stopHolding();
     flyingHome = true;
     // On its way out: taps go to the screen it is landing on, not to it.
     el.style.pointerEvents = 'none';
-    const [from, v] = card.now();
+    const [from, v0] = card.now();
     under.begin(getUnder(), el, card.lowest, UNDER_COVERED);
-    const landing = measureOrigin();
-    card.wear(landing);
-    const home = landing ? cardOn(landing, card.box) : null;
-    const to = home ?? offscreenCard(card.box, from.w, from.h);
-    const { path, ms } = flight(from, v, to, home ? 'home' : 'plain', feel.flight);
+    const chip = target ? chipOn(target.rect, card.box) : null;
+    homeChip = chip;
+    const to = chip ?? offscreenCard(card.box, from.s);
+    // The finger's speed: thrown along with it, and a flick gets home sooner.
+    const speed = Math.hypot(throwV.x, throwV.y);
+    const force = clamp(speed / FAST_THROW, 0, 1);
+    const push = (speed > FAST_THROW ? FAST_THROW / speed : 1) * THROW_GAIN;
+    const v: Card = { ...v0, x: v0.x + throwV.x * push, y: v0.y + throwV.y * push };
+    const response = feel.flight * (1 - THROW_HURRY * force);
+    const { path, ms } = flight(from, v, to, chip ? 'home' : 'leave', response, card.box, chip);
     // The exit class only times the unmount: make it wait for the flight.
     el.style.setProperty('--back-ms', `${Math.round(ms)}ms`);
     // Only a flight that actually plays may hold up the unmount.
     if (typeof el.animate === 'function') holdExitFallback(ms + 80);
     card.play(path, ms, () => {
-      // Landed (invisible on the row, or parked off-screen). The page unmounts
-      // now; until it does, leave it where it landed, but take away what lives
-      // outside it.
+      // Landed (gone into the origin, or parked off-screen). The page unmounts
+      // now; until it does, leave it where it landed.
       card.dropShadow();
-      card.dropStandIn();
-      under.cleanupNow();
       if (!el.isConnected) card.cleanup();
     });
-    under.to(UNDER_SHOWN, feel.flight);
+    under.to(UNDER_SHOWN, response);
+    if (target) pulse.land(target.el, ms, force);
+    else pulse.clear();
   }
 
   /** Back to full screen from wherever the card is shown. */
   function settleBack(): void {
+    stopHolding();
     flyingHome = false;
     if (card.el) card.el.style.pointerEvents = '';
     const [from, vNow] = card.now();
     // Back to rest: keep the position, but not so much speed toward rest that it overshoots.
-    const v = absorbable(from, vNow, card.rest, feel.flight);
-    const { path, ms } = flight(from, v, card.rest, 'plain', feel.flight);
+    const v = absorbable(from, vNow, REST, feel.flight);
+    const { path, ms } = flight(from, v, REST, 'plain', feel.flight, card.box);
     card.play(path, ms, () => card.cleanup());
-    under.to(UNDER_COVERED, feel.flight, () => under.cleanupNow());
+    under.to(UNDER_COVERED, feel.flight);
+    pulse.release();
+  }
+
+  /** Grow to full screen from `from` (out of `chip`, when there is an origin). */
+  function grow(from: Card, v: Card, chip: Card | null): void {
+    const { path, ms } = flight(from, v, REST, chip ? 'grow' : 'plain', feel.flight, card.box, chip);
+    card.play(path, ms, () => card.cleanup());
+    under.to(UNDER_COVERED, feel.flight);
   }
 
   const preview: BackPreview = {
     start() {
       clearGrace();
+      dropPendingOpen();
       feel = getBackFeel();
       if (!card.attach()) return;
       flyingHome = false;
       const el = card.el;
+      // Measured now, while nothing moves — release must not wait for a layout.
+      landing = measureOrigin();
       under.begin(getUnder(), el, card.lowest, UNDER_COVERED);
-      const restPose: Pose = { x: 0, y: 0, s: 1, rx: 0, ry: 0, o: 1 };
-      card.hold(holdFrame(restPose));
+      // An interrupted flight is handed over by the blend inside hold(); the
+      // tilt spring starts flat on top of that.
+      card.hold(REST);
       under.hold(underHeld(0));
+      tiltX.p = tiltX.v = tiltY.p = tiltY.v = 0;
+      heldTarget = REST;
+      underTarget = underHeld(0);
+      lastStep = 0;
+      holding = true;
+      finger.reset();
+      pulse.hold(landing?.el ?? null);
     },
     update(frame) {
-      if (!card.el) return;
-      card.set(holdFrame(cardPose(frame, feel, 1)));
-      under.set(underHeld(travel(frame, 0.7)));
+      if (!card.el || !holding) return;
+      finger.push({ x: frame.x, y: frame.y });
+      heldTarget = heldCard(cardPose(frame, feel, 1));
+      underTarget = underHeld(travel(frame, 0.7));
+      if (!stepHold()) swayOn();
     },
     cancel() {
       if (!card.el) return;
@@ -1018,7 +1085,9 @@ export function createPageMotion(
     },
     commit() {
       if (!card.el) return;
-      flyHome();
+      const still: Point = { x: 0, y: 0 };
+      const target = landing?.el.isConnected ? landing : measureOrigin();
+      flyHome(holding ? finger.velocity(still) : still, target);
       // The page is about to close (exit() marks it). If it doesn't — a
       // "discard changes?" confirm, a handler that declined — turn back.
       clearGrace();
@@ -1037,6 +1106,8 @@ export function createPageMotion(
     enter() {
       closing = false;
       clearGrace();
+      dropPendingOpen();
+      stopHolding();
       if (prefersReducedMotion()) return;
       const el0 = getEl();
       // Reopened mid-flight: same element, same origin, turn around from where it is.
@@ -1045,55 +1116,69 @@ export function createPageMotion(
       feel = getBackFeel();
       if (!card.attach()) return;
       const el = card.el;
+      if (!el) return;
       flyingHome = false;
-      if (el) el.style.pointerEvents = '';
-      // Start on the origin (or parked off the right edge) — or, reopened
-      // mid-flight, from wherever it is shown.
-      let from: Card;
-      let v: Card;
+      el.style.pointerEvents = '';
+      pulse.clear();
       if (wasOurs) {
-        [from, v] = card.now();
-      } else {
-        const start = measureOrigin();
-        card.wear(start);
-        from = start ? cardOn(start, card.box) : offscreenCard(card.box, card.box.w, card.box.h);
-        v = zeroLike(from);
+        const [from, v] = card.now();
+        under.begin(getUnder(), el, card.lowest, UNDER_SHOWN);
+        grow(from, v, homeChip);
+        return;
       }
-      // Out of the row: the card starts as the row and the page shows through as it leaves.
-      const look: Look = from.src > 0 ? 'grow' : 'plain';
+      // Start on the origin (or parked off the right edge).
+      const start = measureOrigin();
+      const chip = start ? chipOn(start.rect, card.box) : null;
+      const from = chip ?? offscreenCard(card.box, 1);
       under.begin(getUnder(), el, card.lowest, UNDER_SHOWN);
-      const { path, ms } = flight(from, v, card.rest, look, feel.flight);
-      card.play(path, ms, () => card.cleanup());
-      under.to(UNDER_COVERED, feel.flight, () => under.cleanupNow());
+      card.place(from);
+      const go = () => {
+        cancelOpen = null;
+        if (card.el !== el || !el.isConnected) return;
+        grow(from, zeroLike(from), chip);
+      };
+      // Let the page's first paint through before it starts to grow: that
+      // frame can be long (the page is mounting), and a motion that starts
+      // inside it would lose its beginning. Nothing to wait for without
+      // Web Animations (tests).
+      if (typeof el.animate === 'function') cancelOpen = afterFrame(go, 160, 2);
+      else go();
     },
     exit() {
       if (closing) return;
       closing = true;
       clearGrace();
+      dropPendingOpen();
       if (flyingHome || prefersReducedMotion()) return;
       feel = getBackFeel();
       if (!card.attach()) return;
-      flyHome();
+      flyHome({ x: 0, y: 0 }, measureOrigin());
     },
     dispose() {
       clearGrace();
+      dropPendingOpen();
+      stopHolding();
       flyingHome = false;
       closing = false;
+      landing = null;
       card.cleanup();
-      under.cleanupNow();
+      under.release();
+      pulse.settle();
     },
   };
 }
 
 /** Pure pieces, exported for unit tests only. */
 export const __pageMotionMath = {
-  restCard,
+  REST,
   heldCard,
-  cardOn,
+  chipOn,
   offscreenCard,
   cardTransform,
-  cardClip,
+  gap,
   flight,
   UNDER_COVERED,
+  FADE_START,
+  FADE_END,
   absorbable,
 };

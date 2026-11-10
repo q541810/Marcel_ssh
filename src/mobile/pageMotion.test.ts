@@ -4,136 +4,149 @@ import { __pageMotionMath as M, type Box, type Card } from './pageMotion';
 import { __resetOrigin, claimOrigin } from './pageOrigin';
 
 const B: Box = { left: 0, top: 0, w: 390, h: 788 };
-const ROW = { rect: { left: 12, top: 419, width: 366, height: 67 }, radT: 12, radB: 0 };
-
-function gap(a: Card, b: Card): number {
-  return (
-    Math.abs(a.cx - a.w / 2 - (b.cx - b.w / 2)) +
-    Math.abs(a.cx + a.w / 2 - (b.cx + b.w / 2)) +
-    Math.abs(a.cy - a.h / 2 - (b.cy - b.h / 2)) +
-    Math.abs(a.cy + a.h / 2 - (b.cy + b.h / 2))
-  );
-}
-
-const ZERO: Card = { cx: 0, cy: 0, w: 0, h: 0, rt: 0, rb: 0, rx: 0, ry: 0, o: 0, sh: 0, src: 0, txt: 0 };
+/** A full-width settings row, a little below the middle of the screen. */
+const ROW = { left: 12, top: 419, width: 366, height: 67 };
+const ZERO: Card = { x: 0, y: 0, s: 0, rx: 0, ry: 0, o: 0, sh: 0 };
 
 describe('card geometry', () => {
-  it('a card on a row covers exactly that row (page cropped from the top)', () => {
-    const c = M.cardOn(ROW, B);
-    const r = ROW.rect;
-    expect(c.cx).toBeCloseTo(r.left + r.width / 2);
-    expect(c.cy).toBeCloseTo(r.top + r.height / 2);
-    expect(c.w).toBeCloseTo(r.width);
-    expect(c.h).toBeCloseTo(r.height);
-    // Lands with the row's own visible corners (rounded top, square bottom here).
-    const s = c.w / B.w;
-    expect(c.rt * s).toBeCloseTo(12);
-    expect(c.rb).toBe(0);
-    // The clip keeps the top ROW.height / scale px of the page.
-    const bottom = Number(M.cardClip(c, B).match(/inset\(0px 0px ([\d.]+)px/)![1]);
-    expect((B.h - bottom) * s).toBeCloseTo(r.height, 0);
-    // It is wearing the row: surface and text fully shown.
-    expect(c.src).toBe(1);
-    expect(c.txt).toBe(1);
+  it('lands as the whole page shrunk to fit inside the origin, centred on it', () => {
+    const c = M.chipOn(ROW, B);
+    // A wide row: the page fits by height.
+    expect(c.s).toBeCloseTo(ROW.height / B.h);
+    expect(B.w * c.s).toBeLessThanOrEqual(ROW.width);
+    expect(B.left + B.w / 2 + c.x).toBeCloseTo(ROW.left + ROW.width / 2);
+    expect(B.top + B.h / 2 + c.y).toBeCloseTo(ROW.top + ROW.height / 2);
+    // By then it is gone: the origin shows in its place.
+    expect(c.o).toBe(0);
   });
 
-  it('a tall origin gets a card as wide as it, never taller than the page allows', () => {
-    const c = M.cardOn({ rect: { left: 100, top: 100, width: 40, height: 400 }, radT: 8, radB: 8 }, B);
-    expect(c.w).toBeCloseTo(40);
-    expect(c.h).toBeCloseTo((40 * B.h) / B.w);
+  it('a narrow origin fits by width; a tiny one still gets a card, not a dot', () => {
+    expect(M.chipOn({ left: 100, top: 100, width: 40, height: 400 }, B).s).toBeCloseTo(40 / B.w);
+    expect(M.chipOn({ left: 0, top: 0, width: 6, height: 6 }, B).s).toBeGreaterThanOrEqual(0.04);
   });
 
-  it('the held card at rest is the page itself, unclipped', () => {
-    const c = M.heldCard({ x: 0, y: 0, s: 1, rx: 0, ry: 0, o: 1 }, B);
-    expect(c).toEqual(M.restCard(B));
-    expect(M.cardClip(c, B)).toBe('inset(0px 0px 0.0px 0px round 28.0px 28.0px 28.0px 28.0px)');
-    expect(M.cardTransform(c, B)).toContain('translate3d(195.00px, 394.00px, 0)');
+  it('the held card at rest is the page itself', () => {
+    const c = M.heldCard({ x: 0, y: 0, s: 1, rx: 0, ry: 0, o: 1 });
+    expect(c).toEqual(M.REST);
+    expect(M.cardTransform(c)).toContain('translate3d(0.00px, 0.00px, 0)');
+    expect(M.cardTransform(c)).toContain('scale(1.00000)');
   });
 
-  it('the clip does not change while the finger holds the card (no repaint)', () => {
-    const clips = new Set(
-      [1, 0.9, 0.8, 0.7].map((s) => M.cardClip(M.heldCard({ x: -12, y: 4, s, rx: 6, ry: -14, o: 1 }, B), B)),
-    );
-    expect(clips.size).toBe(1);
+  it('every pose is one transform list (nothing a flight would have to repaint)', () => {
+    const shape = (c: Card) => M.cardTransform(c).replace(/-?\d+(\.\d+)?/g, '#');
+    const a = shape(M.REST);
+    expect(shape(M.chipOn(ROW, B))).toBe(a);
+    expect(shape(M.heldCard({ x: -12, y: 4, s: 0.7, rx: 6, ry: -14, o: 1 }))).toBe(a);
   });
 });
 
 describe('flights', () => {
-  const held = M.heldCard({ x: -20, y: 4, s: 0.8, rx: 8, ry: -18, o: 1 }, B);
-  const v: Card = { ...ZERO, cx: -0.12, cy: 0.05, w: -0.3, h: -0.6, ry: -0.04 };
-  const home = M.cardOn(ROW, B);
+  const held = M.heldCard({ x: -20, y: 4, s: 0.72, rx: 8, ry: -3, o: 1 });
+  const v: Card = { ...ZERO, x: -0.12, y: 0.05, s: -0.002, ry: -0.04 };
+  const chip = M.chipOn(ROW, B);
+  const near = (c: Card) => M.gap(c, chip, B) / M.gap(M.REST, chip, B);
 
-  it('flies home from exactly the held pose, at the held speed, and lands on the row', () => {
-    const { path, ms } = M.flight(held, v, home, 'home', 0.42);
+  it('flies home from exactly the held pose, at the held speed, into the origin', () => {
+    const { path, ms } = M.flight(held, v, chip, 'home', 0.46, B, chip);
     expect(path(0)).toEqual(held);
-    // The hand-over carries the finger's speed: compared with a flight that
+    // The hand-over carries the speed on screen: compared with a flight that
     // starts still, the first step is ahead by exactly that speed.
-    const still = M.flight(held, { ...ZERO }, home, 'home', 0.42).path;
-    expect((path(4).cx - still(4).cx) / 4).toBeCloseTo(v.cx, 1);
-    expect((path(4).w - still(4).w) / 4).toBeCloseTo(v.w, 1);
-    expect(path(ms)).toEqual({ ...home, o: 0 });
-    expect(ms).toBeLessThan(1600);
+    const still = M.flight(held, { ...ZERO }, chip, 'home', 0.46, B, chip).path;
+    expect((path(4).x - still(4).x) / 4).toBeCloseTo(v.x, 1);
+    expect((path(4).s - still(4).s) / 4).toBeCloseTo(v.s, 3);
+    expect(path(ms)).toEqual({ ...chip, o: 0, sh: 0 });
   });
 
-  it('the page never turns see-through, and page and row content are never shown together', () => {
-    const { path, ms } = M.flight(held, v, home, 'home', 0.42);
-    for (let t = 0; t < ms; t += 4) {
-      const c = path(t);
-      expect(c.o).toBe(1);
-      // The row's text only appears once its surface fully covers the page.
-      if (c.txt > 0.001) expect(c.src).toBeGreaterThan(0.99);
-      // Far from the row nothing of it shows yet.
-      if (gap(c, home) > 120) expect(c.src).toBe(0);
+  it('only ever shrinks on the way home (never grows back before landing)', () => {
+    const { path, ms } = M.flight(held, { ...ZERO }, chip, 'home', 0.46, B, chip);
+    let prev = held.s;
+    for (let t = 0; t <= ms; t += 4) {
+      const s = path(t).s;
+      expect(s).toBeLessThanOrEqual(prev + 1e-9);
+      prev = s;
     }
-    const end = path(ms);
-    expect(end.src).toBe(1);
-    expect(end.txt).toBe(1);
+  });
+
+  it('stays solid until it is small and on the origin, then melts — nothing fades in mid-air', () => {
+    const { path, ms } = M.flight(held, v, chip, 'home', 0.46, B, chip);
+    let prev = 1;
+    for (let t = 0; t <= ms; t += 4) {
+      const c = path(t);
+      if (near(c) > M.FADE_START) expect(c.o).toBe(1);
+      // While it is melting it is already a small card.
+      if (c.o < 0.99) expect(c.s).toBeLessThan(0.3);
+      expect(c.o).toBeLessThanOrEqual(prev + 1e-9);
+      prev = c.o;
+    }
+    expect(prev).toBe(0);
+  });
+
+  it('ends when the card is gone instead of waiting out the spring', () => {
+    const { ms } = M.flight(held, { ...ZERO }, chip, 'home', 0.46, B, chip);
+    const whole = M.flight(held, { ...ZERO }, chip, 'plain', 0.46, B).ms;
+    expect(ms).toBeLessThan(whole * 0.8);
+    expect(ms).toBeLessThan(460);
+  });
+
+  it('a flight that starts right next to the origin does not blink out', () => {
+    const close: Card = { ...chip, x: chip.x + 6, s: chip.s + 0.03, o: 1, sh: 1 };
+    const { path } = M.flight(close, { ...ZERO }, chip, 'home', 0.46, B, chip);
+    expect(path(0).o).toBe(1);
+    expect(path(4).o).toBeGreaterThan(0.8);
   });
 
   it('tilts unwind to flat as it lands', () => {
-    const { path, ms } = M.flight(held, v, home, 'home', 0.42);
-    expect(Math.abs(path(ms * 0.8).ry)).toBeLessThan(1);
+    const { path, ms } = M.flight(held, v, chip, 'home', 0.46, B, chip);
+    expect(Math.abs(path(ms * 0.9).ry)).toBeLessThan(1);
     expect(path(ms).ry).toBe(0);
   });
 
-  it('growing out of the row is the mirror: text goes first, then the surface', () => {
-    const rest = M.restCard(B);
-    const { path, ms } = M.flight(home, { ...ZERO }, rest, 'grow', 0.42);
-    expect(path(0).src).toBe(1);
-    expect(path(0).txt).toBe(1);
+  it('growing out of the origin is the mirror: invisible on it, solid within the first stretch', () => {
+    const { path, ms } = M.flight(chip, { ...ZERO }, M.REST, 'grow', 0.46, B, chip);
+    expect(path(0).o).toBe(0);
+    let prev = 0;
     for (let t = 0; t <= ms; t += 4) {
       const c = path(t);
-      expect(c.o).toBe(1);
-      if (c.src < 0.99) expect(c.txt).toBeLessThan(0.001);
+      if (near(c) > M.FADE_START) expect(c.o).toBe(1);
+      expect(c.o).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(c.s).toBeLessThanOrEqual(1 + 1e-6);
+      prev = c.o;
     }
-    expect(path(ms)).toEqual(rest);
+    expect(path(ms)).toEqual(M.REST);
+  });
+
+  it('reopened in mid-flight, it turns around from where it is without a jump in opacity', () => {
+    const home = M.flight(held, { ...ZERO }, chip, 'home', 0.46, B, chip);
+    const at = home.path(home.ms * 0.8);
+    const back = M.flight(at, { ...ZERO }, M.REST, 'grow', 0.46, B, chip);
+    expect(back.path(0)).toEqual(at);
+    expect(Math.abs(back.path(4).o - at.o)).toBeLessThan(0.05);
   });
 
   it('a fast return to rest does not overshoot it (no bump at the end of a cancel)', () => {
-    const rest = M.restCard(B);
-    const near: Card = { ...rest, w: rest.w * 0.97, h: rest.h * 0.97, cx: rest.cx - 6 };
+    const nearRest: Card = { ...M.REST, s: 0.97, x: -6 };
     // Moving home faster than the spring can absorb.
-    const fast: Card = { ...ZERO, cx: 0.4, w: 0.15, h: 0.3 };
-    const { path, ms } = M.flight(near, M.absorbable(near, fast, rest, 0.46), rest, 'plain', 0.46);
+    const fast: Card = { ...ZERO, x: 0.4, s: 0.004 };
+    const { path, ms } = M.flight(nearRest, M.absorbable(nearRest, fast, M.REST, 0.46), M.REST, 'plain', 0.46, B);
     for (let t = 0; t <= ms; t += 4) {
       const c = path(t);
-      expect(c.w).toBeLessThanOrEqual(rest.w + 0.5);
-      expect(c.cx).toBeLessThanOrEqual(rest.cx + 0.5);
+      expect(c.s).toBeLessThanOrEqual(1 + 1e-3);
+      expect(c.x).toBeLessThanOrEqual(0.5);
     }
   });
 
   it('cancel settles back to full screen without any fade', () => {
-    const rest = M.restCard(B);
-    const { path, ms } = M.flight(held, v, rest, 'plain', 0.42);
+    const { path, ms } = M.flight(held, v, M.REST, 'plain', 0.46, B);
     for (let t = 0; t <= ms; t += 16) expect(path(t).o).toBe(1);
-    expect(path(ms)).toEqual(rest);
+    expect(path(ms)).toEqual(M.REST);
   });
 
-  it('without an origin it leaves past the right edge, fully visible', () => {
-    const out = M.offscreenCard(B, held.w, held.h);
-    expect(out.cx - out.w / 2).toBeGreaterThan(B.left + B.w);
-    const { path, ms } = M.flight(held, v, out, 'plain', 0.42);
-    for (let t = 0; t <= ms; t += 16) expect(path(t).o).toBe(1);
+  it('without an origin it leaves past the right edge, fully visible, and stops once out of sight', () => {
+    const out = M.offscreenCard(B, held.s);
+    expect(out.x - (B.w * out.s) / 2).toBeGreaterThan(B.w / 2);
+    const { path, ms } = M.flight(held, v, out, 'leave', 0.46, B);
+    for (let t = 0; t < ms; t += 16) expect(path(t).o).toBe(1);
+    expect(ms).toBeLessThan(M.flight(held, v, out, 'plain', 0.46, B).ms);
   });
 });
 

@@ -1640,8 +1640,8 @@ html[data-marcel-theme='light'] .marcel-code-block {
 
 /* ── 预见式返回与页面转场（由手势进度与手指坐标驱动，见 mobile/backPreview.ts、pageMotion.ts） ──
    手指按住期间每帧只写 transform / opacity（GPU 合成，不触发布局与重绘）。
-   页面（data-back='page'）：圆角裁切由 pageMotion 用行内 clip-path 画（按住期间恒定不变，
-   只有「从入口展开 / 飞回入口」那几百毫秒才逐帧变），投影是卡片后面单独一层元素，
+   页面（data-back='page'）：圆角裁切由 pageMotion 用行内 clip-path 画（接管时设一次，从不参与动画——
+   展开 / 飞回只动 transform 与 opacity，合成器自己播），投影是卡片后面单独一层元素，
    遮罩也是单独一层只动 opacity，这里不再给页面写圆角与阴影。
    data-back 只在手势 / 转场期间存在，className 仍归 React。
    松手、取消、开合的动作全由 JS 用 Web Animations 播（弹簧，可随时打断）；这里的退出规则

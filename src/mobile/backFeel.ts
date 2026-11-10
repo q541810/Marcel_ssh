@@ -26,6 +26,12 @@ export interface BackFeel {
    */
   follow: number;
   /**
+   * Weight of the held card, 0 … 1: how much its tilt trails a quick finger
+   * and swings a touch past before settling. 0 = the tilt sits exactly where
+   * the finger puts it. Only the tilt — size and position always follow at once.
+   */
+  sway: number;
+  /**
    * How quickly a page flies home on release (and grows out on open): the
    * spring's response, s. Not a fixed duration — it settles when it settles.
    */
@@ -40,6 +46,7 @@ export const DEFAULT_BACK_FEEL: Readonly<BackFeel> = Object.freeze({
   shift: 0.085,
   lift: 0,
   follow: 2.2,
+  sway: 0.5,
   flight: 0.46,
 });
 
@@ -58,6 +65,7 @@ export const BACK_FEEL_RANGES: ReadonlyArray<{
   { key: 'shift', label: '左右位移', min: 0, max: 0.3, step: 0.005, unit: '×屏宽' },
   { key: 'lift', label: '上下位移', min: 0, max: 80, step: 2, unit: 'px' },
   { key: 'follow', label: '前快后缓', min: 1, max: 4, step: 0.05, unit: '' },
+  { key: 'sway', label: '倾斜惯性', min: 0, max: 1, step: 0.05, unit: '' },
   { key: 'flight', label: '飞回快慢', min: 0.25, max: 1.2, step: 0.01, unit: 's' },
 ];
 
