@@ -424,11 +424,6 @@ fn the_known_machine_local_fields_are_marked_local() {
         ),
         (
             &scopes::CONNECTIONS_RULES,
-            &[Seg::key("connections"), Seg::id("c1"), Seg::key("keyId")],
-            "connections/*/keyId",
-        ),
-        (
-            &scopes::CONNECTIONS_RULES,
             &[
                 Seg::key("connections"),
                 Seg::id("c1"),

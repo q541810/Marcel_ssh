@@ -2409,6 +2409,13 @@ async fn private_keys_sync_and_survive_a_restart() {
         .dir_key_store
         .import_text(&pem, "公司跳板机", None)
         .expect("导入私钥");
+    a.add_conn("key-server", "私钥服务器", "key-server.test", "deploy").await;
+    a.edit_conn("key-server", |connection| {
+        connection.auth_method = "PrivateKey".into();
+        connection.key_id = Some(meta.id.clone());
+        connection.jump_key_id = Some(meta.id.clone());
+        connection.key_path = Some("/device-a/private-key".into());
+    }).await;
     a.sync().await;
     b.sync().await;
 
@@ -2420,6 +2427,10 @@ async fn private_keys_sync_and_survive_a_restart() {
     assert_eq!(got.0.name, "公司跳板机", "名字要照抄");
     assert_eq!(got.0.fingerprint, meta.fingerprint, "指纹要照抄");
     assert_eq!(got.1.as_str(), pem, "正文要一模一样");
+    let connection = b.conn("key-server").await.expect("连接应已同步");
+    assert_eq!(connection.key_id.as_deref(), Some(meta.id.as_str()));
+    assert_eq!(connection.jump_key_id.as_deref(), Some(meta.id.as_str()));
+    assert!(connection.key_path.is_none(), "本机文件路径不应同步");
     assert!(
         got.0.origin_path.is_none(),
         "来源路径是本机的概念，不能跨设备带过去"

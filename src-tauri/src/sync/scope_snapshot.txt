@@ -11,11 +11,11 @@ connections	connections / * / host	shared
 connections	connections / * / id	shared
 connections	connections / * / jumpAuthMethod	shared
 connections	connections / * / jumpHost	shared
-connections	connections / * / jumpKeyId	local
+connections	connections / * / jumpKeyId	shared
 connections	connections / * / jumpKeyPath	local
 connections	connections / * / jumpPort	shared
 connections	connections / * / jumpUsername	shared
-connections	connections / * / keyId	local
+connections	connections / * / keyId	shared
 connections	connections / * / keyPath	local
 connections	connections / * / lastConnected	local
 connections	connections / * / name	shared

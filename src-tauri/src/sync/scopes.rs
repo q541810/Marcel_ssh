@@ -76,16 +76,14 @@ fn connection_filter(element: &Value) -> Option<&'static [&'static str]> {
 
 /// `connections.json`。
 ///
-/// Local：`keyPath` `jumpKeyPath`（本机私钥文件路径）、`keyId` `jumpKeyId`（本机私钥库里的 id，
-/// 私钥库由本机主密钥加密，换设备解不开）、`lastConnected`（每次连接都会变的流水，同步它只会制造
+/// Local：`keyPath` `jumpKeyPath`（本机私钥文件路径）、`lastConnected`（每次连接都会变的流水，同步它只会制造
 /// 无谓的冲突与噪音）；`mcp-temp-` 开头的临时连接整条 Local。其余（地址、端口、用户名、认证方式、
-/// 跳板机配置、分组与顺序……）Shared。密码与私钥口令在密钥链里，一期不同步。
+/// 跳板机配置、分组与顺序……）Shared。`keyId` / `jumpKeyId` 是机密流中保留的稳定引用；
+/// 密钥正文、密码与私钥口令由机密流单独同步，不进入普通配置。
 pub static CONNECTIONS_RULES: ScopeRules = ScopeRules {
     patterns: &[
         ("connections/*/keyPath", Scope::Local),
         ("connections/*/jumpKeyPath", Scope::Local),
-        ("connections/*/keyId", Scope::Local),
-        ("connections/*/jumpKeyId", Scope::Local),
         ("connections/*/lastConnected", Scope::Local),
     ],
     item_filters: &[ItemFilter {

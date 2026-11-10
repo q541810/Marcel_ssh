@@ -62,7 +62,7 @@ impl Ledger {
             (Some(last), _) => HlcClock::from_last(last.clone()),
             (None, _) => HlcClock::new(loaded.state.device_id.clone()),
         };
-        Ledger {
+        let mut ledger = Ledger {
             st: loaded.state,
             mirrors: loaded.mirrors,
             baselines: loaded.baselines,
@@ -71,7 +71,44 @@ impl Ledger {
             clock,
             dirty: Dirty::default(),
             suppress_pending: BTreeSet::new(),
+        };
+        ledger.migrate_key_references();
+        ledger
+    }
+
+    /// 旧基线包含这些字段，但旧作用域从未上传它们。只补曾经保存过的引用，
+    /// 用零时钟让云端后来的明确选择优先；之后仍按正常 baseline diff 捕获编辑。
+    fn migrate_key_references(&mut self) {
+        if self.st.key_references_shared {
+            return;
         }
+        if let Some(baseline) = self.baselines.get("connections") {
+            let idmaps = self.st.idmaps.entry("connections".into()).or_default();
+            let ops = super::core::export_all_at(
+                "connections",
+                baseline,
+                &super::scopes::CONNECTIONS_RULES,
+                Platform::current(),
+                idmaps,
+                &Hlc::zero_for(self.clock.device().to_string()),
+            );
+            let ops: Vec<_> = ops.into_iter().filter(|op| {
+                matches!(op.path.last(), Some(Seg::Key(key)) if key == "keyId" || key == "jumpKeyId")
+                    && matches!(&op.kind, OpKind::Set(Value::String(value)) if !value.is_empty())
+            }).collect();
+            if !ops.is_empty() {
+                let mirror = self.mirrors.entry("connections".into()).or_default();
+                for op in &ops {
+                    mirror.merge(op);
+                }
+                self.outbox.extend(ops);
+                self.dirty.outbox = true;
+                self.dirty.mirrors.insert("connections".into());
+                self.set_applied("connections", false);
+            }
+        }
+        self.st.key_references_shared = true;
+        self.dirty.state = true;
     }
 
     pub fn enabled(&self) -> bool {
@@ -531,6 +568,42 @@ mod tests {
             doc,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn old_key_references_are_exported_once_without_overwriting_cloud_choices() {
+        let doc = json!({"connections": [{"id": "c0", "keyId": "local-key", "jumpKeyId": "jump-key", "keyPath": "/local/private", "name": "server"}]});
+        let mut cloud = ledger("cloud");
+        let mut cloud_doc = doc.clone();
+        cloud_doc["connections"][0]["keyId"] = json!("new-cloud-key");
+        cap(&mut cloud, &cloud_doc, 1000);
+        let loaded = LoadedLedger {
+            state: PersistedState {
+                device_id: "old-device".into(),
+                ..Default::default()
+            },
+            baselines: BTreeMap::from([("connections".into(), doc.clone())]),
+            mirrors: cloud.mirrors,
+            ..Default::default()
+        };
+        let mut migrated = Ledger::from_loaded(loaded);
+        assert_eq!(migrated.outbox.len(), 2);
+        assert!(migrated.outbox.iter().all(|op| op.hlc.ms == 0));
+        let key_path = vec![Seg::key("connections"), Seg::id("c0"), Seg::key("keyId")];
+        assert_eq!(
+            migrated.mirrors["connections"].visible()[&key_path],
+            json!("new-cloud-key")
+        );
+        assert_eq!(cap(&mut migrated, &doc, 2000).captured, 0);
+        let restored = Ledger::from_loaded(LoadedLedger {
+            state: migrated.st,
+            baselines: migrated.baselines,
+            mirrors: migrated.mirrors,
+            outbox: migrated.outbox,
+            ..Default::default()
+        });
+        assert_eq!(restored.outbox.len(), 2, "重启不重复迁移");
+        assert!(!restored.dirty.state);
     }
 
     #[test]

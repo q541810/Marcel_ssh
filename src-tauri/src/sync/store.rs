@@ -144,6 +144,8 @@ pub struct PersistedState {
     pub hlc: Option<Hlc>,
     pub cursors: BTreeMap<String, Cursor>,
     pub last_app_version: String,
+    /// 已把旧版仅本机的私钥引用补入配置流；正文仍只走机密流。
+    pub key_references_shared: bool,
     /// 同步源 key → id 映射登记表。
     pub idmaps: BTreeMap<String, IdMapRegistry>,
     /// 同步源 key → 镜像是否已落地到本机文档。缺项 = 看镜像是否非空。
@@ -176,6 +178,7 @@ impl Default for PersistedState {
             hlc: None,
             cursors: BTreeMap::new(),
             last_app_version: String::new(),
+            key_references_shared: false,
             idmaps: BTreeMap::new(),
             applied_mirror: BTreeMap::new(),
             needs_restore: BTreeMap::new(),
