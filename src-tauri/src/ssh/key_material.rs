@@ -122,16 +122,99 @@ pub fn is_encrypted(text: &str) -> bool {
 
 /// 解码私钥文本，失败时翻译成带原因码的结构化错误。
 pub fn decode_pem(text: &str, passphrase: Option<&str>) -> Result<PrivateKey, AppError> {
+    // 明文 PKCS#8 遇到 Some(password) 会被底层按加密容器解析；旧口令不能妨碍明文钥匙。
+    if let Ok(key) = decode_secret_key(text, None) {
+        return Ok(key);
+    }
+    if text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----") {
+        use base64::Engine;
+        let body = text
+            .split_once("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+            .and_then(|(_, rest)| rest.split_once("-----END ENCRYPTED PRIVATE KEY-----"))
+            .map(|(body, _)| body.split_whitespace().collect::<String>())
+            .ok_or_else(|| {
+                key_error(KeyAuthCode::KeyUnreadable, "加密私钥文件不完整，请重新导入")
+            })?;
+        let bytes = zeroize::Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(body)
+                .map_err(|_| {
+                    key_error(
+                        KeyAuthCode::KeyUnreadable,
+                        "加密私钥文件不完整或已损坏，请重新导入",
+                    )
+                })?,
+        );
+        let doc = pkcs8::SecretDocument::try_from(bytes.as_slice()).map_err(|_| {
+            key_error(
+                KeyAuthCode::KeyUnreadable,
+                "加密私钥文件不完整或已损坏，请重新导入",
+            )
+        })?;
+        doc.decode_msg::<pkcs8::EncryptedPrivateKeyInfoRef<'_>>()
+            .map_err(|_| {
+                key_error(
+                    KeyAuthCode::UnsupportedKey,
+                    "加密私钥格式损坏或使用了不支持的加密算法，请重新导出",
+                )
+            })?;
+        if passphrase.is_none() {
+            return Err(key_error(
+                KeyAuthCode::NeedsPassphrase,
+                "此私钥已加密，请输入私钥密码",
+            ));
+        }
+    }
+    if passphrase.is_none()
+        && text.trim().starts_with("PuTTY-User-Key-File-")
+        && text_marks_encrypted(text)
+    {
+        // PPK 在检查正文前就报告缺密码；用空口令走完容器校验，结构错误不能变成追问。
+        return match decode_secret_key(text, Some("")) {
+            Ok(key) => Ok(key),
+            Err(error) => Err(classify_decode_failure(text, false, &error)),
+        };
+    }
     decode_secret_key(text, passphrase)
         .map_err(|e| classify_decode_failure(text, passphrase.is_some(), &e))
 }
 
 /// 解码失败 → 给用户的话 + 给前端的下一步判据。
 fn classify_decode_failure(text: &str, passphrase_supplied: bool, err: &KeyError) -> AppError {
-    // 先判"密码问题"：这类原因最容易被别的错误掩盖，而它恰恰是唯一该向用户追问的情况
-    if is_encrypted(text) {
+    use russh::keys::ssh_key::Error as SshKeyError;
+    if matches!(
+        err,
+        KeyError::Pkcs8(pkcs8::Error::EncryptedPrivateKey(
+            pkcs8::pkcs5::Error::UnsupportedAlgorithm { .. }
+                | pkcs8::pkcs5::Error::AlgorithmParametersInvalid { .. }
+        ))
+    ) {
+        return key_error(
+            KeyAuthCode::UnsupportedKey,
+            "私钥使用了不支持的加密算法或参数，请重新导出",
+        );
+    }
+    let password_error = match err {
+        KeyError::KeyIsEncrypted => true,
+        // ssh-key 把 PpkParseError 所在模块设为私有，只能核对这两个固定错误文案。
+        KeyError::SshKey(SshKeyError::Ppk(error)) => matches!(
+            error.to_string().as_str(),
+            "private key is encrypted" | "incorrect MAC"
+        ),
+        KeyError::SshKey(SshKeyError::Crypto) | KeyError::KeyIsCorrupt | KeyError::Unpad(_) => {
+            is_encrypted(text)
+        }
+        KeyError::Pkcs8(_) | KeyError::Der(_) | KeyError::Pkcs1(_) => {
+            passphrase_supplied && text_marks_encrypted(text)
+        }
+        _ => false,
+    };
+    if password_error {
         return if passphrase_supplied {
-            key_error(KeyAuthCode::BadPassphrase, "私钥密码不正确")
+            key_error(
+                KeyAuthCode::BadPassphrase,
+                "私钥密码不正确，或加密内容已损坏",
+            )
         } else {
             key_error(KeyAuthCode::NeedsPassphrase, "此私钥已加密，请输入私钥密码")
         };
@@ -277,12 +360,9 @@ pub(crate) mod tests {
 
     #[test]
     fn encrypted_pkcs8_without_passphrase_asks_for_one() {
-        // PKCS#8 加密私钥在"没给密码"时，解码器给的是通用错误，
-        // 只有文本特征能识别出"缺密码"——这条就是防那个回归。
-        let text =
-            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n";
-        assert!(is_encrypted(text));
-        let err = decode_pem(text, None).unwrap_err();
+        let text = pkcs8_text(Some("pw"));
+        assert!(is_encrypted(&text));
+        let err = decode_pem(&text, None).unwrap_err();
         match err {
             AppError::KeyAuth { code, .. } => assert_eq!(code, KeyAuthCode::NeedsPassphrase),
             other => panic!("unexpected error: {other:?}"),
@@ -291,12 +371,47 @@ pub(crate) mod tests {
 
     #[test]
     fn encrypted_key_with_wrong_passphrase_says_so() {
-        let text =
-            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n";
-        let err = decode_pem(text, Some("wrong")).unwrap_err();
+        let text = pkcs8_text(Some("pw"));
+        assert!(decode_pem(&text, Some("pw")).is_ok());
+        let err = decode_pem(&text, Some("wrong")).unwrap_err();
         match err {
             AppError::KeyAuth { code, .. } => assert_eq!(code, KeyAuthCode::BadPassphrase),
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    fn pkcs8_text(passphrase: Option<&str>) -> String {
+        let key = decode_pem(&key_text(6, None), None).unwrap();
+        let mut pem = Vec::new();
+        match passphrase {
+            Some(pw) => {
+                russh::keys::encode_pkcs8_pem_encrypted(&key, pw.as_bytes(), 16, &mut pem).unwrap()
+            }
+            None => russh::keys::encode_pkcs8_pem(&key, &mut pem).unwrap(),
+        }
+        String::from_utf8(pem).unwrap()
+    }
+
+    #[test]
+    fn unencrypted_pkcs8_ignores_stale_passphrase() {
+        assert!(decode_pem(&pkcs8_text(None), Some("old-password")).is_ok());
+    }
+
+    #[test]
+    fn malformed_encrypted_containers_do_not_ask_for_passwords() {
+        for text in [
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n",
+            "PuTTY-User-Key-File-3: ssh-rsa\nEncryption: aes256-cbc\n",
+        ] {
+            for pw in [None, Some("wrong")] {
+                let AppError::KeyAuth { code, .. } = decode_pem(text, pw).unwrap_err() else {
+                    panic!()
+                };
+                assert!(!matches!(
+                    code,
+                    KeyAuthCode::NeedsPassphrase | KeyAuthCode::BadPassphrase
+                ));
+            }
         }
     }
 

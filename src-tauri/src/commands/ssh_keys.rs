@@ -11,6 +11,7 @@
 
 use tauri::AppHandle;
 use tokio::io::AsyncReadExt;
+use zeroize::Zeroizing;
 
 use crate::commands::agent_attachment::local_file_name;
 use crate::commands::sftp::{open_content_uri_file, ContentOpenMode};
@@ -30,8 +31,9 @@ pub async fn ssh_key_import_file(
     name: Option<String>,
     passphrase: Option<String>,
 ) -> Result<StoredKeyMeta, AppError> {
+    let passphrase = passphrase.map(Zeroizing::new);
     let path = validate_local_path(&path)?;
-    let text = read_local_key_text(&app, &path).await?;
+    let text = Zeroizing::new(read_local_key_text(&app, &path).await?);
 
     let display_name = match name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
         Some(n) => n,
@@ -45,7 +47,12 @@ pub async fn ssh_key_import_file(
     } else {
         Some(path.as_str())
     };
-    key_store::import_text(&text, &display_name, origin, passphrase.as_deref())
+    key_store::import_text(
+        &text,
+        &display_name,
+        origin,
+        passphrase.as_ref().map(|p| p.as_str()),
+    )
 }
 
 /// 导入用户粘贴的私钥文本。
@@ -55,8 +62,15 @@ pub fn ssh_key_import_text(
     name: Option<String>,
     passphrase: Option<String>,
 ) -> Result<StoredKeyMeta, AppError> {
+    let content = Zeroizing::new(content);
+    let passphrase = passphrase.map(Zeroizing::new);
     let display_name = name.map(|n| n.trim().to_string()).unwrap_or_default();
-    key_store::import_text(&content, &display_name, None, passphrase.as_deref())
+    key_store::import_text(
+        &content,
+        &display_name,
+        None,
+        passphrase.as_ref().map(|p| p.as_str()),
+    )
 }
 
 /// 列出已导入的私钥（按导入顺序）。
@@ -98,7 +112,8 @@ pub fn ssh_key_refresh_from_origin(
     id: String,
     passphrase: Option<String>,
 ) -> Result<Option<StoredKeyMeta>, AppError> {
-    key_store::replace_from_origin(&id, passphrase.as_deref())
+    let passphrase = passphrase.map(Zeroizing::new);
+    key_store::replace_from_origin(&id, passphrase.as_ref().map(|p| p.as_str()))
 }
 
 /// 读取私钥文本：`content://` 走 ContentResolver，其余按普通路径读。

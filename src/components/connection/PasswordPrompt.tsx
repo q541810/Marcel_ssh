@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
+import { registerBackHandler } from '@/mobile/backHandler';
 
 interface Props {
   open: boolean;
@@ -8,6 +9,9 @@ interface Props {
   description?: string;
   /** Label for the submit button. Defaults to "连接". */
   submitLabel?: string;
+  error?: string;
+  busy?: boolean;
+  revision?: number;
   onSubmit: (password: string) => void;
   onCancel: () => void;
 }
@@ -25,6 +29,9 @@ export default function PasswordPrompt({
   title = '请输入密码',
   description,
   submitLabel = '连接',
+  error,
+  busy = false,
+  revision = 0,
   onSubmit,
   onCancel,
 }: Props) {
@@ -35,17 +42,22 @@ export default function PasswordPrompt({
     if (open) {
       setPassword('');
       // Focus the input on next tick after Modal mounts
-      setTimeout(() => inputRef.current?.focus(), 0);
+      const timer = setTimeout(() => inputRef.current?.focus(), 0);
+      return () => clearTimeout(timer);
     }
-  }, [open]);
+  }, [open, revision]);
+
+  useEffect(() => {
+    if (open) return registerBackHandler(() => { if (!busy) onCancel(); });
+  }, [open, busy, onCancel]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(password);
+    if (!busy && password) onSubmit(password);
   };
 
   return (
-    <Modal open={open} onClose={onCancel} title={title}>
+    <Modal open={open} onClose={onCancel} title={title} dismissible={!busy}>
       <form onSubmit={handleSubmit} className="p-4 space-y-4">
         {description && (
           <p className="text-read text-fg-secondary">{description}</p>
@@ -53,18 +65,22 @@ export default function PasswordPrompt({
         <input
           ref={inputRef}
           type="password"
+          aria-label={title}
+          aria-invalid={!!error}
+          disabled={busy}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
           className="w-full rounded-lg field px-3 py-2 text-read text-fg"
           placeholder="密码"
         />
+        {error && <p role="alert" className="text-body text-red-400">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" type="button" onClick={onCancel}>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
             取消
           </Button>
-          <Button variant="primary" type="submit" disabled={!password}>
-            {submitLabel}
+          <Button variant="primary" type="submit" disabled={!password || busy}>
+            {busy ? '正在验证…' : submitLabel}
           </Button>
         </div>
       </form>

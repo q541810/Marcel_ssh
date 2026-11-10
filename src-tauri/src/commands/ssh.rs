@@ -41,7 +41,7 @@ pub(crate) fn build_jump_config(
         "withTarget" => clone_auth_method(target_auth),
         "Password" => {
             let password = keychain::get(&SecretSlot::JumpPassword(connection_id.to_string()))?
-                .ok_or_else(|| AppError::Config("未找到已保存的跳板机密码".into()))?;
+                .ok_or_else(|| AppError::needs_password().for_jump())?;
             AuthMethod::Password { password }
         }
         "PrivateKey" => {
@@ -52,7 +52,8 @@ pub(crate) fn build_jump_config(
                 saved.jump_key_path.as_deref(),
                 passphrase,
                 "跳板机的私钥",
-            )?
+            )
+            .map_err(AppError::for_jump)?
         }
         other => {
             return Err(AppError::Config(format!(
@@ -126,7 +127,7 @@ pub(crate) fn build_connect_auth_method(saved: &SavedConnection) -> Result<AuthM
     match saved.auth_method.as_str() {
         "Password" => {
             let password = keychain::get(&SecretSlot::SshPassword(saved.id.clone()))?
-                .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+                .ok_or_else(AppError::needs_password)?;
             Ok(AuthMethod::Password { password })
         }
         "PrivateKey" => {
@@ -351,7 +352,7 @@ pub async fn ssh_connect_with_saved_password(
     };
 
     let password = keychain::get(&SecretSlot::SshPassword(connection_id.clone()))?
-        .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+        .ok_or_else(AppError::needs_password)?;
 
     let auth_method = AuthMethod::Password { password };
     let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
@@ -417,7 +418,7 @@ pub async fn ssh_connect_with_saved_passphrase(
 /// - Password：从 keychain 取密码（account = connection_id）
 /// - PrivateKey：从 keychain 取 passphrase（account = "pk:{connection_id}"），无 passphrase 则用 None（未加密私钥）
 ///
-/// 凭证缺失时返回 `AppError::Config`，前端据 `kind === "Config"` 弹窗让用户输入。
+/// 密码缺失返回 `KeyAuth(needs_password)`，私钥解码时另行区分口令与文件问题。
 /// 安全：密码/passphrase 都在 Rust 侧从 keychain 读取，不经过前端。
 ///
 /// 从「已保存的连接 + 系统密钥链」装配运行时连接配置。
@@ -435,7 +436,7 @@ pub(crate) fn build_saved_connection_config(
     let auth_method = match saved.auth_method.as_str() {
         "Password" => {
             let password = keychain::get(&SecretSlot::SshPassword(connection_id.to_string()))?
-                .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+                .ok_or_else(AppError::needs_password)?;
             AuthMethod::Password { password }
         }
         "PrivateKey" => {

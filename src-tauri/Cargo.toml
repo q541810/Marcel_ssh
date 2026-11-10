@@ -32,6 +32,8 @@ env_logger = "^0.11"
 chrono = { version = "^0.4", features = ["serde"] }
 async-trait = "^0.1"
 russh = { version = "0.60", default-features = false, features = ["flate2", "ring", "rsa"] }
+# 与 russh 共用解析器，先验证加密 PKCS#8 容器，再决定是否追问口令。
+pkcs8 = { version = "=0.11.0-rc.11", features = ["encryption", "pem"] }
 russh-sftp = "2.1"
 zeroize = { version = "^1", features = ["derive"] }
 futures = "^0.3"

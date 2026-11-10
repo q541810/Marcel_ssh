@@ -338,20 +338,18 @@ impl KeyStore {
 
         let mut index = self.load_index();
 
-        // 同一把钥匙按指纹去重：重复导入不堆两份。来源变了就顺手更新来源
-        // （密钥在磁盘上被挪过位置是常事），名字与 id 保持不变以免打断已有连接。
+        // 身份相同仍须替换正文：用户可能刚改过口令。保留 id 和名字，已有连接继续引用它。
         if let Some(existing) = index.keys.iter_mut().find(|k| k.fingerprint == fingerprint) {
-            let mut changed = false;
+            let master = master_key()?;
+            let envelope = seal_envelope(&master, &existing.id, text)?;
+            write_private(&self.key_file_path(&existing.id), &envelope)?;
+            existing.encrypted = encrypted;
+            existing.algorithm = algorithm;
             if let Some(origin) = origin_path {
-                if existing.origin_path.as_deref() != Some(origin) {
-                    existing.origin_path = Some(origin.to_string());
-                    changed = true;
-                }
+                existing.origin_path = Some(origin.to_string());
             }
             let meta = existing.clone();
-            if changed {
-                self.save_index(&index)?;
-            }
+            self.save_index(&index)?;
             return Ok(meta);
         }
 
@@ -553,7 +551,7 @@ impl KeyStore {
             return Ok(None);
         };
 
-        let text = key_material::read_key_file(&origin_path)?;
+        let text = Zeroizing::new(key_material::read_key_file(&origin_path)?);
         let key = key_material::decode_pem(&text, passphrase)?;
         let master = master_key()?;
         let envelope = seal_envelope(&master, id, &text)?;
@@ -817,20 +815,25 @@ fn open_envelope(
 /// 写私钥密文：unix 下建文件时就带 0600，别先建好再改权限（中间有个窗口）。
 fn write_private(path: &Path, content: &str) -> Result<(), AppError> {
     use std::io::Write;
+    let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
-        .open(path)
-        .map_err(|e| AppError::Config(format!("写入密钥文件失败：{}", e)))?;
-    file.write_all(content.as_bytes())
-        .map_err(|e| AppError::Config(format!("写入密钥文件失败：{}", e)))?;
-    file.sync_all()
-        .map_err(|e| AppError::Config(format!("写入密钥文件失败：{}", e)))
+    let result = (|| -> std::io::Result<()> {
+        let mut file = options.open(&temp)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result.map_err(|e| AppError::Config(format!("写入密钥文件失败：{}", e)))
 }
 
 #[cfg(test)]
@@ -916,6 +919,29 @@ pub(super) mod tests {
         // 名字保持不变（不打断已有连接），但来源更新到最新
         assert_eq!(again.name, "A");
         assert_eq!(again.origin_path.as_deref(), Some("/new/path"));
+    }
+
+    #[test]
+    fn reimport_replaces_passphrase_and_encryption_without_changing_identity() {
+        let (_dir, store) = fixture();
+        let first = store
+            .import_text(&sample_key(Some("old")), "keep-name", None, Some("old"))
+            .unwrap();
+        for pw in [Some("new"), None, Some("newer")] {
+            let text = sample_key(pw);
+            let updated = store.import_text(&text, "ignored", None, pw).unwrap();
+            assert_eq!(updated.id, first.id);
+            assert_eq!(updated.name, first.name);
+            assert_eq!(updated.created_at, first.created_at);
+            assert_eq!(updated.encrypted, pw.is_some());
+            assert_eq!(store.load_pem(&first.id).unwrap().as_str(), text);
+        }
+        let before = store.load_pem(&first.id).unwrap();
+        assert!(store
+            .import_text(&sample_key(Some("bad")), "ignored", None, Some("wrong"))
+            .is_err());
+        assert_eq!(store.load_pem(&first.id).unwrap().as_str(), before.as_str());
+        assert_eq!(store.load_index().keys.len(), 1);
     }
 
     #[test]

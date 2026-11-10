@@ -49,6 +49,7 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // 加载配置目录
     let config_dir = get_config_dir();
+    crate::ssh::key_store::init(&config_dir);
     eprintln!("[Marcel SSH] Config directory: {}", config_dir.display());
 
     // 加载连接配置

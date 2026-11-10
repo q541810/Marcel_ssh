@@ -244,12 +244,13 @@ impl SshManager {
 
                 Self::authenticate(&mut jh, &jump.username, &jump.auth_method)
                     .await
-                    .map_err(|e| {
-                        AppError::Ssh(format!(
+                    .map_err(|e| match e {
+                        AppError::KeyAuth { .. } => e.for_jump(),
+                        other => AppError::Ssh(format!(
                             "跳板机 {} 连接失败：{}",
                             jump.host,
-                            strip_ssh_prefix(&e.to_string())
-                        ))
+                            strip_ssh_prefix(&other.to_string())
+                        )),
                     })?;
 
                 Some(Arc::new(TokioMutex::new(jh)))

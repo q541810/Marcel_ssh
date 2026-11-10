@@ -1,4 +1,5 @@
 import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
+import { recoverConnectionAuth, type ConnectionCredential, type CredentialPrompt } from './connectionAuth';
 import { formatConnLabel } from '@/lib/privacy';
 import {
   isPassphraseProblem,
@@ -66,11 +67,7 @@ export interface ConnectFlowDeps {
     trustNewHostKey?: boolean,
   ) => Promise<string>;
   /** useConnectWithPassword 的 prompt（SSH 密码 / 私钥密码共用一个浮层）。 */
-  promptPassword: (config: {
-    title: string;
-    description: string;
-    onSubmit: (password: string) => void | Promise<void>;
-  }) => void;
+  promptPassword: (config: CredentialPrompt) => void;
   /** useHostKeyMismatch 的 prompt。 */
   promptMismatch: (config: {
     data: HostKeyMismatchData;
@@ -120,6 +117,10 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
     reportFailure,
     onDebugConnect,
   } = deps;
+
+  const recover = (error: unknown, connection: SavedConnection,
+    retry: (credential: ConnectionCredential) => Promise<void>) =>
+    recoverConnectionAuth({ error, connection, privacyMode, prompt: promptPassword, retry });
 
   /**
    * 带明文凭据连一次（密码浮层提交后、主机密钥信任后的重试都走这里）。
@@ -182,6 +183,10 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
           return;
         }
       }
+      if (recover(err, conn, (credential) => doConnect(conn,
+        !credential.jump && credential.kind === 'password' ? credential.value : password,
+        !credential.jump && credential.kind === 'passphrase' ? credential.value : passphrase,
+        trust))) return;
       reportFailure(err, 'doConnect');
     } finally {
       afterAttempt();
@@ -284,6 +289,7 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
                     );
                     onSessionEstablished(connection.id, sid);
                   } catch (e) {
+                    if (recover(e, connection, () => attemptSaved(connection, true))) return;
                     reportFailure(e, 'savedPasswordRetry');
                   } finally {
                     afterAttempt();
@@ -295,7 +301,11 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
             // 存的那份密码被服务器拒了：追问并覆盖它。不复问的话，这份打错一个字符的
             // 密码会被每次连接和每次「重连」一直重放，用户再也等不到输入框（与私钥
             // 分支的复问对称）。其他原因（网络不通、主机密钥变更）照实报告。
-            if (isPasswordRejected(err)) {
+            if (parseAppError(err).data?.hop === 'jump') {
+              if (!recover(err, connection, () => attemptSaved(connection))) reportFailure(err, 'savedPassword');
+              return;
+            }
+            if (isPasswordRejected(err) || parseAppError(err).data?.code === 'needs_password') {
               promptForPassword(connection, true);
               return;
             }
@@ -355,6 +365,7 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
                   );
                   onSessionEstablished(connection.id, sid);
                 } catch (e) {
+                  if (recover(e, connection, () => attemptSaved(connection, true))) return;
                   reportFailure(e, 'savedPassphraseRetry');
                 } finally {
                   afterAttempt();
@@ -364,6 +375,10 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
             return;
           }
           // 真需要密码（保存的那把已经不对了）才追问；别的原因就说别的
+          if (parseAppError(err).data?.hop === 'jump') {
+            if (!recover(err, connection, () => attemptSaved(connection))) reportFailure(err, 'savedPassphrase');
+            return;
+          }
           if (isPassphraseProblem(err)) {
             promptForPassphrase(connection);
             return;
@@ -411,6 +426,10 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
         }
         // 这一次尝试不是白费的：后端明确告诉我们原因，只有"缺密码 / 密码错"
         // 才继续追问，其他原因（文件没了、格式不认、服务器拒绝）照实报告
+        if (parseAppError(err).data?.hop === 'jump') {
+          if (!recover(err, connection, () => attemptSaved(connection))) reportFailure(err, 'keyConnect');
+          return;
+        }
         if (isPassphraseProblem(err)) {
           promptForPassphrase(connection);
           return;
@@ -424,5 +443,24 @@ export function createConnectFlow(deps: ConnectFlowDeps) {
     await doConnect(connection);
   };
 
+  // 补输后重读已保存凭据，保留已确认的主机指纹状态，也支持连续两个跳点依次补输。
+  const attemptSaved = async (connection: SavedConnection, trust = false): Promise<void> => {
+    beforeAttempt(connection.id, { clearLocalError: true });
+    try {
+      await beforeSessionConnect();
+      const connectSaved = connection.authMethod === 'Password'
+        ? connectWithSavedPassword : connectWithSavedPassphrase;
+      const sessionId = await connectSaved(connection.id,
+        formatConnLabel(connection.username, connection.host, connection.port, privacyMode), trust);
+      onSessionEstablished(connection.id, sessionId);
+    } catch (err) {
+      const mismatch = asHostKeyMismatch(parseAppError(err));
+      if (mismatch && !trust) {
+        promptMismatch({ data: mismatch, onTrust: () => attemptSaved(connection, true) });
+      } else if (!recover(err, connection, () => attemptSaved(connection, trust))) {
+        reportFailure(err, 'doConnect');
+      }
+    } finally { afterAttempt(); }
+  };
   return { handleConnect, doConnect };
 }

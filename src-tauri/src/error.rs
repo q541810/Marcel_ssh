@@ -12,6 +12,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyAuthCode {
+    /// 本设备未保存 SSH 登录密码
+    NeedsPassword,
     /// 私钥文件不存在或已被移动
     KeyNotFound,
     /// 私钥读不出来（权限不足、内容损坏、不是文本）
@@ -68,8 +70,26 @@ pub enum AppError {
     /// `message` 已是给用户看的中文文案，前端直接展示。
     #[error("{message}")]
     KeyAuth { code: KeyAuthCode, message: String },
+    #[error("跳板机认证失败：{message}")]
+    JumpAuth { code: KeyAuthCode, message: String },
     #[error("{0}")]
     Other(String),
+}
+
+impl AppError {
+    pub(crate) fn for_jump(self) -> Self {
+        match self {
+            Self::KeyAuth { code, message } => Self::JumpAuth { code, message },
+            other => other,
+        }
+    }
+
+    pub(crate) fn needs_password() -> Self {
+        Self::KeyAuth {
+            code: KeyAuthCode::NeedsPassword,
+            message: "本设备未保存 SSH 密码，请输入密码".into(),
+        }
+    }
 }
 
 // Tauri requires Serialize for command return errors. Errors are serialized as
@@ -119,7 +139,7 @@ impl Serialize for AppError {
                     AppError::Io(_) => "Io",
                     AppError::Serde(_) => "Serde",
                     AppError::HostKeyVerification(_) => "HostKeyVerification",
-                    AppError::KeyAuth { .. } => "KeyAuth",
+                    AppError::KeyAuth { .. } | AppError::JumpAuth { .. } => "KeyAuth",
                     AppError::Other(_) => "Other",
                     AppError::HostKeyMismatch { .. } => unreachable!(),
                 };
@@ -132,6 +152,12 @@ impl Serialize for AppError {
                     // 凭据失败的原因码：前端据此决定下一步（弹私钥密码框 / 重问密码）
                     AppError::KeyAuth { code, .. } => {
                         m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
+                    }
+                    AppError::JumpAuth { code, .. } => {
+                        m.serialize_entry(
+                            "data",
+                            &serde_json::json!({ "code": code, "hop": "jump" }),
+                        )?;
                     }
                     _ => {}
                 }
@@ -230,6 +256,7 @@ mod tests {
     #[test]
     fn every_key_auth_code_round_trips_as_snake_case() {
         for (code, expected) in [
+            (KeyAuthCode::NeedsPassword, "needs_password"),
             (KeyAuthCode::KeyNotFound, "key_not_found"),
             (KeyAuthCode::KeyUnreadable, "key_unreadable"),
             (KeyAuthCode::NeedsPassphrase, "needs_passphrase"),
@@ -241,6 +268,31 @@ mod tests {
             let v = serde_json::to_value(code).expect("code should serialize");
             assert_eq!(v.as_str(), Some(expected));
         }
+    }
+
+    #[test]
+    fn jump_auth_keeps_reason_and_hop() {
+        for code in [
+            KeyAuthCode::NeedsPassword,
+            KeyAuthCode::NeedsPassphrase,
+            KeyAuthCode::BadPassphrase,
+            KeyAuthCode::Rejected,
+        ] {
+            let v = serialize_err(
+                &AppError::KeyAuth {
+                    code,
+                    message: "test".into(),
+                }
+                .for_jump(),
+            );
+            assert_eq!(kind_of(&v), "KeyAuth");
+            assert_eq!(v["data"]["hop"], "jump");
+            assert_eq!(v["data"]["code"], serde_json::to_value(code).unwrap());
+        }
+        assert_eq!(
+            kind_of(&serialize_err(&AppError::Ssh("network".into()).for_jump())),
+            "Ssh"
+        );
     }
 
     #[test]

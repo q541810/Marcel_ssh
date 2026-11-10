@@ -19,6 +19,8 @@ import type { SavedConnection, Session } from '@/lib/types';
 
 const mocks = vi.hoisted(() => ({
   savePassword: vi.fn(),
+  savePassphrase: vi.fn(),
+  saveJumpPassword: vi.fn(),
   reconnect: vi.fn(),
   prompt: vi.fn(),
   privacy: false,
@@ -26,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   connections: [] as SavedConnection[],
 }));
 
-vi.mock('@/lib/tauri', () => ({ savePassword: mocks.savePassword }));
+vi.mock('@/lib/tauri', () => ({ savePassword: mocks.savePassword, savePassphrase: mocks.savePassphrase, saveJumpPassword: mocks.saveJumpPassword }));
 
 vi.mock('@/stores/sessionStore', () => ({
   useSessionStore: (selector: (s: Record<string, unknown>) => unknown) =>
@@ -127,6 +129,29 @@ afterEach(() => {
 });
 
 describe('重连：存的那份密码被拒后换一份', () => {
+  it.each(['needs_password', 'needs_passphrase', 'bad_passphrase'])('重连缺少凭据或口令错误（%s）可就地补输', async (code) => {
+    mocks.connections = [code === 'needs_password' ? PW_CONN : KEY_CONN];
+    mocks.reconnect.mockRejectedValueOnce(keyAuthError(code));
+    render();
+    await clickReconnect();
+    expect(mocks.prompt).toHaveBeenCalledOnce();
+    await act(async () => mocks.prompt.mock.calls[0][0].onSubmit('new'));
+    expect(code === 'needs_password' ? mocks.savePassword : mocks.savePassphrase).toHaveBeenCalledWith('c1', 'new');
+    expect(mocks.reconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it('目标用私钥、跳板机缺密码时，只补跳板机密码', async () => {
+    mocks.connections = [{ ...KEY_CONN, useJump: true, jumpAuthMethod: 'Password', jumpHost: 'proxy' }];
+    mocks.reconnect.mockRejectedValueOnce({ kind: 'KeyAuth', message: 'missing', data: { code: 'needs_password', hop: 'jump' } });
+    render();
+    await clickReconnect();
+    expect(mocks.prompt.mock.calls[0][0].title).toContain('跳板机');
+    await act(async () => mocks.prompt.mock.calls[0][0].onSubmit('jump'));
+    expect(mocks.saveJumpPassword).toHaveBeenCalledWith('c1', 'jump');
+    expect(mocks.savePassword).not.toHaveBeenCalled();
+    expect(mocks.savePassphrase).not.toHaveBeenCalled();
+    expect(mocks.reconnect).toHaveBeenCalledTimes(2);
+  });
   it('弹密码框说明"换一份"，并给出脱敏后的连接称谓', async () => {
     mocks.reconnect.mockRejectedValue(keyAuthError('rejected'));
 
