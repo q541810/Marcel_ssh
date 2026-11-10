@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Bot, ChevronLeft, Folder, Terminal } from 'lucide-react';
 import { APP_LOGO, APP_NAME } from '@/lib/constants';
 import type { AppSettings } from '@/lib/types';
+import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   SettingsActionsProvider,
@@ -153,14 +154,17 @@ export default function MobileOnboarding({
     [settings, persist, registerValidator],
   );
 
+  // 引导结束时页面要留着把离场动画播完，再交还给外层卸载。
+  const { closing, requestClose, onAnimationEnd } = useAnimatedClose(onComplete);
+
   const finish = useCallback(async () => {
     try {
       await persist({ hasCompletedOnboarding: true });
     } catch (err) {
       console.error('Failed to save onboarding status:', err);
     }
-    onComplete();
-  }, [persist, onComplete]);
+    requestClose();
+  }, [persist, requestClose]);
 
   // Android back：steps 内上一步；第 0 步不接管 back，交给系统（退出应用）。
   const handleBack = useCallback(() => {
@@ -175,6 +179,8 @@ export default function MobileOnboarding({
     <SettingsActionsProvider value={actionsValue}>
       <MobileFullscreenPage
         region="mobile-onboarding"
+        closing={closing}
+        onExitAnimationEnd={onAnimationEnd}
         // 第 0 步不接管 back，交给系统（退出应用）。
         onBack={step > 0 ? handleBack : undefined}
       >

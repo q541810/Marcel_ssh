@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
 import { createPageMotion } from '../pageMotion';
 
-interface MobileFullscreenPageProps {
+type ExitAnimationEnd = (e?: { target?: unknown; currentTarget?: unknown }) => void;
+
+interface PageProps {
   /** Page content (header / body / footer), laid out in a column flexbox. */
   children: ReactNode;
   /**
@@ -18,13 +21,6 @@ interface MobileFullscreenPageProps {
    * over the class). Layout properties stay owned by the shell.
    */
   backgroundColor?: string;
-  /** True while the exit animation plays (from `useAnimatedClose`). */
-  closing?: boolean;
-  /** Pass `useAnimatedClose().onAnimationEnd` so the exit can unmount. */
-  onExitAnimationEnd?: (e?: {
-    target?: unknown;
-    currentTarget?: unknown;
-  }) => void;
   /**
    * Android back handler for this page. Omit when the page manages its own
    * back stack (e.g. onboarding steps navigate in-page instead of closing).
@@ -33,6 +29,29 @@ interface MobileFullscreenPageProps {
    */
   onBack?: () => void;
 }
+
+/**
+ * How the page is closed. A page has to stay mounted while it flies back to
+ * where it came from, so one of the two is required — a page that is simply
+ * unmounted by its parent (`{open && <MobileFullscreenPage …>}`) would vanish
+ * with no closing motion at all:
+ *
+ * - `open`: render the page always and pass the flag; the shell keeps it
+ *   mounted until the closing motion has played.
+ * - `closing` + `onExitAnimationEnd`: for a page whose parent unmounts it on
+ *   `onClose` — wire up `useAnimatedClose`.
+ */
+type Closing =
+  | { open: boolean; closing?: undefined; onExitAnimationEnd?: undefined }
+  | {
+      open?: undefined;
+      /** True while the closing motion plays (from `useAnimatedClose`). */
+      closing: boolean;
+      /** Pass `useAnimatedClose().onAnimationEnd` so the page can unmount afterwards. */
+      onExitAnimationEnd: ExitAnimationEnd;
+    };
+
+type MobileFullscreenPageProps = PageProps & Closing;
 
 /**
  * Shared shell for mobile full-screen sub-pages (file editor, image viewer,
@@ -54,17 +73,25 @@ export default function MobileFullscreenPage({
   region,
   className = 'bg-surface-sunken',
   backgroundColor,
-  closing = false,
+  open,
+  closing: closingProp,
   onExitAnimationEnd,
   onBack,
 }: MobileFullscreenPageProps) {
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
 
-  // Register once per mount: the page is only rendered while open, and a
-  // stable registration keeps this layer's position in the back stack even
-  // when the callback identity changes (e.g. a dirty-state dependency).
-  const hasBack = onBack != null;
+  // With `open` the shell owns the delayed unmount; otherwise the page's
+  // `useAnimatedClose` does and the page counts as open for as long as it is rendered.
+  const presence = useAnimatedPresence(open ?? true);
+  const closing = open === undefined ? closingProp === true : presence.phase === 'exit';
+  const onAnimationEnd = open === undefined ? onExitAnimationEnd : presence.onAnimationEnd;
+  const mounted = presence.mounted;
+
+  // Register for as long as the page is open: a stable registration keeps this
+  // layer's position in the back stack even when the callback identity changes
+  // (e.g. a dirty-state dependency).
+  const hasBack = onBack != null && open !== false;
   const rootRef = useRef<HTMLDivElement>(null);
   // Grows out of the control that opened it and flies back into it on close;
   // the back gesture holds it as a card in between (pageMotion.ts).
@@ -75,15 +102,20 @@ export default function MobileFullscreenPage({
   }, [hasBack, motion]);
 
   useLayoutEffect(() => {
+    if (!mounted) return;
     if (closing) motion.exit();
     else motion.enter();
-  }, [closing, motion]);
-  useEffect(() => () => motion.dispose(), [motion]);
+  }, [closing, mounted, motion]);
+  useEffect(() => {
+    if (!mounted) return;
+    return () => motion.dispose();
+  }, [mounted, motion]);
 
+  if (!mounted) return null;
   return createPortal(
     <div
       ref={rootRef}
-      onAnimationEnd={onExitAnimationEnd}
+      onAnimationEnd={onAnimationEnd}
       className={`fixed inset-0 z-50 flex flex-col ${className} ${
         closing ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'
       }`}

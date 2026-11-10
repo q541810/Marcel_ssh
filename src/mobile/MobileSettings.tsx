@@ -255,19 +255,22 @@ export default function MobileSettings({
           )}
         </MobileStackPage>
       </div>
-      {debugOpen && visible && (
-        <MobileFullscreenPage region="mobile-debug" onBack={() => setDebugOpen(false)}>
-          <div className="flex min-h-0 flex-1 flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
-            <DebugPage
-              onBack={() => setDebugOpen(false)}
-              onShowServers={() => {
-                setDebugOpen(false);
-                onShowServers?.();
-              }}
-            />
-          </div>
-        </MobileFullscreenPage>
-      )}
+      {/* 一直渲染、用 open 开合：外壳要留着页面把收回动画播完，条件渲染会让它一关就消失。 */}
+      <MobileFullscreenPage
+        region="mobile-debug"
+        open={debugOpen && visible}
+        onBack={() => setDebugOpen(false)}
+      >
+        <div className="flex min-h-0 flex-1 flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+          <DebugPage
+            onBack={() => setDebugOpen(false)}
+            onShowServers={() => {
+              setDebugOpen(false);
+              onShowServers?.();
+            }}
+          />
+        </div>
+      </MobileFullscreenPage>
     </SettingsActionsProvider>
   );
 }
