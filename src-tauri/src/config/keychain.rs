@@ -159,6 +159,15 @@ pub enum SecretSlot {
     JumpPassword(String),
     /// 某个连接的跳板机私钥口令（账号 `jump:pk:{连接 id}`）。
     JumpKeyPassphrase(String),
+    /// 某个连接在 sudo 认证时用户亲手输入的密码（账号 `sudo:{连接 id}`）。
+    ///
+    /// 值是 JSON：`{host, port, username, password}`。**带上目标三元组**是因为 sudo
+    /// 密码属于某台机器上的某个账户：用户把地址 / 端口 / 用户名改掉之后，旧密码不能
+    /// 再拿去试新机器（那等于把 A 机的密码发给 B 机）。读取时四样都对上才用。
+    ///
+    /// 只有「sudo 真的要密码 + 用户亲手输入」才写；从登录密码借来的那份不复制进来
+    /// （登录密码自己就在 `SshPassword` 槽位里，复制只会多一份要维护的秘密）。
+    SudoPassword(String),
     /// 私钥库的主密钥（账号 `keys:master`）：32 字节 AES 密钥的 base64，用来加解密
     /// `keys/` 目录里的私钥密文（见 `ssh::key_store`）。
     ///
@@ -207,6 +216,7 @@ impl SecretSlot {
             SecretSlot::SshKeyPassphrase(id) => Cow::Owned(format!("pk:{}", id)),
             SecretSlot::JumpPassword(id) => Cow::Owned(format!("jump:{}", id)),
             SecretSlot::JumpKeyPassphrase(id) => Cow::Owned(format!("jump:pk:{}", id)),
+            SecretSlot::SudoPassword(id) => Cow::Owned(format!("sudo:{}", id)),
             SecretSlot::KeyStoreMaster => Cow::Borrowed("keys:master"),
             SecretSlot::SyncDataKey => Cow::Borrowed("sync2_data_key"),
             SecretSlot::SyncRecoveryKey => Cow::Borrowed("sync2_recovery_key"),
@@ -235,7 +245,8 @@ impl SecretSlot {
             | SecretSlot::SshPassword(_)
             | SecretSlot::SshKeyPassphrase(_)
             | SecretSlot::JumpPassword(_)
-            | SecretSlot::JumpKeyPassphrase(_) => SyncTier::Secret,
+            | SecretSlot::JumpKeyPassphrase(_)
+            | SecretSlot::SudoPassword(_) => SyncTier::Secret,
             // 同步自己的密钥与旧版遗留：都只对这台设备有意义，绝不进机密同步。
             SecretSlot::KeyStoreMaster
             | SecretSlot::SyncDataKey
@@ -266,6 +277,7 @@ impl SecretSlot {
             SecretSlot::SshKeyPassphrase(_) => "私钥口令",
             SecretSlot::JumpPassword(_) => "跳板机密码",
             SecretSlot::JumpKeyPassphrase(_) => "跳板机私钥口令",
+            SecretSlot::SudoPassword(_) => "sudo 密码",
             SecretSlot::KeyStoreMaster => "私钥库主密钥",
             SecretSlot::SyncDataKey => "同步数据密钥",
             SecretSlot::SyncRecoveryKey => "同步恢复密钥",
@@ -277,16 +289,18 @@ impl SecretSlot {
         }
     }
 
-    /// 一个已保存连接名下的全部槽位（登录密码 / 私钥口令 / 跳板机密码 / 跳板机私钥口令）。
+    /// 一个已保存连接名下的全部槽位（登录密码 / 私钥口令 / 跳板机密码 /
+    /// 跳板机私钥口令 / sudo 密码）。
     ///
     /// 删连接要把它们一并清掉，以后同步按连接导出凭据也走这里——**新增「跟着连接走」的
     /// 变体必须加进来**，否则删连接会在密钥链里留下孤儿条目。
-    pub fn for_connection(connection_id: &str) -> [SecretSlot; 4] {
+    pub fn for_connection(connection_id: &str) -> [SecretSlot; 5] {
         [
             SecretSlot::SshPassword(connection_id.to_string()),
             SecretSlot::SshKeyPassphrase(connection_id.to_string()),
             SecretSlot::JumpPassword(connection_id.to_string()),
             SecretSlot::JumpKeyPassphrase(connection_id.to_string()),
+            SecretSlot::SudoPassword(connection_id.to_string()),
         ]
     }
 
@@ -375,6 +389,13 @@ impl SecretSlot {
                 .iter()
                 .any(|c| c == id)
                 .then(|| SecretSlot::SshKeyPassphrase(id.to_string()));
+        }
+        if let Some(id) = account.strip_prefix("sudo:") {
+            return catalog
+                .connection_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::SudoPassword(id.to_string()));
         }
         if let Some(id) = account.strip_prefix("mcp_headers:") {
             return catalog
@@ -731,6 +752,7 @@ mod tests {
         v.push(SecretSlot::SshKeyPassphrase("c1".into()));
         v.push(SecretSlot::JumpPassword("c1".into()));
         v.push(SecretSlot::JumpKeyPassphrase("c1".into()));
+        v.push(SecretSlot::SudoPassword("c1".into()));
         v.push(SecretSlot::McpHeaders("s1".into()));
         v
     }
@@ -759,6 +781,7 @@ mod tests {
             (SecretSlot::SshKeyPassphrase("c1".into()), "pk:c1"),
             (SecretSlot::JumpPassword("c1".into()), "jump:c1"),
             (SecretSlot::JumpKeyPassphrase("c1".into()), "jump:pk:c1"),
+            (SecretSlot::SudoPassword("c1".into()), "sudo:c1"),
             (SecretSlot::KeyStoreMaster, "keys:master"),
             (SecretSlot::SyncDataKey, "sync2_data_key"),
             (SecretSlot::SyncRecoveryKey, "sync2_recovery_key"),
@@ -867,7 +890,7 @@ mod tests {
         for slot in &slots {
             assert!(samples.contains(slot), "{:?} 不在样本表里", slot);
         }
-        // 样本里「跟着连接走」的变体（SshPassword / SshKeyPassphrase / Jump*）一个不少
+        // 样本里「跟着连接走」的变体（SshPassword / SshKeyPassphrase / Jump* / SudoPassword）一个不少
         let connection_bound = samples
             .iter()
             .filter(|s| {
@@ -877,6 +900,7 @@ mod tests {
                         | SecretSlot::SshKeyPassphrase(_)
                         | SecretSlot::JumpPassword(_)
                         | SecretSlot::JumpKeyPassphrase(_)
+                        | SecretSlot::SudoPassword(_)
                 )
             })
             .count();
@@ -974,7 +998,8 @@ mod tests {
                 | SecretSlot::SshPassword(_)
                 | SecretSlot::SshKeyPassphrase(_)
                 | SecretSlot::JumpPassword(_)
-                | SecretSlot::JumpKeyPassphrase(_) => false,
+                | SecretSlot::JumpKeyPassphrase(_)
+                | SecretSlot::SudoPassword(_) => false,
             };
             assert_eq!(
                 fixed.contains(&slot),
@@ -1040,6 +1065,10 @@ mod tests {
             SecretSlot::from_account("jump:c1", &catalog),
             Some(SecretSlot::JumpPassword("c1".into()))
         );
+        assert_eq!(
+            SecretSlot::from_account("sudo:c1", &catalog),
+            Some(SecretSlot::SudoPassword("c1".into()))
+        );
         // 连接密码：账号名就是连接 id，必须本机确实有这条连接才认
         assert_eq!(
             SecretSlot::from_account("c1", &catalog),
@@ -1061,8 +1090,8 @@ mod tests {
             mcp_ids: vec![],
         };
         let slots = SecretSlot::enumerable_slots(&catalog);
-        // 每条连接 4 个槽位；每个渠道 2 个（API Key + 自定义请求头）
-        assert_eq!(slots.len(), SecretSlot::fixed_slots().len() + 2 * 4 + 2);
+        // 每条连接 5 个槽位；每个渠道 2 个（API Key + 自定义请求头）
+        assert_eq!(slots.len(), SecretSlot::fixed_slots().len() + 2 * 5 + 2);
         let accounts: std::collections::HashSet<String> =
             slots.iter().map(|s| s.account().into_owned()).collect();
         assert_eq!(accounts.len(), slots.len(), "枚举里有重复槽位");

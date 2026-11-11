@@ -1320,7 +1320,7 @@ export interface ActiveInteractionPayload {
   sessionTarget?: { username: string; host: string; port: number };
   conversationTitle: string;
   queueLength: number;
-  credential?: { username: string; command: string; rejected: boolean };
+  credential?: { username: string; command: string; rejected: boolean; persist?: boolean };
   approval?: {
     toolCallId: string;
     toolName: string;

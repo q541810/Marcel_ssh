@@ -44,6 +44,21 @@ pub async fn config_delete_passphrase(connection_id: String) -> Result<(), AppEr
     keychain::delete(&SecretSlot::SshKeyPassphrase(connection_id))
 }
 
+/// Check whether a sudo password has been saved for a connection.
+/// 安全：只回布尔，绝不把密码或目标三元组回给前端。
+#[tauri::command]
+pub async fn config_has_sudo_password(connection_id: String) -> Result<bool, AppError> {
+    keychain::has(&SecretSlot::SudoPassword(connection_id))
+}
+
+/// Remove a saved sudo password from the keychain.
+///
+/// 值是带目标三元组的 JSON；这里整条删掉，不需要知道它属于哪台机器。
+#[tauri::command]
+pub async fn config_delete_sudo_password(connection_id: String) -> Result<(), AppError> {
+    keychain::delete(&SecretSlot::SudoPassword(connection_id))
+}
+
 /// Save jump-host password (`jump:{connection_id}`).
 #[tauri::command]
 pub async fn config_save_jump_password(

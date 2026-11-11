@@ -901,6 +901,16 @@ export async function deletePassword(connectionId: string): Promise<void> {
   return invoke("config_delete_password", { connectionId });
 }
 
+/** sudo 密码是否已保存。只回布尔，目标三元组与密码都不出后端。 */
+export async function hasSudoPassword(connectionId: string): Promise<boolean> {
+  return invoke<boolean>("config_has_sudo_password", { connectionId });
+}
+
+/** 清除这条连接已保存的 sudo 密码。 */
+export async function deleteSudoPassword(connectionId: string): Promise<void> {
+  return invoke("config_delete_sudo_password", { connectionId });
+}
+
 export async function sshReconnect(
   sessionId: string,
   connectionId: string,

@@ -91,6 +91,8 @@ export default function MobileConnectionForm({
   const [loginPassword, setLoginPassword] = useState('');
   const [hasLoginPassword, setHasLoginPassword] = useState(false);
   const [loginPasswordDirty, setLoginPasswordDirty] = useState(false);
+  /** agent 跑 sudo 时用户亲手输过、已加密保存在本设备的密码（值带目标三元组）。 */
+  const [hasSudoPassword, setHasSudoPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -175,16 +177,18 @@ export default function MobileConnectionForm({
     void (async () => {
       try {
         const isPassword = authMethod === 'Password';
-        const [has, hasLogin] = await Promise.all([
+        const [has, hasLogin, sudoPassword] = await Promise.all([
           isPassword
             ? tauri.hasPassword(connection.id)
             : tauri.hasPassphrase(connection.id),
           // 私钥连接下这个账号只服务 sudo 自动填充（用私钥登录用不到它）
           isPassword ? Promise.resolve(false) : tauri.hasPassword(connection.id),
+          tauri.hasSudoPassword(connection.id),
         ]);
         if (!cancelled) {
           setHasSecret(has);
           setHasLoginPassword(hasLogin);
+          setHasSudoPassword(sudoPassword);
         }
       } catch {
         /* keychain optional */
@@ -604,6 +608,32 @@ export default function MobileConnectionForm({
               </p>
             </Field>
           ))}
+
+        {/* agent 跑 sudo 时亲手输过、已加密保存的密码。跟登录密码是两个槽位，只清这一条。 */}
+        {connection?.id && hasSudoPassword && (
+          <Field label="sudo 密码">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-body text-fg-secondary">已保存在本设备</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void (async () => {
+                    if (!connection?.id) return;
+                    try {
+                      await tauri.deleteSudoPassword(connection.id);
+                      setHasSudoPassword(false);
+                    } catch {
+                      /* keychain optional */
+                    }
+                  })()
+                }
+                className="rounded-lg px-3 py-1.5 text-caption text-red-400/80 active:bg-state-soft hit-area"
+              >
+                清除
+              </button>
+            </div>
+          </Field>
+        )}
 
         <Field label="分组（可选）">
           <input

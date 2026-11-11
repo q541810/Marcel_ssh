@@ -26,7 +26,7 @@ const interaction: ActiveInteractionPayload = {
   conversationTitle: "部署",
   queueLength: 1,
   sessionTarget: { username: "deploy", host: "private-host", port: 2222 },
-  credential: { username: "root", command: "sudo id", rejected: true },
+  credential: { username: "root", command: "sudo id", rejected: true, persist: true },
 };
 let container: HTMLDivElement;
 let root: Root;
@@ -49,6 +49,8 @@ it("显示 sudo 实际请求的账户、隐藏主机，并只通过专用接口�
   );
   expect(container.textContent).toContain("root 的账户密码");
   expect(container.textContent).toContain("上次密码未被接受");
+  // 已保存连接才说“会加密保存在本设备”；临时会话仍然只记本次连接
+  expect(container.textContent).toContain("会加密保存在本设备");
   expect(container.textContent).not.toContain("private-host");
   const input = container.querySelector("input")!;
   expect(input.type).toBe("password");

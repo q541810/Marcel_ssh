@@ -92,7 +92,9 @@ export default function SudoPasswordDialog({
           />
         </label>
         <p className="text-meta text-fg-tertiary">
-          仅在本次连接记住。断线后清除。
+          {interaction.credential?.persist
+            ? "密码会加密保存在本设备，下次自动使用；不会覆盖你保存的登录密码。"
+            : "仅在本次连接记住。断线后清除。"}
         </p>
         {(error || interaction.credential?.rejected) && (
           <p role="alert" className="text-body text-red-400">

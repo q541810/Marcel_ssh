@@ -48,6 +48,81 @@ fn remote_error(error: impl std::fmt::Display) -> AppError {
     AppError::Ssh(format!("sudo 密码通道失败：{error}"))
 }
 
+/// 密钥链里 `sudo:{连接 id}` 的值：密码 + 它属于哪台机器的哪个账户。
+///
+/// 带目标三元组是为了：用户改了连接的地址 / 端口 / 用户名之后，旧机器的密码
+/// 绝不会被拿去试新机器；换了 sudo 用户（targetpw 之类）也不会拿错人的密码。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StoredSudo {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+}
+
+fn sudo_slot(conn: &SshConnection) -> Option<SecretSlot> {
+    conn.connection_id.clone().map(SecretSlot::SudoPassword)
+}
+
+/// 取这条连接、这个账户已保存的 sudo 密码；目标或账户对不上就当没有。
+fn stored_password(conn: &SshConnection, username: &str) -> Option<Zeroizing<String>> {
+    let raw = keychain::get(&sudo_slot(conn)?).ok().flatten()?;
+    let saved: StoredSudo = serde_json::from_str(&raw).ok()?;
+    matches_target(&saved, &conn.host, conn.port, username).then(|| Zeroizing::new(saved.password))
+}
+
+/// 存下来的这份是不是「这台机器、这个账户」的密码。
+fn matches_target(saved: &StoredSudo, host: &str, port: u16, username: &str) -> bool {
+    saved.host == host && saved.port == port && saved.username == username
+}
+
+/// 被拒时该不该把密钥链里那份删掉：只有它属于这个账户（或已无法解析）才删。
+fn should_clear_stored(raw: &str, username: &str) -> bool {
+    match serde_json::from_str::<StoredSudo>(raw) {
+        Ok(saved) => saved.username == username,
+        Err(_) => true,
+    }
+}
+
+/// 记住用户亲手输入的 sudo 密码。存不下只记日志：这一条命令已经能跑，不该因此失败。
+fn remember_password(conn: &SshConnection, username: &str, password: &Zeroizing<String>) {
+    let Some(slot) = sudo_slot(conn) else {
+        return;
+    };
+    let saved = StoredSudo {
+        host: conn.host.clone(),
+        port: conn.port,
+        username: username.to_string(),
+        password: password.to_string(),
+    };
+    match serde_json::to_string(&saved) {
+        Ok(raw) => {
+            if let Err(error) = keychain::set(&slot, &raw) {
+                log::warn!("保存 sudo 密码到密钥链失败：{}", error);
+            }
+        }
+        Err(error) => log::warn!("序列化 sudo 密码失败：{}", error),
+    }
+}
+
+/// 密码被服务器拒了：把这一份从密钥链里删掉，否则下次会重放同一个错密码。
+/// 存的要是别的账户的密码（这台机器配了 targetpw），不动它。
+fn forget_password(conn: &SshConnection, username: &str) {
+    let Some(slot) = sudo_slot(conn) else {
+        return;
+    };
+    let raw = match keychain::get(&slot) {
+        Ok(Some(raw)) => raw,
+        _ => return,
+    };
+    if !should_clear_stored(&raw, username) {
+        return;
+    }
+    if let Err(error) = keychain::delete(&slot) {
+        log::warn!("清除已保存的 sudo 密码失败：{}", error);
+    }
+}
+
 async fn open(conn: &SshConnection, command: &str) -> Result<SshChannel, AppError> {
     let channel = conn
         .handle
@@ -326,10 +401,18 @@ async fn answer(
             return Err(AppError::SudoAuthRequired);
         }
         let app = app.unwrap();
+        if rejected {
+            // 这一份已经被服务器拒了：内存和密钥链里都别留着，否则下次会重放同一个错密码。
+            forget_password(conn, &request.username);
+        }
         let mut password = if rejected {
             conn.sudo_passwords.lock().remove(&request.username);
             None
         } else { conn.sudo_passwords.lock().get(&request.username).cloned() };
+        if password.is_none() && !rejected {
+            // 用户亲手输入过的那份优先：它是专门为 sudo 问的，比借来的登录密码准。
+            password = stored_password(conn, &request.username);
+        }
         if password.is_none() && !rejected && request.username == conn.username {
             if let Some(id) = &conn.connection_id {
                 // A saved connection can be edited while its old session is still open.
@@ -341,6 +424,7 @@ async fn answer(
                 }
             }
         }
+        let mut typed = false;
         if password.is_none() {
             let state = app.state::<crate::AppState>();
             password = tokio::select! {
@@ -349,9 +433,15 @@ async fn answer(
                 password = state.agent_interaction.request_credential(app,
                     ticket.task_id.clone().unwrap_or_default(), ticket.session_id.clone(),
                     ticket.owner_conversation_id.clone().unwrap_or_default(),
-                    CredentialDetail { username: request.username.clone(), command: ticket.display_command.clone(), rejected },
+                    CredentialDetail {
+                        username: request.username.clone(),
+                        command: ticket.display_command.clone(),
+                        rejected,
+                        persist: conn.connection_id.is_some(),
+                    },
                 ) => password,
             };
+            typed = password.is_some();
         }
         let Some(password) = password else { return Err(AppError::Cancelled("已取消 sudo 密码输入；命令不会自动重试".into())); };
         if *stop.borrow() || !ssh.is_generation_active(&ticket.session_id, conn.generation).await {
@@ -360,6 +450,10 @@ async fn answer(
         let mut bytes = Zeroizing::new(password.as_bytes().to_vec());
         bytes.push(b'\n');
         reply.data(bytes.as_slice()).await.map_err(remote_error)?;
+        if typed {
+            // 只记用户亲手输入的那份；从登录密码借来的不复制（它自己就在 SshPassword 里）。
+            remember_password(conn, &request.username, &password);
+        }
         conn.sudo_passwords.lock().insert(request.username.clone(), password);
         Ok(())
     }.await;
@@ -453,5 +547,41 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn stored_sudo_only_matches_its_own_machine_and_account() {
+        let saved = StoredSudo {
+            host: "10.0.0.1".into(),
+            port: 22,
+            username: "deploy".into(),
+            password: "secret".into(),
+        };
+        assert!(matches_target(&saved, "10.0.0.1", 22, "deploy"));
+        // 改了地址 / 端口 / 用户名（或换了 sudo 用户），旧密码都不许再拿去试
+        assert!(!matches_target(&saved, "10.0.0.2", 22, "deploy"));
+        assert!(!matches_target(&saved, "10.0.0.1", 2222, "deploy"));
+        assert!(!matches_target(&saved, "10.0.0.1", 22, "root"));
+        // 值能原样往返；字段不全就不认（不猜默认值）
+        let raw = serde_json::to_string(&saved).unwrap();
+        let parsed: StoredSudo = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed.password, "secret");
+        assert!(serde_json::from_str::<StoredSudo>(r#"{"host":"h"}"#).is_err());
+    }
+
+    #[test]
+    fn rejection_clears_only_the_rejected_accounts_password() {
+        let raw = serde_json::to_string(&StoredSudo {
+            host: "10.0.0.1".into(),
+            port: 22,
+            username: "deploy".into(),
+            password: "secret".into(),
+        })
+        .unwrap();
+        assert!(should_clear_stored(&raw, "deploy"));
+        // targetpw：另一个账户的密码被拒，不该顺手把 deploy 那份删了
+        assert!(!should_clear_stored(&raw, "dbadmin"));
+        // 坏数据留着没用，直接清
+        assert!(should_clear_stored("not json", "deploy"));
     }
 }

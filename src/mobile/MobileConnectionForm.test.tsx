@@ -17,28 +17,34 @@ const {
   listKeys,
   hasPassphrase,
   hasPassword,
+  hasSudoPassword,
   savePassphrase,
   savePassword,
   deletePassphrase,
   deletePassword,
+  deleteSudoPassword,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   hasPassphrase: vi.fn(),
   hasPassword: vi.fn(),
+  hasSudoPassword: vi.fn(),
   savePassphrase: vi.fn(),
   savePassword: vi.fn(),
   deletePassphrase: vi.fn(),
   deletePassword: vi.fn(),
+  deleteSudoPassword: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
   listKeys,
   hasPassphrase,
   hasPassword,
+  hasSudoPassword,
   savePassphrase,
   savePassword,
   deletePassphrase,
   deletePassword,
+  deleteSudoPassword,
   hasJumpPassword: vi.fn().mockResolvedValue(false),
   hasJumpPassphrase: vi.fn().mockResolvedValue(false),
   saveJumpPassword: vi.fn(),
@@ -145,10 +151,12 @@ beforeEach(() => {
   listKeys.mockResolvedValue([]);
   hasPassphrase.mockResolvedValue(false);
   hasPassword.mockResolvedValue(false);
+  hasSudoPassword.mockResolvedValue(false);
   savePassphrase.mockResolvedValue(undefined);
   savePassword.mockResolvedValue(undefined);
   deletePassphrase.mockResolvedValue(undefined);
   deletePassword.mockResolvedValue(undefined);
+  deleteSudoPassword.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -205,6 +213,25 @@ describe('移动端：私钥连接的登录密码', () => {
 
     expect(deletePassword).toHaveBeenCalledWith('c1');
     expect(deletePassphrase).not.toHaveBeenCalled();
+  });
+});
+
+/** 与桌面同一条规约：sudo 密码是独立槽位，清它不能顺手清登录凭据。 */
+describe('移动端：sudo 密码的清除入口', () => {
+  it('已保存时显示并可清除，删的是 sudo 槽位', async () => {
+    hasSudoPassword.mockResolvedValue(true);
+    await render();
+
+    expect(document.body.textContent).toContain('sudo 密码');
+    await act(async () => buttonByText('清除').click());
+
+    expect(deleteSudoPassword).toHaveBeenCalledWith('c1');
+    expect(deletePassword).not.toHaveBeenCalled();
+  });
+
+  it('未保存时不显示这一行', async () => {
+    await render();
+    expect(document.body.textContent).not.toContain('sudo 密码');
   });
 });
 

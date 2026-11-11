@@ -10,28 +10,34 @@ const {
   listKeys,
   hasPassphrase,
   hasPassword,
+  hasSudoPassword,
   savePassphrase,
   savePassword,
   deletePassphrase,
   deletePassword,
+  deleteSudoPassword,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   hasPassphrase: vi.fn(),
   hasPassword: vi.fn(),
+  hasSudoPassword: vi.fn(),
   savePassphrase: vi.fn(),
   savePassword: vi.fn(),
   deletePassphrase: vi.fn(),
   deletePassword: vi.fn(),
+  deleteSudoPassword: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
   listKeys,
   hasPassphrase,
   hasPassword,
+  hasSudoPassword,
   savePassphrase,
   savePassword,
   deletePassphrase,
   deletePassword,
+  deleteSudoPassword,
   hasJumpPassword: vi.fn().mockResolvedValue(false),
   hasJumpPassphrase: vi.fn().mockResolvedValue(false),
   saveJumpPassword: vi.fn(),
@@ -105,10 +111,12 @@ beforeEach(() => {
   listKeys.mockResolvedValue([]);
   hasPassphrase.mockResolvedValue(false);
   hasPassword.mockResolvedValue(false);
+  hasSudoPassword.mockResolvedValue(false);
   savePassphrase.mockResolvedValue(undefined);
   savePassword.mockResolvedValue(undefined);
   deletePassphrase.mockResolvedValue(undefined);
   deletePassword.mockResolvedValue(undefined);
+  deleteSudoPassword.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -224,6 +232,31 @@ describe('密码认证：已保存密码的清除入口', () => {
 
     await act(async () => buttonByText('保存').click());
     expect(savePassword).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * sudo 密码的清除入口。
+ *
+ * 它是 agent 跑 sudo 时用户亲手输过的那份（密钥链 `sudo:{连接 id}`），和登录密码是
+ * 两个槽位：清登录密码不能把 sudo 密码一起带走，反过来也一样。
+ */
+describe('sudo 密码：独立于登录凭据的清除入口', () => {
+  it('已保存时显示一行并可清除，删的是 sudo 槽位', async () => {
+    hasSudoPassword.mockResolvedValue(true);
+    await render(PASSWORD_CONN);
+
+    expect(container.textContent).toContain('sudo 密码：已保存');
+    await act(async () => buttonByText('清除').click());
+
+    expect(deleteSudoPassword).toHaveBeenCalledWith('c1');
+    expect(deletePassword).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('sudo 密码：已保存');
+  });
+
+  it('未保存时不显示这一行', async () => {
+    await render(PASSWORD_CONN);
+    expect(container.textContent).not.toContain('sudo 密码：已保存');
   });
 });
 

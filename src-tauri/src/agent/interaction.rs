@@ -42,6 +42,8 @@ pub struct CredentialDetail {
     pub username: String,
     pub command: String,
     pub rejected: bool,
+    /// 这条会话是不是已保存连接——决定前端该说「会加密保存在本设备」还是「仅本次连接」。
+    pub persist: bool,
 }
 
 /// 审批请求详情
@@ -790,6 +792,7 @@ mod tests {
                 username: "root".into(),
                 command: "sudo id".into(),
                 rejected: false,
+                persist: true,
             }),
             responder: Some(InteractionResponder::Credential(tx)),
         };

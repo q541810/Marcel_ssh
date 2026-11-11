@@ -1287,6 +1287,8 @@ pub fn run() {
             commands::keychain::config_save_passphrase,
             commands::keychain::config_has_passphrase,
             commands::keychain::config_delete_passphrase,
+            commands::keychain::config_has_sudo_password,
+            commands::keychain::config_delete_sudo_password,
             commands::keychain::config_save_jump_password,
             commands::keychain::config_has_jump_password,
             commands::keychain::config_delete_jump_password,

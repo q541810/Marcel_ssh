@@ -3551,7 +3551,7 @@ dependencies = [
 
 [[package]]
 name = "marcel-ssh"
-version = "1.12.0"
+version = "1.13.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "android-native-keyring-store",

@@ -54,14 +54,15 @@ export default function ConnectionForm({
   /**
    * 登录密码：**私钥连接也能存一个**。
    *
-   * 它不用来登录（登录用的是私钥），存在的唯一理由是 agent 执行 `sudo` 时把它
-   * 自动填给远端 —— bash 工具的 sudo 改写读的就是密钥链里 account = 连接 id 的
-   * 这条（`agent/tools/bash.rs::lookup_password`），而那条以前只有密码认证才会写，
-   * 于是私钥用户跑 sudo 必然失败（我们的 exec 通道没有 PTY，sudo 也没法回头问人）。
+   * 它不用来登录（登录用的是私钥），存在的理由是 agent 执行 `sudo` 时可能把它
+   * 借去当 sudo 密码（command_exec 的 askpass 桥：同一条连接、sudo 问的正是
+   * 登录用户本人时才借，见 `command_exec/sudo.rs`）。
    */
   const [loginPassword, setLoginPassword] = useState('');
   const [hasLoginPassword, setHasLoginPassword] = useState(false);
   const [loginPasswordDirty, setLoginPasswordDirty] = useState(false);
+  /** agent 执行 sudo 时用户亲手输过、已加密保存在本设备的密码（值带目标三元组）。 */
+  const [hasSudoPassword, setHasSudoPassword] = useState(false);
   const [keys, setKeys] = useState<StoredKeyMeta[]>([]);
   const [keyManagerTarget, setKeyManagerTarget] = useState<'main' | 'jump' | null>(
     null,
@@ -109,19 +110,21 @@ export default function ConnectionForm({
     };
   }, [keyManagerTarget]);
 
-  // 已保存的密钥密码 / 登录密码（编辑模式才问得出来）
+  // 已保存的密钥密码 / 登录密码 / sudo 密码（编辑模式才问得出来）
   useEffect(() => {
     if (!connection?.id) return;
     let cancelled = false;
     void (async () => {
       try {
-        const [passphrase, loginPassword] = await Promise.all([
+        const [passphrase, loginPassword, sudoPassword] = await Promise.all([
           tauri.hasPassphrase(connection.id),
           tauri.hasPassword(connection.id),
+          tauri.hasSudoPassword(connection.id),
         ]);
         if (!cancelled) {
           setHasPassphrase(passphrase);
           setHasLoginPassword(loginPassword);
+          setHasSudoPassword(sudoPassword);
         }
       } catch (err) {
         console.warn('检查已保存的凭证失败:', err);
@@ -250,6 +253,17 @@ export default function ConnectionForm({
       setLoginPasswordDirty(false);
     } catch (err) {
       console.warn('清除已保存的登录密码失败:', err);
+    }
+  };
+
+  /** 只清 sudo 密码，不动登录凭据——它俩是两条独立的密钥链条目。 */
+  const clearSudoPassword = async () => {
+    if (!connection?.id) return;
+    try {
+      await tauri.deleteSudoPassword(connection.id);
+      setHasSudoPassword(false);
+    } catch (err) {
+      console.warn('清除已保存的 sudo 密码失败:', err);
     }
   };
 
@@ -384,6 +398,21 @@ export default function ConnectionForm({
               清除
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* agent 跑 sudo 时用户亲手输过、且已加密保存的密码。跟登录密码是两个槽位，
+          只清这一条；改了地址 / 用户名后旧的那份不再匹配，会重新问。 */}
+      {connection?.id && hasSudoPassword && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-body text-fg-secondary">sudo 密码：已保存</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void clearSudoPassword()}
+          >
+            清除
+          </Button>
         </div>
       )}
 
