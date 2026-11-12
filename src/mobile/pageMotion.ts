@@ -59,7 +59,6 @@ import {
 } from './backPreview';
 import {
   absorbable,
-  afterFrame,
   Blend,
   clamp,
   keyframes,
@@ -907,8 +906,6 @@ export function createPageMotion(
   /** The page's own close has started this open cycle. */
   let closing = false;
   let grace: ReturnType<typeof setTimeout> | null = null;
-  /** An opening page waiting for its first paint before it starts to grow. */
-  let cancelOpen: (() => void) | null = null;
 
   // While held: what the finger asks for, and the tilt that trails it.
   let holding = false;
@@ -922,11 +919,6 @@ export function createPageMotion(
   const clearGrace = () => {
     if (grace != null) clearTimeout(grace);
     grace = null;
-  };
-
-  const dropPendingOpen = () => {
-    cancelOpen?.();
-    cancelOpen = null;
   };
 
   const stopHolding = () => {
@@ -1052,7 +1044,6 @@ export function createPageMotion(
   const preview: BackPreview = {
     start() {
       clearGrace();
-      dropPendingOpen();
       feel = getBackFeel();
       if (!card.attach()) return;
       flyingHome = false;
@@ -1106,7 +1097,6 @@ export function createPageMotion(
     enter() {
       closing = false;
       clearGrace();
-      dropPendingOpen();
       stopHolding();
       if (prefersReducedMotion()) return;
       const el0 = getEl();
@@ -1132,23 +1122,19 @@ export function createPageMotion(
       const from = chip ?? offscreenCard(card.box, 1);
       under.begin(getUnder(), el, card.lowest, UNDER_SHOWN);
       card.place(from);
-      const go = () => {
-        cancelOpen = null;
-        if (card.el !== el || !el.isConnected) return;
-        grow(from, zeroLike(from), chip);
-      };
-      // Let the page's first paint through before it starts to grow: that
-      // frame can be long (the page is mounting), and a motion that starts
-      // inside it would lose its beginning. Nothing to wait for without
-      // Web Animations (tests).
-      if (typeof el.animate === 'function') cancelOpen = afterFrame(go, 160, 2);
-      else go();
+      // Start growing right away, in the same task as the tap. Don't wait for
+      // the first paint: a page that mounts keeps the main thread busy for
+      // several frames (effects, data arriving, re-renders), and waiting
+      // through them left the page invisible for up to a second on a phone.
+      // Nothing is lost by starting inside the long frame — a Web Animation's
+      // start time is fixed when the frame that carries it is committed, and
+      // from then on the compositor plays it however busy React is.
+      grow(from, zeroLike(from), chip);
     },
     exit() {
       if (closing) return;
       closing = true;
       clearGrace();
-      dropPendingOpen();
       if (flyingHome || prefersReducedMotion()) return;
       feel = getBackFeel();
       if (!card.attach()) return;
@@ -1156,7 +1142,6 @@ export function createPageMotion(
     },
     dispose() {
       clearGrace();
-      dropPendingOpen();
       stopHolding();
       flyingHome = false;
       closing = false;
