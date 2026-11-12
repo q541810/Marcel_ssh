@@ -160,7 +160,9 @@ impl ConversationPersister {
                     &self.conversation_id,
                     self.prompt_origin.db_role(),
                     &messages[idx].content,
-                    &Utc::now().to_rfc3339(),
+                    // 发给模型的时间标记与落库时刻必须是同一个值：下一轮从库里
+                    // 读回来重算标记时才逐字节一致，提示词缓存不会在分钟边界上失效。
+                    &messages[idx].sent_at.unwrap_or_else(Utc::now).to_rfc3339(),
                     None,
                     None,
                     image_paths_json.as_deref(),

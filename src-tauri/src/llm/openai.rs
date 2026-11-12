@@ -878,22 +878,24 @@ fn value_type_name(v: &serde_json::Value) -> &'static str {
 
 /// `send_images`: true when vision is enabled (all image-bearing user turns keep images).
 fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
+    // 带发送时刻的用户消息在这里补时间标记（只改发出去的文本，见 `request_text`）。
+    let content = m.request_text();
     let paths = m.image_paths.as_ref().filter(|p| !p.is_empty());
     let Some(paths) = paths else {
-        return RequestContent::Text(m.content.clone());
+        return RequestContent::Text(content.into_owned());
     };
 
     if !send_images || m.role != LlmRole::User {
-        let mut text = m.content.clone();
+        let mut text = content.to_string();
         append_image_placeholders(&mut text, paths.len());
         return RequestContent::Text(text);
     }
 
     let mut parts: Vec<RequestContentPart> = Vec::new();
-    if !m.content.is_empty() {
+    if !content.is_empty() {
         parts.push(RequestContentPart {
             part_type: "text",
-            text: Some(m.content.clone()),
+            text: Some(content.to_string()),
             image_url: None,
         });
     }
@@ -917,13 +919,13 @@ fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
 
     if loaded == 0 {
         // Missing files: degrade to placeholder text
-        let mut text = m.content.clone();
+        let mut text = content.to_string();
         append_image_placeholders(&mut text, paths.len());
         return RequestContent::Text(text);
     }
 
     if parts.len() == 1 && parts[0].part_type == "text" {
-        RequestContent::Text(m.content.clone())
+        RequestContent::Text(content.into_owned())
     } else {
         RequestContent::Parts(parts)
     }
@@ -1463,6 +1465,27 @@ mod vision_request_tests {
         let mut m = LlmMessage::user(content);
         m.image_paths = Some(paths.iter().map(|p| p.to_string()).collect());
         m
+    }
+
+    #[test]
+    fn user_message_with_sent_at_gets_time_tag_in_request_only() {
+        use chrono::TimeZone;
+        let cfg = config_with_vision(false);
+        let when = chrono::Utc.with_ymd_and_hms(2026, 11, 12, 6, 3, 0).unwrap();
+        let mut stamped = LlmMessage::user("看看磁盘");
+        stamped.sent_at = Some(when);
+        let msgs = vec![LlmMessage::user("没标记"), stamped.clone()];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let ms = messages_of(&body);
+        assert_eq!(ms[0]["content"], "没标记");
+        let sent = ms[1]["content"].as_str().expect("text content");
+        assert!(sent.starts_with('['), "应以时间标记开头: {sent}");
+        assert!(sent.ends_with("\n看看磁盘"), "原文紧跟在标记之后: {sent}");
+        assert_eq!(stamped.content, "看看磁盘");
+        // 字节版与 Value 版必须一致（两条构建路径同源）。
+        let bytes = build_request_body_bytes_with_max_tokens(&cfg, &msgs, &[], true, None).unwrap();
+        let from_bytes: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(messages_of(&from_bytes), ms);
     }
 
     fn messages_of(body: &serde_json::Value) -> &Vec<serde_json::Value> {

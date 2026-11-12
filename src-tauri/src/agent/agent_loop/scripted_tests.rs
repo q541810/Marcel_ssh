@@ -2827,6 +2827,14 @@ fn main_spec(task_id: &str, conversation_id: &str, prompt: &str) -> AgentSpec {
     }
 }
 
+/// 请求里的用户消息 = 发送时间标记（`[日期 星期 时:分 时区]`）+ 换行 + 原文。
+fn is_stamped_prompt(message: &Value, prompt: &str) -> bool {
+    message["role"] == "user"
+        && message["content"]
+            .as_str()
+            .is_some_and(|c| c.starts_with('[') && c.ends_with(&format!("\n{prompt}")))
+}
+
 /// 主 agent 的请求只校验模型与流式（主 agent 的工具集里没有 `local_bash`）。
 fn main_request_messages(request: &Value) -> Result<&Vec<Value>, String> {
     require(request["model"] == MODEL_NAME, "wrong model")?;
@@ -2854,8 +2862,10 @@ fn scripted_production_loop_suggest_card_ends_turn_without_extra_request() {
                 check: Box::new(|request| {
                     let messages = main_request_messages(request)?;
                     require(
-                        messages.last().is_some_and(|m| m["content"] == CARD_PROMPT),
-                        "missing card prompt",
+                        messages
+                            .last()
+                            .is_some_and(|m| is_stamped_prompt(m, CARD_PROMPT)),
+                        "missing card prompt (with time tag)",
                     )
                 }),
                 frames: conclusion_with_card_frames("card-1", CARD_CONCLUSION, &good_card),
@@ -2869,7 +2879,7 @@ fn scripted_production_loop_suggest_card_ends_turn_without_extra_request() {
                     require(
                         messages
                             .last()
-                            .is_some_and(|m| m["content"] == CARD_RETRY_PROMPT),
+                            .is_some_and(|m| is_stamped_prompt(m, CARD_RETRY_PROMPT)),
                         "missing retry prompt",
                     )
                 }),

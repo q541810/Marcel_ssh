@@ -874,6 +874,7 @@ pub async fn run(
             steps.push(step);
             messages.push(LlmMessage {
                 estimate_cache: Default::default(),
+                sent_at: None,
                 role: LlmRole::Tool,
                 content: output,
                 tool_calls: None,

@@ -76,6 +76,7 @@ mod tests {
             role: LlmRole::Tool,
             content: "x".repeat(40_000),
             estimate_cache: Default::default(),
+            sent_at: None,
             ..LlmMessage::assistant("")
         }];
         let before = super::super::meter::estimate_message(&msgs[0]);

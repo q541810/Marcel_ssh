@@ -457,6 +457,7 @@ fn system_prompt(connection_id: &str) -> String {
 fn tool_message(tool_call_id: &str, content: String) -> LlmMessage {
     LlmMessage {
         estimate_cache: Default::default(),
+        sent_at: None,
         role: LlmRole::Tool,
         content,
         tool_calls: None,

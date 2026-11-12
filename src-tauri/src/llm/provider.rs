@@ -117,6 +117,57 @@ pub struct LlmMessage {
     /// （恢复超长任务，降级作为救命场景的防御保留）。
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub db_id_known: bool,
+    /// 这条用户消息的发送时刻。`Some` 时，发给模型的那一刻会在正文前补一行时间标记
+    /// （见 [`LlmMessage::request_text`]），让模型知道现在几点、距上一条隔了多久。
+    ///
+    /// **只影响请求体，`content` 始终是原文**——它要落库、给界面显示、取会话标题、
+    /// 进压缩摘要，都不该带标记。只有主 agent 的用户消息 / 作业告知会被设置
+    /// （`manager::build_agent_messages` 按 audience 决定，子 agent 保持 `None`）。
+    /// 取值来自落库的 `created_at`，所以同一条消息每一轮发出去的标记逐字节相同，
+    /// 不会打断提示词缓存。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sent_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// 时间标记里的星期。
+const WEEKDAYS_ZH: [&str; 7] = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+/// 一行时间标记的 token 估算（`meter` 用；实际约 15~20 个 token）。
+pub const SENT_AT_TAG_TOKENS: usize = 18;
+
+/// 把发送时刻格式化成模型看的标记，形如 `[2026-11-12 周四 14:03 UTC+8]`。
+/// 精确到分钟：够判断「刚才 / 昨天 / 上周」，又不会因为秒数制造无谓的 token。
+pub fn format_sent_at_tag(at: chrono::DateTime<chrono::FixedOffset>) -> String {
+    use chrono::{Datelike, Timelike};
+    let offset_secs = at.offset().local_minus_utc();
+    let tz = if offset_secs == 0 {
+        "UTC".to_string()
+    } else {
+        let abs = offset_secs.abs();
+        let (h, m) = (abs / 3600, abs % 3600 / 60);
+        let sign = if offset_secs < 0 { '-' } else { '+' };
+        if m == 0 {
+            format!("UTC{sign}{h}")
+        } else {
+            format!("UTC{sign}{h}:{m:02}")
+        }
+    };
+    format!(
+        "[{:04}-{:02}-{:02} {} {:02}:{:02} {}]",
+        at.year(),
+        at.month(),
+        at.day(),
+        WEEKDAYS_ZH[at.weekday().num_days_from_monday() as usize],
+        at.hour(),
+        at.minute(),
+        tz
+    )
+}
+
+/// 按本机时区格式化（用户在哪个时区打字，标记就写哪个时区）。
+pub fn local_sent_at_tag(at: chrono::DateTime<chrono::Utc>) -> String {
+    let local = at.with_timezone(&chrono::Local);
+    format_sent_at_tag(local.with_timezone(local.offset()))
 }
 
 impl LlmRole {
@@ -143,6 +194,7 @@ impl LlmMessage {
             db_id: None,
             db_id_known: false,
             estimate_cache: Default::default(),
+            sent_at: None,
         }
     }
 
@@ -158,6 +210,7 @@ impl LlmMessage {
             db_id: None,
             db_id_known: false,
             estimate_cache: Default::default(),
+            sent_at: None,
         }
     }
 
@@ -173,6 +226,24 @@ impl LlmMessage {
             db_id: None,
             db_id_known: false,
             estimate_cache: Default::default(),
+            sent_at: None,
+        }
+    }
+
+    /// 发给模型的文本：`sent_at` 有值的用户消息在正文前补一行时间标记，其余原样。
+    /// 请求体构建（`openai::build_request_content`）是唯一调用方——标记不进内存
+    /// 里的 `content`，也就不会被落库或显示。
+    pub fn request_text(&self) -> std::borrow::Cow<'_, str> {
+        match (self.role == LlmRole::User, self.sent_at) {
+            (true, Some(at)) => {
+                let tag = local_sent_at_tag(at);
+                if self.content.is_empty() {
+                    std::borrow::Cow::Owned(tag)
+                } else {
+                    std::borrow::Cow::Owned(format!("{tag}\n{}", self.content))
+                }
+            }
+            _ => std::borrow::Cow::Borrowed(&self.content),
         }
     }
 }
@@ -385,6 +456,68 @@ pub trait LlmProvider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(
+        offset_secs: i32,
+        y: i32,
+        mo: u32,
+        d: u32,
+        h: u32,
+        mi: u32,
+    ) -> chrono::DateTime<chrono::FixedOffset> {
+        use chrono::TimeZone;
+        chrono::FixedOffset::east_opt(offset_secs)
+            .unwrap()
+            .with_ymd_and_hms(y, mo, d, h, mi, 30)
+            .unwrap()
+    }
+
+    #[test]
+    fn sent_at_tag_has_date_weekday_minute_and_offset() {
+        // 2026-11-12 是周四；秒数不进标记。
+        assert_eq!(
+            format_sent_at_tag(at(8 * 3600, 2026, 11, 12, 14, 3)),
+            "[2026-11-12 周四 14:03 UTC+8]"
+        );
+        assert_eq!(
+            format_sent_at_tag(at(-(3 * 3600 + 1800), 2026, 11, 15, 9, 5)),
+            "[2026-11-15 周日 09:05 UTC-3:30]"
+        );
+        assert_eq!(
+            format_sent_at_tag(at(0, 2026, 11, 9, 0, 0)),
+            "[2026-11-09 周一 00:00 UTC]"
+        );
+    }
+
+    #[test]
+    fn request_text_stamps_only_user_messages_with_sent_at() {
+        use chrono::TimeZone;
+        let when = chrono::Utc.with_ymd_and_hms(2026, 11, 12, 6, 3, 0).unwrap();
+        let tag = local_sent_at_tag(when);
+
+        let plain = LlmMessage::user("你好");
+        assert_eq!(plain.request_text(), "你好", "没有 sent_at 不加标记");
+
+        let mut stamped = LlmMessage::user("你好");
+        stamped.sent_at = Some(when);
+        assert_eq!(stamped.request_text(), format!("{tag}\n你好"));
+        assert_eq!(
+            stamped.content, "你好",
+            "content 必须保持原文，标记只在请求里"
+        );
+
+        let mut image_only = LlmMessage::user("");
+        image_only.sent_at = Some(when);
+        assert_eq!(
+            image_only.request_text(),
+            tag,
+            "空正文只发标记，不留多余换行"
+        );
+
+        let mut assistant = LlmMessage::assistant("好的");
+        assistant.sent_at = Some(when);
+        assert_eq!(assistant.request_text(), "好的", "非用户消息永远不加");
+    }
 
     #[test]
     fn test_llm_config_serialization_excludes_api_key() {

@@ -9,7 +9,7 @@
 //! | 子 agent 向主 agent 提问（`ask_parent` 的用法规则；子 agent 没有 `ask_user`） | `templates/agent/子agent_提问.hbs`（partial，由上面两份引用，本机子 agent 同） | 仅子 agent | 随上一行送达 |
 //! | 本机子 agent 环境 | `templates/agent/本机子agent.hbs` | 仅本机子 agent（`AgentRole::LocalSub`） | system prompt（经 `prompt_extra`） |
 //! | 多机操控（含跨机文件链接 `remote://机器名/路径`） | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
-//! | 先理清需求 / 沟通（含文件路径链接约定 `remote:` / `local:`）/ 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
+//! | 先理清需求 / 沟通（含文件路径链接约定 `remote:` / `local:`、用户消息前的发送时间标记说明）/ 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
 //! | 联网搜索 | `templates/agent/联网搜索.hbs` | 注册了声明 `WebSearch` 段的工具（当前是 `web_search`） | system prompt |
 //! | 网页访问 | `templates/agent/网页访问.hbs` | 注册了声明 `HttpFetch` 段的工具（当前是 `http_get`） | system prompt |
 //! | 会话 | `templates/agent/会话.hbs` | 无条件 | system prompt |
@@ -31,6 +31,11 @@
 //! 「压缩前言」之前的段由 `render_agent_prompt` 组装（「长期记忆」例外地先由
 //! `memory::inject` 渲染、冻结，再原样拼入）；其余各自在调用点用 `render_fragment`
 //! 渲染（它们不是同一个 LLM 调用，或不属于 system prompt）。
+//!
+//! 用户消息前的发送时间标记（`[2026-11-12 周四 14:03 UTC+8]`）不是提示词段：它在发请求时
+//! 由 `LlmMessage::request_text` 加到主 agent 的用户 / 告知消息正文前（`sent_at` 有值才加，
+//! 取落库时刻，逐字节稳定、不破缓存），解释它的那句话在 `沟通.hbs`。**别把「当前时间」写进
+//! system prompt**——它每分钟都变，会让提示词缓存每轮失效。
 //!
 //! 不在此表的模型可见文本，各有其归属，别往这里搬：
 //! 工具怎么用 → 各工具自己的 `description()`（`agent/tools/*.rs`）；

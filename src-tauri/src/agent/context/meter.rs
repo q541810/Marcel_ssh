@@ -94,6 +94,10 @@ fn compute_message_tokens(msg: &LlmMessage) -> usize {
     if let Some(paths) = msg.image_paths.as_ref() {
         tokens += paths.len() * IMAGE_TOKEN_ESTIMATE;
     }
+    // 发请求时会在用户消息前补一行时间标记（`LlmMessage::request_text`）。
+    if msg.sent_at.is_some() && msg.role == LlmRole::User {
+        tokens += crate::llm::provider::SENT_AT_TAG_TOKENS;
+    }
 
     tokens + ROLE_OVERHEAD
 }

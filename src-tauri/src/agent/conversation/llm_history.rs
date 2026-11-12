@@ -66,6 +66,10 @@ pub struct HistoryMessage {
     pub image_paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db_id: Option<String>,
+    /// 落库时刻（只有库里读出来的行有；前端 transient 记录没有，也不需要传）。
+    /// 用户 / 告知消息据此带上发送时刻，见 `LlmMessage::sent_at`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<HistoryCompaction>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -123,6 +127,7 @@ impl HistoryMessage {
                 .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
                 .filter(|paths| !paths.is_empty()),
             db_id: Some(message.id.clone()),
+            created_at: Some(message.created_at),
             ..Self::default()
         };
 
@@ -343,6 +348,7 @@ pub(crate) fn project_llm_history(messages: &[HistoryMessage]) -> Vec<LlmMessage
             "user" | "notice" => {
                 let mut item = LlmMessage::user(message.content.clone());
                 item.db_id = nonempty(&message.db_id);
+                item.sent_at = message.created_at;
                 item.image_paths = message
                     .image_paths
                     .clone()
@@ -623,6 +629,32 @@ mod tests {
         );
         assert!(output.iter().all(|item| !item.db_id_known));
         assert_eq!(db.load_messages(&conversation.id).unwrap().len(), 3);
+    }
+
+    /// 用户 / 告知消息带上落库时刻（模型据此看到发送时间），其余角色与摘要卡不带。
+    #[test]
+    fn user_and_notice_rows_carry_their_stored_time_others_do_not() {
+        let db = create_test_db();
+        let conversation = db.create_conversation("connection", "history").unwrap();
+        let user = save(&db, &conversation.id, "user", "查磁盘");
+        let reply = save(&db, &conversation.id, "assistant", "好的");
+        let notice = save(&db, &conversation.id, "notice", "作业完成");
+        let input = snapshot(json!({
+            "entries": [stored_entry(&user.id), stored_entry(&reply.id), stored_entry(&notice.id)]
+        }));
+        let output = db.resolve_llm_history(&conversation.id, &input).unwrap();
+        assert_eq!(output[0].sent_at, Some(user.created_at));
+        assert_eq!(output[1].sent_at, None);
+        assert_eq!(output[2].sent_at, Some(notice.created_at));
+        assert_eq!(output[0].content, "查磁盘", "正文原样，标记不进 content");
+
+        let transient = snapshot(json!({ "entries": [
+            { "kind": "transient", "message": { "role": "user", "content": "还没落库" } }
+        ] }));
+        let output = db
+            .resolve_llm_history(&conversation.id, &transient)
+            .unwrap();
+        assert_eq!(output[0].sent_at, None, "没有落库时刻就不猜");
     }
 
     #[test]
@@ -956,12 +988,15 @@ mod tests {
             let output = db
                 .resolve_llm_history(&conversation.id, &fixture.snapshot)
                 .unwrap_or_else(|error| panic!("{}: {error}", fixture.name));
-            assert_eq!(
-                serde_json::to_value(output).unwrap(),
-                fixture.expected,
-                "fixture: {}",
-                fixture.name
-            );
+            // 夹具是迁移前前端转换的产物，不含后加的 `sentAt`（发送时间标记的素材，
+            // 由 `user_and_notice_rows_carry_their_stored_time_others_do_not` 单独验证）。
+            let mut actual = serde_json::to_value(output).unwrap();
+            for item in actual.as_array_mut().into_iter().flatten() {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.remove("sentAt");
+                }
+            }
+            assert_eq!(actual, fixture.expected, "fixture: {}", fixture.name);
             let stored_after = db.load_messages(&conversation.id).unwrap();
             assert_eq!(
                 stored_after.len(),

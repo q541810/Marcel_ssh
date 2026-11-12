@@ -424,6 +424,7 @@ async fn execute_single_tool(
         };
         let tool_msg = LlmMessage {
             estimate_cache: Default::default(),
+            sent_at: None,
             role: LlmRole::Tool,
             content: "[用户手动中断，已取消执行]".to_string(),
             tool_calls: None,
@@ -510,6 +511,7 @@ async fn execute_single_tool(
 
     let tool_msg = LlmMessage {
         estimate_cache: Default::default(),
+        sent_at: None,
         role: LlmRole::Tool,
         content: exec.output,
         tool_calls: None,

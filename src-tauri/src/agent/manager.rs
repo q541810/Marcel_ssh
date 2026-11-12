@@ -1323,6 +1323,40 @@ async fn collect_plugin_sections(
     sections
 }
 
+/// 给主 agent 的用户消息标上发送时刻（模型在请求里看到的时间标记，见 `LlmMessage::sent_at`）。
+///
+/// 历史里的用户 / 告知消息已带着各自的落库时刻（`project_llm_history`）；本轮 prompt 的
+/// 发送时刻 = `now`。前端的历史快照里通常已带着这条（transient、没有落库时刻），所以
+/// 「已在末尾」的分支也要补上；落库时 `save_last_user_msg` 会把这个时刻原样写成
+/// `created_at`，下一轮读回来的标记就和这一轮发出去的一致。
+///
+/// 时间标记只给主 agent 的对话：子 agent 的任务是主 agent 写给它的，不是用户说的话，
+/// 带上时间只会让它困惑。
+fn apply_sent_at(
+    messages: &mut Vec<LlmMessage>,
+    prompt: Option<&str>,
+    audience: crate::agent::tools::ToolAudience,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    if let Some(prompt) = prompt {
+        match messages.last_mut() {
+            Some(last) if last.role == LlmRole::User && last.content == prompt => {
+                last.sent_at = Some(now);
+            }
+            _ => {
+                let mut msg = LlmMessage::user(prompt.to_string());
+                msg.sent_at = Some(now);
+                messages.push(msg);
+            }
+        }
+    }
+    if !matches!(audience, crate::agent::tools::ToolAudience::Main) {
+        for msg in messages.iter_mut() {
+            msg.sent_at = None;
+        }
+    }
+}
+
 fn build_agent_messages(
     template_manager: &TemplateManager,
     session_id: &str,
@@ -1371,14 +1405,7 @@ fn build_agent_messages(
         }
         messages.push(msg.clone());
     }
-    if let Some(prompt) = prompt {
-        if !messages
-            .last()
-            .map_or(false, |m| m.role == LlmRole::User && m.content == prompt)
-        {
-            messages.push(LlmMessage::user(prompt.to_string()));
-        }
-    }
+    apply_sent_at(&mut messages, prompt, audience, chrono::Utc::now());
     Ok(messages)
 }
 
@@ -1532,6 +1559,40 @@ fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_sent_at_stamps_prompt_for_main_and_strips_for_subagents() {
+        use crate::agent::tools::ToolAudience;
+        let now = chrono::Utc::now();
+        let earlier = now - chrono::Duration::hours(3);
+
+        // 历史里已带着本轮 prompt（transient）：补上 now，不重复追加。
+        let mut old = LlmMessage::user("旧消息");
+        old.sent_at = Some(earlier);
+        let mut msgs = vec![old.clone(), LlmMessage::user("新问题")];
+        apply_sent_at(&mut msgs, Some("新问题"), ToolAudience::Main, now);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].sent_at, Some(earlier), "历史消息的时刻不被改动");
+        assert_eq!(msgs[1].sent_at, Some(now));
+
+        // 历史里没有本轮 prompt：追加并标上 now。
+        let mut msgs = vec![old.clone()];
+        apply_sent_at(&mut msgs, Some("新问题"), ToolAudience::Main, now);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].sent_at, Some(now));
+
+        // 没有 prompt（带回答续派）：不凭空造消息。
+        let mut msgs = vec![old.clone()];
+        apply_sent_at(&mut msgs, None, ToolAudience::Main, now);
+        assert_eq!(msgs.len(), 1);
+
+        // 子 agent：一律不带时间。
+        for audience in [ToolAudience::Sub, ToolAudience::LocalSub] {
+            let mut msgs = vec![old.clone()];
+            apply_sent_at(&mut msgs, Some("任务"), audience, now);
+            assert!(msgs.iter().all(|m| m.sent_at.is_none()));
+        }
+    }
     use crate::config::settings::ExperimentalSettings;
 
     fn exp() -> ExperimentalSettings {
