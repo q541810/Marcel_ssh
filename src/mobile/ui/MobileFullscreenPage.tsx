@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
 import { createPageMotion } from '../pageMotion';
+import { useShellFirst } from './useShellFirst';
 
 type ExitAnimationEnd = (e?: { target?: unknown; currentTarget?: unknown }) => void;
 
@@ -111,6 +112,9 @@ export default function MobileFullscreenPage({
     return () => motion.dispose();
   }, [mounted, motion]);
 
+  // The empty card first, so it starts growing at once; the content right after.
+  const showContent = useShellFirst(mounted, rootRef);
+
   if (!mounted) return null;
   return createPortal(
     <div
@@ -135,7 +139,7 @@ export default function MobileFullscreenPage({
       }}
       data-region={region}
     >
-      {children}
+      {showContent ? children : null}
     </div>,
     document.body,
   );

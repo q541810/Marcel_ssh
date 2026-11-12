@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
 import { createPageMotion } from '../pageMotion';
+import { useShellFirst } from './useShellFirst';
 
 interface MobileStackPageProps {
   /** Shown while true; on false the page plays its exit animation, then unmounts. */
@@ -80,6 +81,9 @@ export default function MobileStackPage({
     return () => motion.dispose();
   }, [mounted, motion]);
 
+  // The empty card first, so it starts growing at once; the content right after.
+  const showContent = useShellFirst(mounted, rootRef);
+
   if (!presence.mounted) return null;
   return (
     <div
@@ -89,7 +93,7 @@ export default function MobileStackPage({
         presence.phase === 'exit' ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'
       }`}
     >
-      {children}
+      {showContent ? children : null}
     </div>
   );
 }
