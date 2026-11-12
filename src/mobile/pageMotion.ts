@@ -57,6 +57,7 @@ import {
   viewportWidth,
   type Pose,
 } from './backPreview';
+import { noteOpen } from './motionLog';
 import {
   absorbable,
   Blend,
@@ -352,6 +353,11 @@ class PageCard {
 
   get isPlaying(): boolean {
     return this.playing != null;
+  }
+
+  /** The card's running animation, if any (diagnostics). */
+  get animation(): Animation | undefined {
+    return this.playing ? this.anims[0] : undefined;
   }
 
   /** Take over the page element (no-op if already ours). False if there is none. */
@@ -1122,6 +1128,7 @@ export function createPageMotion(
       const from = chip ?? offscreenCard(card.box, 1);
       under.begin(getUnder(), el, card.lowest, UNDER_SHOWN);
       card.place(from);
+      const probe = noteOpen(el);
       // Start growing right away, in the same task as the tap. Don't wait for
       // the first paint: a page that mounts keeps the main thread busy for
       // several frames (effects, data arriving, re-renders), and waiting
@@ -1130,6 +1137,7 @@ export function createPageMotion(
       // start time is fixed when the frame that carries it is committed, and
       // from then on the compositor plays it however busy React is.
       grow(from, zeroLike(from), chip);
+      probe.moving(card.animation);
     },
     exit() {
       if (closing) return;

@@ -7,6 +7,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useViewStore } from "@/stores/viewStore";
 import { useDebugStore } from "@/stores/debugStore";
 import { getBackDiagnostics, subscribeBackDiagnostics } from "@/mobile/backHandler";
+import { clearMotionLog, getMotionLog, subscribeMotionLog, type MotionRecord } from "@/mobile/motionLog";
 import {
   BACK_FEEL_RANGES,
   DEFAULT_BACK_FEEL,
@@ -72,6 +73,106 @@ function BackGestureDiagnostics() {
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+/** 一次打开从抬手到开始动，超过这个就算「停顿」，标出来。 */
+const SLOW_OPEN_MS = 150;
+
+function ago(at: number, now: number): string {
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 60) return `${s} 秒前`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} 分钟前` : `${Math.round(m / 60)} 小时前`;
+}
+
+const ms = (v: number | null) => (v == null ? "—" : `${v}ms`);
+
+function MotionLogRow({ r, now }: { r: MotionRecord; now: number }) {
+  if (r.kind === "gesture") {
+    return (
+      <li className="py-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg">返回手势（{r.outcome === "back" ? "返回了" : "取消了"}）</span>
+          <span className="shrink-0 text-fg-tertiary">{ago(r.at, now)}</span>
+        </div>
+        <div className="mt-0.5 font-mono text-fg-secondary">
+          按住期间画了 {r.frames} 帧，掉帧 {r.late} 次，最慢一帧 {r.worstMs}ms
+        </div>
+      </li>
+    );
+  }
+  const total =
+    r.tapToBuilt == null && r.builtToMoving == null
+      ? null
+      : (r.liftToClick ?? 0) + (r.tapToBuilt ?? 0) + (r.builtToMoving ?? 0);
+  const slow = total != null && total > SLOW_OPEN_MS;
+  return (
+    <li className="py-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 truncate text-fg">
+          打开「{r.page}」
+          {total != null && (
+            <span className={slow ? "ml-2 font-mono text-amber-400" : "ml-2 font-mono text-fg-secondary"}>
+              {total}ms 后才动
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-fg-tertiary">{ago(r.at, now)}</span>
+      </div>
+      <div className="mt-0.5 font-mono text-fg-secondary">
+        抬手→收到点击 {ms(r.liftToClick)} · 建外壳 {ms(r.tapToBuilt)} · 画出第一帧 {ms(r.builtToMoving)}
+      </div>
+      {r.contentMs != null && (
+        <div className="font-mono text-fg-secondary">
+          内容 {r.contentMs}ms 后建好（{r.contentFaded ? "来晚了，渐入" : "赶上了，直接出现"}）
+        </div>
+      )}
+      <div className="font-mono text-fg-secondary">
+        展开期间画了 {r.frames} 帧，掉帧 {r.late} 次，最慢一帧 {r.worstMs}ms
+      </div>
+    </li>
+  );
+}
+
+/**
+ * 最近的页面打开与返回手势：在别的页面里照常用，回到这里看每一次花在哪。
+ * 记录全应用共享，离开本页也照样记。
+ */
+function MotionLog() {
+  const log = useSyncExternalStore(subscribeMotionLog, getMotionLog);
+  const now = Date.now();
+  return (
+    <section
+      className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
+      aria-labelledby="debug-motion-log-title"
+    >
+      <div className="flex items-start gap-3">
+        <Activity className="mt-1 h-5 w-5 shrink-0 text-fg-secondary" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h2 id="debug-motion-log-title" className="text-body font-medium text-fg">最近的打开与返回</h2>
+          <p className="mt-1 text-body leading-6 text-fg-secondary">
+            离开本页，照常点开几个觉得卡的页面、侧滑回来，再连点版本号回到这里看。「多久后才动」拆成三段：手指抬起到应用收到点击、应用建出页面外壳、画出第一帧；哪段长，卡就在哪。页面内容在外壳动起来之后才建，另记一行。
+          </p>
+        </div>
+      </div>
+      {log.length === 0 ? (
+        <p className="mt-3 text-meta text-fg-tertiary">还没有记录。</p>
+      ) : (
+        <>
+          <ul className="mt-2 divide-y divide-edge-subtle text-meta">
+            {log.map((r) => (
+              <MotionLogRow key={`${r.kind}-${r.at}`} r={r} now={now} />
+            ))}
+          </ul>
+          <div className="mt-2 flex justify-end">
+            <Button variant="ghost" size="sm" onClick={clearMotionLog}>
+              清空记录
+            </Button>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -450,6 +551,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
 
         {typeof window !== "undefined" && window.AndroidBridge && (
           <>
+            <MotionLog />
             <BackGestureDiagnostics />
             <BackFeelTuner />
           </>

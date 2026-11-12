@@ -25,6 +25,7 @@
  */
 
 import { afterFrame } from './motion';
+import { noteGesture } from './motionLog';
 
 type BackCloseFn = () => void;
 
@@ -312,12 +313,13 @@ function endSession(mode: 'cancel' | 'commit'): void {
   if (!s) return;
   session = null;
   stopLoop(s);
-  reportPacing(s);
+  reportPacing(s, mode === 'cancel' ? 'cancel' : 'back');
   if (mode === 'cancel') s.entry.preview?.cancel();
 }
 
-function reportPacing(s: GestureSession): void {
+function reportPacing(s: GestureSession, outcome: 'back' | 'cancel'): void {
   bumpDiag({ heldFrames: s.frames, heldLate: s.late, heldWorstMs: Math.round(s.worstMs) });
+  if (s.frames > 0) noteGesture(outcome, s.frames, s.late, Math.round(s.worstMs));
 }
 
 /** Native X is optional (APKs before it was sent pass only three arguments). */
@@ -411,7 +413,7 @@ function popAndClose(): boolean {
       // Freeze at the last frame the user saw, then let the layer continue.
       stopLoop(s);
       session = null;
-      reportPacing(s);
+      reportPacing(s, 'back');
       top.preview?.commit();
       flying = top.preview != null;
     } else {
