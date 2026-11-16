@@ -959,6 +959,142 @@ fn events_contain(events: &[Value], channel: &str, event_type: &str) -> bool {
         .any(|event| event["event"] == channel && event["data"]["type"] == event_type)
 }
 
+/// 从**子 agent 那一层**点停止，要停掉整棵树。
+///
+/// 真实触发：子 agent 的审批弹窗里那个「拒绝并停止任务」传的是发起审批的任务 id
+/// （子 agent 自己的）。以前级联只往下走，于是子 agent 停了、主 agent 拿到
+/// 「已取消」的结果后照常继续这一轮，甚至立刻再派一个续派——用户看到的就是
+/// 「点了停止，它还在调子 agent」。
+#[test]
+fn scripted_stop_from_a_subagent_cancels_the_whole_tree() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(Vec::new()).await;
+        let exec = Arc::new(ScriptedExec::default());
+        let state = isolated_state(dir.path(), &model.base_url, exec);
+        app.manage(state.clone());
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "tree root")
+            .unwrap();
+        let child_conv = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "tree child", &parent.id)
+            .unwrap();
+
+        {
+            let mut tasks = state.agent_tasks.write();
+            tasks.insert(
+                "tree-root".into(),
+                parent_task_fixture("tree-root", &parent.id),
+            );
+            for (id, conv) in [
+                ("tree-child-1", &child_conv.id),
+                ("tree-child-2", &child_conv.id),
+            ] {
+                let mut child = parent_task_fixture(id, conv);
+                child.parent_task_id = Some("tree-root".into());
+                tasks.insert(id.into(), child);
+            }
+        }
+
+        // 用户点的是子 agent（审批弹窗 / 任务中心里看到的那个任务）
+        stop_task_cascade(app.handle(), &state, "tree-child-1").await;
+
+        let tasks = state.agent_tasks.read();
+        for id in ["tree-root", "tree-child-1", "tree-child-2"] {
+            assert_eq!(
+                tasks[id].status,
+                AgentStatus::Cancelled,
+                "{id} 必须跟着一起停：只停下层会让主 agent 继续这一轮"
+            );
+        }
+        drop(tasks);
+
+        model.assert_consumed();
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}
+
+/// 停止只收「还在跑」的任务：已完成的兄弟与停在 ask_parent 上的子任务保持原状。
+///
+/// 级联从根走整棵树（见上一条），但「停止」的语义是停掉所有还在消耗算力的东西。
+/// 把已 Completed 的记录改写成 Cancelled 既改写了历史，又和前端分叉——停在提问上
+/// 的子任务在前端是非 busy 的「提问中」、仍可续派，它不该被这次停止改写。
+#[test]
+fn scripted_stop_keeps_terminal_tasks_untouched() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(Vec::new()).await;
+        let exec = Arc::new(ScriptedExec::default());
+        let state = isolated_state(dir.path(), &model.base_url, exec);
+        app.manage(state.clone());
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "tree root")
+            .unwrap();
+        let child_conv = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "tree child", &parent.id)
+            .unwrap();
+
+        {
+            let mut tasks = state.agent_tasks.write();
+            tasks.insert(
+                "tree-root".into(),
+                parent_task_fixture("tree-root", &parent.id),
+            );
+            for (id, status) in [
+                ("tree-running", AgentStatus::Executing),
+                ("tree-done", AgentStatus::Completed),
+                // 停在 ask_parent 上的子任务：后端记录是 Completed（回合状态才是
+                // awaiting_parent），停止不该把它改写成 Cancelled。
+                ("tree-paused", AgentStatus::Completed),
+            ] {
+                let mut child = parent_task_fixture(id, &child_conv.id);
+                child.parent_task_id = Some("tree-root".into());
+                child.status = status;
+                tasks.insert(id.into(), child);
+            }
+        }
+
+        // 用户点的是还在跑的那个子 agent
+        stop_task_cascade(app.handle(), &state, "tree-running").await;
+
+        let tasks = state.agent_tasks.read();
+        assert_eq!(tasks["tree-root"].status, AgentStatus::Cancelled);
+        assert_eq!(tasks["tree-running"].status, AgentStatus::Cancelled);
+        assert_eq!(
+            tasks["tree-done"].status,
+            AgentStatus::Completed,
+            "已完成的兄弟不能被级联改写成已取消（历史不能改写）"
+        );
+        assert_eq!(
+            tasks["tree-paused"].status,
+            AgentStatus::Completed,
+            "停在提问上的子任务保持原状：它在前端是非 busy 的「提问中」，仍可续派"
+        );
+        drop(tasks);
+
+        model.assert_consumed();
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}
+
 // ═══════════════════════════ 场景 1：真实压缩链路 ═══════════════════════════
 //
 // 正常工具往返 → 手动压缩（真实 agent_compact_conversation 命令 + 真实摘要调用

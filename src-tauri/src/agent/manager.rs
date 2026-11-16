@@ -246,6 +246,38 @@ fn apply_pending_cancel(
     cancel.cancel(task_id);
 }
 
+/// 从这个任务往上找到整棵任务树的根（`parent_task_id` 链的最顶层）。
+///
+/// 为什么停止要先找根：子 agent 永远只是父任务**同步等待中的一次调用**，用户从任何
+/// 一个节点点停止（子 agent 的审批弹窗里就有「拒绝并停止任务」）想停的都是这一整件活。
+/// 只停下层的话，父任务会拿到一个「已取消」的工具结果，然后照常继续这一轮、甚至可以
+/// 立刻再派一个续派——表现就是「点了停止，agent 还在调子 agent」。
+///
+/// 父任务记录已不在表里（被剪枝）或链上有环时，停在最远能确认的那一层：没有记录就
+/// 无从判断再往上的归属，硬猜只会停错树。
+pub(crate) fn root_task_id(tasks: &HashMap<String, AgentTask>, task_id: &str) -> String {
+    const MAX_DEPTH: usize = 16;
+    let mut current = task_id.to_string();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(current.clone());
+    for _ in 0..MAX_DEPTH {
+        let Some(parent) = tasks
+            .get(&current)
+            .and_then(|t| t.parent_task_id.as_deref())
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+        else {
+            break;
+        };
+        if !tasks.contains_key(&parent) || !seen.insert(parent.clone()) {
+            break;
+        }
+        current = parent;
+    }
+    current
+}
+
 /// 收集 task_id 及其全部后代子任务（`subagent` / `local_subagent` 工具派发的
 /// 子 agent）。
 ///
@@ -281,6 +313,20 @@ pub(crate) fn collect_descendant_tasks(
 ///
 /// 返回本次涉及的 task id 个数（含后代，以及「不在册」时那枚墓碑），供调用方记日志。
 pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id: &str) -> usize {
+    // 先找根：停止永远指「这一整件活」，不管用户点的是主 agent 还是某个子 agent。
+    // （子 agent 只是父任务同步等待中的一次调用，只停下层会让父任务拿到「已取消」后
+    // 继续这一轮、甚至再派一个续派。）
+    let root_id = {
+        let tasks = state.agent_tasks.read();
+        root_task_id(&tasks, task_id)
+    };
+    if root_id != task_id {
+        log::info!(
+            "Stop requested on sub-agent task {}; stopping the whole tree from root {}",
+            task_id,
+            root_id
+        );
+    }
     // 级联取消：停掉该任务及其全部子agent。子任务与主任务一样要置
     // Cancelled——子agent loop 的退出检查（is_task_cancelled）只看 status，
     // 不置状态的话取消场景会被 subagent 工具误报为「执行失败」。
@@ -288,13 +334,21 @@ pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id
     // 既没被本次级联收走，登记时又看到父任务仍在运行。
     let (tasks_to_cancel, requested_while_absent) = {
         let mut tasks = state.agent_tasks.write();
-        let tasks_to_cancel = collect_descendant_tasks(&tasks, task_id);
+        let tasks_to_cancel = collect_descendant_tasks(&tasks, &root_id);
         let mut found = false;
         for tid in &tasks_to_cancel {
             if let Some(task) = tasks.get_mut(tid) {
-                // 经 `transition_to` 而非直接赋值：写状态的规则只有一处
-                // （重复写 Cancelled 是幂等的空操作）。
-                task.transition_to(AgentStatus::Cancelled);
+                // 只停「还在消耗算力」的任务。`transition_to` 只把 Cancelled 当
+                // 吸收态，对已完成 / 已失败的任务写 Cancelled 会实打实改写历史；
+                // 停在 `ask_parent` 上的子 agent 也已经收场（后端记录是 Completed，
+                // 前端是非 busy 的「提问中」、仍可续派）——把它改成已取消既改写
+                // 历史，又和前端分叉，并不会少烧一秒 token。
+                if task.status.is_running() {
+                    task.transition_to(AgentStatus::Cancelled);
+                }
+                // `found` 只表示「记录在册」，与上面写没写状态无关：任务已终态时
+                // 仍要走下面的命令 / 作业 / 交互清理，也不能退回墓碑路径——那会
+                // 在 `apply_pending_cancel` 里把终态任务重新写成 Cancelled。
                 found = true;
             }
         }
@@ -307,10 +361,10 @@ pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id
     // 的 rejection，任务随后照常启动、照常跑完。
     // 注意：必须在释放上面的写锁之后再调用（本函数要再取同一把锁）。
     if requested_while_absent {
-        request_cancel(state, task_id);
+        request_cancel(state, &root_id);
         log::info!(
             "Stop requested before task {} was registered; recording it",
-            task_id
+            root_id
         );
         return tasks_to_cancel.len();
     }
@@ -1753,6 +1807,51 @@ mod tests {
         let got = collect_descendant_tasks(&tasks, "main");
         assert_eq!(got.len(), 4);
         assert!(got.contains(&"sub3".to_string()));
+    }
+
+    /// 停止永远从树的根开始：用户可能从任何一层点停止（子 agent 的审批弹窗里就有
+    /// 「拒绝并停止任务」），只停下层会让父任务拿到「已取消」后继续这一轮。
+    #[test]
+    fn root_task_id_walks_up_and_stops_at_unknown_or_cyclic_parents() {
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "s1", AgentStatus::Executing, None),
+            ),
+            (
+                "sub".to_string(),
+                task_with("sub", "s1", AgentStatus::Executing, Some("main")),
+            ),
+            (
+                "nested".to_string(),
+                task_with("nested", "s1", AgentStatus::Executing, Some("sub")),
+            ),
+            // 父记录不在表里（被剪枝 / 测试夹具）：停在自身，不往不存在的层猜。
+            (
+                "orphan".to_string(),
+                task_with("orphan", "s1", AgentStatus::Executing, Some("gone")),
+            ),
+            // 环：不能无限往上走。
+            (
+                "a".to_string(),
+                task_with("a", "s1", AgentStatus::Executing, Some("b")),
+            ),
+            (
+                "b".to_string(),
+                task_with("b", "s1", AgentStatus::Executing, Some("a")),
+            ),
+        ]);
+
+        assert_eq!(root_task_id(&tasks, "nested"), "main", "多层要一路走到顶");
+        assert_eq!(root_task_id(&tasks, "sub"), "main");
+        assert_eq!(root_task_id(&tasks, "main"), "main");
+        assert_eq!(root_task_id(&tasks, "orphan"), "orphan");
+        assert_eq!(root_task_id(&tasks, "ghost"), "ghost");
+        let cyclic = root_task_id(&tasks, "a");
+        assert!(
+            cyclic == "a" || cyclic == "b",
+            "环上停在某个已访问节点，实际 {cyclic}"
+        );
     }
 
     #[test]
