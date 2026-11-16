@@ -794,8 +794,16 @@ impl RuleConfig {
     }
 
     /// 名单的当前条目（用户覆盖优先，否则默认）。
+    ///
+    /// 只采信**已知规则 id** 的覆盖项（与 [`Self::enabled`] / [`Self::level`] 同一口径）：
+    /// 更高版本写入的未知 id 必须整条忽略，不能让它带一份 `lists` 进来改写内置名单。
     pub fn items<'a>(&'a self, key: &str) -> Box<dyn Iterator<Item = &'a str> + 'a> {
-        if let Some(custom) = self.overrides.values().find_map(|o| o.lists.get(key)) {
+        if let Some(custom) = self
+            .overrides
+            .iter()
+            .filter(|(id, _)| rule_def(id.as_str()).is_some())
+            .find_map(|(_, o)| o.lists.get(key))
+        {
             return Box::new(custom.iter().map(String::as_str));
         }
         match list_def(key) {
@@ -989,5 +997,24 @@ mod tests {
     fn empty_json_is_default() {
         let cfg: RuleConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg, RuleConfig::default());
+    }
+
+    /// 未知 id（更高版本 / 手改 / 跨设备同步）的 `lists` 必须整条忽略：
+    /// 名单回落内置默认表，不能借未知 id 悄悄清空受保护目录。
+    #[test]
+    fn unknown_override_lists_are_ignored() {
+        let mut cfg = RuleConfig::default();
+        cfg.overrides.insert(
+            "from_a_newer_version".into(),
+            RiskRuleOverride {
+                lists: HashMap::from([("protected_paths".to_string(), Vec::new())]),
+                ..Default::default()
+            },
+        );
+        let defaults_cfg = RuleConfig::default();
+        let defaults: Vec<&str> = defaults_cfg.items("protected_paths").collect();
+        let effective: Vec<&str> = cfg.items("protected_paths").collect();
+        assert_eq!(effective, defaults);
+        assert!(cfg.list_has("protected_paths", "/etc"));
     }
 }

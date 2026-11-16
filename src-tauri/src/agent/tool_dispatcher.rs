@@ -175,6 +175,9 @@ struct ResolvedDisposition {
     effective_disposition: Disposition,
     command_decision: Option<CommandDecision>,
     resolved_approval_mode: AgentMode,
+    /// 写路径命中受保护路径时的规则档位（`None` = 没命中 / 规则关闭）。
+    /// 审批弹窗据此补「受保护路径」理由与规则 id。
+    protected_level: Option<Disposition>,
 }
 
 /// [`ToolDispatcher::resolve_call`] 的产物：一次调用「是什么、定什么档」。
@@ -521,6 +524,7 @@ impl ToolDispatcher {
                 declares_command,
                 &plan.resolved_approval_mode,
                 effective_disposition,
+                plan.protected_level,
                 plan.command_decision.as_ref(),
                 model_reasons,
                 final_needs_confirm,
@@ -738,14 +742,6 @@ impl ToolDispatcher {
         //      「命令测试」共用同一份判定，否则会出现"测出来一个样、跑起来一个样"）
         //   2. 写路径类工具写到受保护路径 → 强制审批
         //   3. 其余 → 工具自己声明的档位
-        let hits_protected_path = path
-            .map(|p| {
-                ctx.policy
-                    .as_ref()
-                    .map(|policy| policy.is_protected_path(p))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
         let resolved_approval_mode = self.resolved_approval_mode();
         let command_decision = declares_command.then(|| {
             decide_command(
@@ -756,12 +752,7 @@ impl ToolDispatcher {
             )
         });
         // 写到受保护路径时的档位来自规则表（默认强制审批，用户可改档/关闭）。
-        let protected_level = (path_write != PathWrite::None && hits_protected_path).then(|| {
-            ctx.policy
-                .as_ref()
-                .map(|policy| policy.protected_path_level())
-                .unwrap_or(Disposition::ForceApproval)
-        });
+        let protected_level = protected_path_level(path, path_write, ctx.policy.as_deref());
         let mut effective_disposition = resolve_disposition(
             command_decision.as_ref().map(|d| d.disposition),
             tool.disposition(),
@@ -811,6 +802,7 @@ impl ToolDispatcher {
             effective_disposition,
             command_decision,
             resolved_approval_mode,
+            protected_level,
         })
     }
 
@@ -878,6 +870,10 @@ impl ToolDispatcher {
                         }
                     }
                 }
+            }
+            PathWrite::Write => {
+                // 纯写入（`upload_file`）：内容来自外部文件，没有「先读远端文本」
+                // 这一步可做；受保护路径已在定档时单独查过。
             }
             PathWrite::None => {}
         }
@@ -1092,6 +1088,7 @@ impl ToolDispatcher {
         declares_command: bool,
         resolved_approval_mode: &AgentMode,
         effective_disposition: Disposition,
+        protected_level: Option<Disposition>,
         command_decision: Option<&CommandDecision>,
         model_reasons: Option<Vec<String>>,
         final_needs_confirm: bool,
@@ -1155,10 +1152,23 @@ impl ToolDispatcher {
                 &self.task_id,
                 crate::agent::task::AgentStatus::WaitingApproval,
             );
+            // 受保护路径这一层没有 `command_decision`（写文件类工具不走命令文本），
+            // 它自己的理由与规则 id 在这里补上；否则弹窗只剩「强制审批」一个标签。
+            let protected_reason =
+                protected_level.map(|_| PROTECTED_PATH_APPROVAL_REASON.to_string());
             let approval_reasons = merge_approval_reasons(
-                model_reasons,
-                command_decision.map(|d| d.reason_with_rule()),
+                merge_approval_reasons(
+                    model_reasons,
+                    command_decision.map(|d| d.reason_with_rule()),
+                ),
+                protected_reason,
             );
+            let mut rule_ids: Vec<String> = command_decision
+                .map(|d| d.hits.iter().map(|h| h.rule_id.clone()).collect())
+                .unwrap_or_default();
+            if protected_level.is_some() && !rule_ids.iter().any(|id| id == "protected_paths") {
+                rule_ids.push("protected_paths".to_string());
+            }
             let answer = self
                 .approval
                 .request_approval(
@@ -1181,9 +1191,7 @@ impl ToolDispatcher {
                     approval_reasons.as_deref(),
                     approval_metadata,
                     // 命中的风险规则：审批弹窗据此告诉用户"是哪几条规则要你点头"，并给出调整入口。
-                    command_decision
-                        .map(|d| d.hits.iter().map(|h| h.rule_id.clone()).collect())
-                        .unwrap_or_default(),
+                    rule_ids,
                 )
                 .await;
             set_task_status(
@@ -1263,6 +1271,23 @@ impl CommandDecision {
             _ => self.reason.clone(),
         }
     }
+}
+
+/// 写路径类工具这次要写的路径命中受保护路径时，返回规则表里 `protected_paths`
+/// 的当前档位；其余情况返回 `None`。
+///
+/// 纯函数，便于单测：`dispatch` 依赖 SSH 会话与 `AppHandle`，跑不起来。它只回答
+/// 「受保护路径这一层有没有意见」，与命令文本、工具声明、工具档位表的合成在
+/// [`resolve_call_disposition`] 里完成。
+fn protected_path_level(
+    path: Option<&str>,
+    path_write: PathWrite,
+    policy: Option<&SecurityPolicy>,
+) -> Option<Disposition> {
+    let path = path?;
+    let policy = policy?;
+    (path_write != PathWrite::None && policy.is_protected_path(path))
+        .then(|| policy.protected_path_level())
 }
 
 /// 一次工具调用的最终处置档位 —— **三个来源按严取一**。
@@ -1528,6 +1553,12 @@ fn can_ask_human(approval_mode: &AgentMode, wants_human: bool, auto_force_approv
     wants_human && (*approval_mode != AgentMode::Auto || auto_force_approval)
 }
 
+/// 写文件类工具命中受保护路径时的审批理由。
+///
+/// 命令类工具的这条理由由 `decide_command` 产出（带具体路径与规则名）；写文件类
+/// 工具没有命令文本，用这句中性说明补上，口径与「写入受保护路径」一致。
+const PROTECTED_PATH_APPROVAL_REASON: &str = "会改动受保护路径，需要你确认";
+
 /// 审批弹窗上给用户看的理由列表：模型审批的理由 + 静态评估命中的理由。
 ///
 /// 静态理由（"命令经 sudo 提权执行"、"`systemctl` 是系统级命令…"）以前只落库、
@@ -1608,6 +1639,36 @@ mod tests {
             tool_approval_levels: BTreeMap::new(),
             auto_mode_force_approval: false,
         }
+    }
+
+    // ──────────── 受保护路径：写文件类工具的定档 ────────────
+
+    /// `upload_file` 声明 `remote_path` + `PathWrite::Write` 后，写到受保护目录
+    /// 必须拿到规则表里的档位；非受保护路径 / 非写工具不受影响。这里直接钉纯函数，
+    /// `dispatch` 需要 SSH 会话与 `AppHandle`，跑不起来。
+    #[test]
+    fn upload_file_protected_remote_path_gets_protected_level() {
+        let policy = SecurityPolicy::default();
+        assert_eq!(
+            protected_path_level(
+                Some("/etc/nginx/nginx.conf"),
+                PathWrite::Write,
+                Some(&policy)
+            ),
+            Some(Disposition::ForceApproval)
+        );
+        assert_eq!(
+            protected_path_level(Some("/tmp/nginx.conf"), PathWrite::Write, Some(&policy)),
+            None
+        );
+        assert_eq!(
+            protected_path_level(
+                Some("/etc/nginx/nginx.conf"),
+                PathWrite::None,
+                Some(&policy)
+            ),
+            None
+        );
     }
 
     // ──────────── 拒绝后回给模型的话 ────────────

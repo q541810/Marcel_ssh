@@ -970,6 +970,10 @@ pub enum PathWrite {
     Edit,
     /// 写入 / 覆盖：目标已存在且未读过才拦，新建放行。
     Overwrite,
+    /// 纯写入（新建或覆盖都按写入处理），不参与「写前必须已读」检查：上传的是
+    /// 外部文件内容，不是对远端文本的编辑，拿不出一份「已读」的上下文。
+    /// 受保护路径判定照常生效（`path_write != None` 就会查）。
+    Write,
 }
 
 /// 工具的参数语义 —— 让 dispatcher 不必靠工具名硬编码就能正确处理它。
@@ -1436,7 +1440,12 @@ static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
-        semantics: ToolSemantics::NONE,
+        semantics: ToolSemantics {
+            command_arg: None,
+            path_arg: Some("remote_path"),
+            path_write: PathWrite::Write,
+            preview_before_approval: false,
+        },
         prompt_section: None,
         build: || Arc::new(sftp_transfer::UploadFileTool::new()),
     },
@@ -2256,6 +2265,16 @@ mod tests {
             );
         }
 
+        // 上传工具的目标在服务器上：声明 remote_path 为写路径，受保护路径判定
+        // 才会对它生效。它不做「写前必须已读」（上传内容不是对远端文本的编辑），
+        // 因此用 `Write` 而不是 `Overwrite`。
+        #[cfg(desktop)]
+        {
+            assert_eq!(sem("upload_file").path_arg, Some("remote_path"));
+            assert_eq!(sem("upload_file").path_write, PathWrite::Write);
+            assert!(!sem("upload_file").preview_before_approval);
+        }
+
         // 本机族（桌面专属）接进同一套：本机读工具也必须声明 `path_arg`，否则
         // 「读过了」记不上账，本机编辑永远过不了写前检查；写 / 编辑与远端同名工具
         // 逐项同档（差别只在 dispatcher 越过 `target_exists` / `preview_write`
@@ -2319,6 +2338,7 @@ mod tests {
                     "read_file",
                     "write_file",
                     "edit_file",
+                    "upload_file",
                     "local_bash",
                     "local_read_file",
                     "local_write_file",
