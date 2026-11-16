@@ -28,6 +28,7 @@ use super::super::types::JoinStrategy;
 use super::super::{secret_baseline::SecretBaseline, secrets::SyncSecretStore};
 use super::{StreamApplied, StreamDriver, StreamProgress, StreamSnapshot, StreamSnapshotLayout};
 use crate::config::keychain::{CaptureSuppression, SecretSlot, SecretSlotCatalog};
+use crate::data::SyncTier;
 use crate::error::AppError;
 
 /// 段 JSON 的 `kind`。读到别的值说明这条流的数据被投错了地方。
@@ -312,7 +313,19 @@ impl SecretMirror {
     }
 
     /// 合并一条 op（后写者赢）。返回镜像是否变了。
-    fn merge(&mut self, op: &SecretOp) -> bool {
+    ///
+    /// 非 `Secret` 档的 account（`keys:master` 等 `SyncTier::Local`，设备绑定、注释原话
+    /// 「绝不进机密同步」）一律不进镜像：否则旧版本已经写进来的坏条目会一直留在本机镜像里，
+    /// 未来也还有被落地 / 转发的机会。认不出来的槽位（更新版本加的）保持原行为，留在镜像里等升级。
+    fn merge(&mut self, op: &SecretOp, catalog: &SecretSlotCatalog) -> bool {
+        if let SecretOp::Set { account, .. } | SecretOp::Del { account, .. } = op {
+            if let Some(slot) = SecretSlot::from_account(account, catalog) {
+                if slot.tier() != SyncTier::Secret {
+                    // 顺手清掉旧版本已经写进镜像的坏条目。
+                    return self.doc.secrets.remove(account).is_some();
+                }
+            }
+        }
         match op {
             SecretOp::Set {
                 account,
@@ -562,6 +575,11 @@ impl SecretStreamDriver {
         let mut new_baseline = Vec::new();
 
         for slot in SecretSlot::enumerable_slots(&self.catalog) {
+            // `keys:master` 等槽位是 `SyncTier::Local`（设备绑定，注释原话「绝不进机密同步」）：
+            // 机密流必须按分档过滤，否则会把主密钥上传并在对端覆盖，导致对端私钥全部解不开。
+            if slot.tier() != SyncTier::Secret {
+                continue;
+            }
             let account = slot.account().into_owned();
             let current = self.secrets.get(&slot)?;
             match current {
@@ -700,6 +718,11 @@ impl SecretStreamDriver {
                 // 再由下一次全量比对 / 落地带出来。
                 continue;
             };
+            // `keys:master` 等槽位是 `SyncTier::Local`（设备绑定，注释原话「绝不进机密同步」）：
+            // 即使旧版本把它们写进了镜像，也不能落到本机密钥链、更不能写进基线。
+            if slot.tier() != SyncTier::Secret {
+                continue;
+            }
             match &entry.value {
                 Some(value) => {
                     if baseline.matches(account, value.as_str()) {
@@ -759,7 +782,7 @@ impl StreamDriver for SecretStreamDriver {
         // 本机 op 先合并进镜像：否则同一条流里的旧值会在落地时被写回来。
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         for op in &ops {
-            mirror.merge(op);
+            mirror.merge(op, &self.catalog);
         }
         mirror.save(self.dk.as_ref())?;
         self.encode_segments(ops)
@@ -797,6 +820,11 @@ impl StreamDriver for SecretStreamDriver {
         // 注意这里不能走 `capture_keys`——它会顺手把私钥正文传到云端。
         let mut baseline = SecretBaseline::load(&self.config_dir)?;
         for slot in SecretSlot::enumerable_slots(&self.catalog) {
+            // 同捕获：`keys:master` 等 `SyncTier::Local` 槽位（设备绑定，「绝不进机密同步」）
+            // 不能被记成「已同步」，否则主密钥会被当成同步内容，对端落地即覆盖本机密钥。
+            if slot.tier() != SyncTier::Secret {
+                continue;
+            }
             if let Some(value) = self.secrets.get(&slot)? {
                 baseline.upsert(&slot.account(), &value);
             }
@@ -816,6 +844,11 @@ impl StreamDriver for SecretStreamDriver {
         let baseline = SecretBaseline::load(&self.config_dir)?;
         let mut new_baseline = Vec::new();
         for slot in SecretSlot::enumerable_slots(&self.catalog) {
+            // `keys:master` 等槽位是 `SyncTier::Local`（设备绑定，「绝不进机密同步」）：
+            // 首次开启机密档会走这条全量导出，不过滤就会把主密钥上传，对端落地即覆盖。
+            if slot.tier() != SyncTier::Secret {
+                continue;
+            }
             let account = slot.account().into_owned();
             let Some(value) = self.secrets.get(&slot)? else {
                 continue;
@@ -839,7 +872,7 @@ impl StreamDriver for SecretStreamDriver {
         self.pending_key_baseline = key_baseline;
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         for op in &ops {
-            mirror.merge(op);
+            mirror.merge(op, &self.catalog);
         }
         mirror.save(self.dk.as_ref())?;
         self.pending_baseline = new_baseline;
@@ -863,7 +896,7 @@ impl StreamDriver for SecretStreamDriver {
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         let mut changed = false;
         for op in &seg.ops {
-            changed |= mirror.merge(op);
+            changed |= mirror.merge(op, &self.catalog);
         }
         mirror.save(self.dk.as_ref())?;
         Ok(StreamApplied {
@@ -1127,15 +1160,18 @@ mod tests {
         let d = driver(tmp.path(), secrets.clone());
         // 造一条镜像里才有的、本机 catalog 不认识的槽位
         let mut mirror = SecretMirror::load(tmp.path(), None);
-        mirror.merge(&SecretOp::Set {
-            account: "llm_channel_brand-new-channel".into(),
-            hlc: Hlc {
-                ms: 1,
-                counter: 0,
-                device: "other".into(),
+        mirror.merge(
+            &SecretOp::Set {
+                account: "llm_channel_brand-new-channel".into(),
+                hlc: Hlc {
+                    ms: 1,
+                    counter: 0,
+                    device: "other".into(),
+                },
+                value: ZeroizingString::new("brand-new-value"),
             },
-            value: ZeroizingString::new("brand-new-value"),
-        });
+            &catalog(),
+        );
         let landed = d.land_mirror(&mirror).unwrap();
         assert!(landed.is_empty(), "本机不认识的槽位不该落地");
         assert!(secrets.is_empty(), "密钥链里不能出现它");
@@ -1150,15 +1186,18 @@ mod tests {
         let secrets = Arc::new(MemorySecrets::new());
         let d = driver(tmp.path(), secrets.clone());
         let mut mirror = SecretMirror::load(tmp.path(), None);
-        mirror.merge(&SecretOp::Set {
-            account: "llm_channel_ch1".into(),
-            hlc: Hlc {
-                ms: 1,
-                counter: 0,
-                device: "other".into(),
+        mirror.merge(
+            &SecretOp::Set {
+                account: "llm_channel_ch1".into(),
+                hlc: Hlc {
+                    ms: 1,
+                    counter: 0,
+                    device: "other".into(),
+                },
+                value: ZeroizingString::new("from-other-device"),
             },
-            value: ZeroizingString::new("from-other-device"),
-        });
+            &catalog(),
+        );
         let landed = d.land_mirror(&mirror).unwrap();
         assert_eq!(landed, vec!["llm_channel_ch1".to_string()]);
         assert_eq!(
@@ -1201,6 +1240,137 @@ mod tests {
         let (ops, _) = d.diff_against_baseline().unwrap();
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], SecretOp::Del { account, .. } if account == "llm_channel_ch1"));
+    }
+
+    /// `keys:master` 等 `SyncTier::Local` 槽位是设备绑定的，绝不能被捕获上传。
+    #[test]
+    fn local_tier_slots_are_never_captured() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::new());
+        let mut d = driver(tmp.path(), secrets.clone());
+        secrets
+            .set(&SecretSlot::KeyStoreMaster, "device-master")
+            .unwrap();
+        secrets
+            .set(&SecretSlot::WebSearchApiKey, "sk-search")
+            .unwrap();
+
+        let (ops, new_baseline) = d.diff_against_baseline().unwrap();
+        assert_eq!(ops.len(), 1, "只该捕获 Secret 档：{ops:?}");
+        assert!(
+            matches!(&ops[0], SecretOp::Set { account, .. } if account == "web_search_api_key"),
+            "{ops:?}"
+        );
+        assert!(
+            !new_baseline
+                .iter()
+                .any(|(account, _)| account.as_str() == "keys:master"),
+            "Local 槽位也不能进基线：{new_baseline:?}"
+        );
+    }
+
+    /// 镜像里即使有旧版本写进来的 `keys:master`，也不能覆盖本机主密钥、不能写基线。
+    #[test]
+    fn local_tier_slots_in_mirror_are_not_landed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::new());
+        let d = driver(tmp.path(), secrets.clone());
+        secrets
+            .set(&SecretSlot::KeyStoreMaster, "local-master")
+            .unwrap();
+        secrets
+            .set(&SecretSlot::WebSearchApiKey, "local-search")
+            .unwrap();
+
+        let mut mirror = SecretMirror::load(tmp.path(), None);
+        mirror.doc.secrets.insert(
+            "keys:master".into(),
+            MirrorEntry {
+                hlc: Hlc {
+                    ms: 9,
+                    counter: 0,
+                    device: "other".into(),
+                },
+                value: Some(ZeroizingString::new("evil-master")),
+            },
+        );
+        mirror.doc.secrets.insert(
+            "web_search_api_key".into(),
+            MirrorEntry {
+                hlc: Hlc {
+                    ms: 9,
+                    counter: 0,
+                    device: "other".into(),
+                },
+                value: Some(ZeroizingString::new("from-other-device")),
+            },
+        );
+
+        let landed = d.land_mirror(&mirror).unwrap();
+        assert_eq!(landed, vec!["web_search_api_key".to_string()]);
+        assert_eq!(
+            secrets.get(&SecretSlot::KeyStoreMaster).unwrap().as_deref(),
+            Some("local-master"),
+            "Local 槽位绝不能被镜像覆盖"
+        );
+        assert_eq!(
+            secrets
+                .get(&SecretSlot::WebSearchApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("from-other-device")
+        );
+        assert!(
+            !SecretBaseline::load(tmp.path())
+                .unwrap()
+                .knows("keys:master"),
+            "Local 槽位也不能写进基线"
+        );
+    }
+
+    /// 非 Secret 档的 account 不进镜像；认不出来的槽位保持原行为；旧坏条目会被清掉。
+    #[test]
+    fn mirror_rejects_local_tier_accounts_but_keeps_unknown_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut mirror = SecretMirror::load(tmp.path(), None);
+        let local_op = SecretOp::Set {
+            account: "keys:master".into(),
+            hlc: Hlc {
+                ms: 1,
+                counter: 0,
+                device: "other".into(),
+            },
+            value: ZeroizingString::new("evil-master"),
+        };
+        assert!(!mirror.merge(&local_op, &catalog()));
+        assert_eq!(mirror.entries().count(), 0, "Local 槽位不得进镜像");
+
+        let unknown_op = SecretOp::Set {
+            account: "llm_channel_brand-new-channel".into(),
+            hlc: Hlc {
+                ms: 1,
+                counter: 0,
+                device: "other".into(),
+            },
+            value: ZeroizingString::new("v"),
+        };
+        assert!(mirror.merge(&unknown_op, &catalog()));
+        assert_eq!(mirror.entries().count(), 1, "不认识的槽位要留着等升级");
+
+        // 旧版本写进来的坏条目：再次遇到同一 account 时从镜像里清掉
+        mirror.doc.secrets.insert(
+            "keys:master".into(),
+            MirrorEntry {
+                hlc: Hlc {
+                    ms: 2,
+                    counter: 0,
+                    device: "other".into(),
+                },
+                value: Some(ZeroizingString::new("stale")),
+            },
+        );
+        assert!(mirror.merge(&local_op, &catalog()));
+        assert_eq!(mirror.entries().count(), 1);
     }
 }
 
