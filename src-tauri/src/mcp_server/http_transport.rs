@@ -306,42 +306,61 @@ pub async fn run_http_server(server: &McpServer, cfg: HttpConfig) -> Result<(), 
     Ok(())
 }
 
+/// 请求前置门：**先限流、后认证**。
+///
+/// 限流约束的是「所有到达的请求」，不是「已认证的请求」——未带 token 的请求
+/// 同样消耗同一份预算。否则任何能访问端口的主机都能不花 token 白嫖 CPU /
+/// 内存 / 带宽（`body: String` 在进入 handler 前已被 axum 读进内存）。
+fn precheck(rate: &RateLimiter, headers: &HeaderMap, expected_token: &str) -> Option<Response> {
+    if !rate.allow() {
+        log::warn!("[MCP HTTP] 触发限流");
+        return Some(rate_limited_response());
+    }
+
+    let authorized = bearer_token(headers)
+        .map(|t| token_matches(t, expected_token))
+        .unwrap_or(false);
+    if !authorized {
+        log::warn!("[MCP HTTP] 拒绝未授权请求");
+        return Some(unauthorized_response());
+    }
+
+    None
+}
+
+fn unauthorized_response() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({
+            "error": "unauthorized",
+            "message": "缺少或错误的 Bearer 令牌"
+        })),
+    )
+        .into_response()
+}
+
+fn rate_limited_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(serde_json::json!({
+            "error": "rate_limited",
+            "message": format!("超过 {} 次/秒 的上限", RATE_LIMIT_PER_SEC)
+        })),
+    )
+        .into_response()
+}
+
 /// `POST /mcp`：单端点 JSON-RPC。
 ///
 /// MCP 的 HTTP 传输把 initialize / tools/list / tools/call 都收敛到
 /// 同一个端点上，请求体就是一条 JSON-RPC 消息。
 async fn handle_mcp(State(state): State<HttpState>, headers: HeaderMap, body: String) -> Response {
-    // ── 认证 ──
+    // ── 限流 → 认证 ──
     //
-    // 注意：`body: String` 由 axum 的提取器在进入本函数**之前**就已读进内存
-    // （默认上限 2MB），所以这里不是「未授权就什么都不消耗」——那句话说大了。
-    // 认证挡住的是「未授权不会执行任何工具」，这是真正要挡的东西。
-    let authorized = bearer_token(&headers)
-        .map(|t| token_matches(t, &state.token))
-        .unwrap_or(false);
-    if !authorized {
-        log::warn!("[MCP HTTP] 拒绝未授权请求");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "unauthorized",
-                "message": "缺少或错误的 Bearer 令牌"
-            })),
-        )
-            .into_response();
-    }
-
-    // ── 限流 ──
-    if !state.rate.allow() {
-        log::warn!("[MCP HTTP] 触发限流");
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "rate_limited",
-                "message": format!("超过 {} 次/秒 的上限", RATE_LIMIT_PER_SEC)
-            })),
-        )
-            .into_response();
+    // 顺序是刻意的：未认证请求也必须计入限流，否则无 token 的主机可以无限
+    // 打这个端口。认证挡住的是「未授权不会执行任何工具」，限流挡的是资源消耗。
+    if let Some(response) = precheck(&state.rate, &headers, &state.token) {
+        return response;
     }
 
     // ── 解析 ──
@@ -449,6 +468,35 @@ mod tests {
             assert!(rl.allow(), "第 {} 次请求不该被拦", i + 1);
         }
         assert!(!rl.allow(), "超限后必须拒绝");
+    }
+
+    /// 限流发生在认证之前：不带 token 的请求也会被计入预算，并最终触发 429。
+    #[test]
+    fn unauthenticated_requests_consume_rate_limit() {
+        let rate = RateLimiter::new();
+        let headers = HeaderMap::new();
+
+        for _ in 0..RATE_LIMIT_PER_SEC {
+            let resp = precheck(&rate, &headers, "secret").expect("无 token 应被拒绝");
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let resp = precheck(&rate, &headers, "secret").expect("超限后必须拒绝");
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "未认证流量也消耗同一份预算"
+        );
+    }
+
+    /// 正常带 token 的请求在预算内直接放行（认证逻辑没有被挪坏）。
+    #[test]
+    fn authenticated_request_passes_precheck_under_limit() {
+        let rate = RateLimiter::new();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
+
+        assert!(precheck(&rate, &headers, "secret").is_none());
     }
 
     #[tokio::test]

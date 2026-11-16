@@ -7,11 +7,57 @@
 // - stderr 只用于日志，不参与协议
 // - notification（无 id）不需要响应
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::protocol::{McpError, McpResponse, McpServerMessage};
 use super::McpServer;
 use crate::error::AppError;
+
+/// 单行请求上限（8 MiB）。
+///
+/// stdin 是本进程的父进程，属于本地信任域；但这不能当作无上限的理由——
+/// 一次超长行就足以把进程 OOM，之后什么信任都谈不上。
+const MAX_STDIO_LINE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// `read_line_limited` 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineRead {
+    /// 读到 EOF（没有新数据）。
+    Eof,
+    /// 读到一行（EOF 前的最后一行可能没有换行）。
+    Line,
+    /// 在换行前就撞到上限。调用方应停止解析：剩余字节还在管道里，继续读会把
+    /// 半截 JSON 当成一条新消息。
+    TooLong,
+}
+
+/// 有限长度读一行：最多读 `max_bytes + 1` 字节，读满上限且没有换行即判定超限。
+///
+/// 不把整个 stdin 读进内存，超长行也不会被静默截断后继续解析。
+async fn read_line_limited<R>(
+    reader: &mut R,
+    max_bytes: u64,
+    line: &mut String,
+) -> Result<LineRead, AppError>
+where
+    R: AsyncBufRead + Unpin,
+{
+    line.clear();
+    // 多读 1 字节：读满 max_bytes + 1 且末尾没有换行，说明这一行超限。
+    let n = {
+        let mut limited = (&mut *reader).take(max_bytes + 1);
+        limited.read_line(line).await.map_err(AppError::Io)?
+    };
+
+    if n == 0 {
+        return Ok(LineRead::Eof);
+    }
+    if line.len() as u64 > max_bytes && !line.ends_with('\n') {
+        return Ok(LineRead::TooLong);
+    }
+
+    Ok(LineRead::Line)
+}
 
 /// 运行 Stdio MCP Server
 ///
@@ -34,16 +80,27 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
 
     let mut line = String::new();
     loop {
-        line.clear();
-        let n = reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| AppError::Io(e))?;
-
-        if n == 0 {
-            // EOF
-            log::info!("[MCP Stdio] Client closed connection (EOF)");
-            break;
+        match read_line_limited(&mut reader, MAX_STDIO_LINE_BYTES, &mut line).await? {
+            LineRead::Eof => {
+                // EOF
+                log::info!("[MCP Stdio] Client closed connection (EOF)");
+                break;
+            }
+            LineRead::TooLong => {
+                // 不静默截断继续解析：剩余字节仍在管道里，继续读会把半截
+                // JSON 当成新消息。明确报错后停止服务。
+                log::error!(
+                    "[MCP Stdio] 单行请求超过 {} 字节上限，停止服务",
+                    MAX_STDIO_LINE_BYTES
+                );
+                let error_resp = McpResponse::error(
+                    serde_json::Value::Null,
+                    McpError::parse_error(format!("请求行超过 {} 字节上限", MAX_STDIO_LINE_BYTES)),
+                );
+                write_response(&mut stdout, &error_resp).await?;
+                break;
+            }
+            LineRead::Line => {}
         }
 
         let line = line.trim();
@@ -282,5 +339,48 @@ mod tests {
     async fn malformed_json_is_rejected_at_parse_layer() {
         let bad = r#"{"jsonrpc":"2.0","id":1,"method":"#;
         assert!(serde_json::from_str::<McpServerMessage>(bad).is_err());
+    }
+
+    /// 超长单行不会被静默截断后继续解析：用小上限构造，不真的分配 8 MiB。
+    #[tokio::test]
+    async fn oversized_single_line_is_rejected() {
+        let mut reader = BufReader::new(&b"0123456789abcdef-oversized\n"[..]);
+        let mut line = String::new();
+
+        let outcome = read_line_limited(&mut reader, 16, &mut line).await.unwrap();
+        assert_eq!(outcome, LineRead::TooLong);
+    }
+
+    #[tokio::test]
+    async fn normal_line_is_read() {
+        let mut reader = BufReader::new(&b"{\"jsonrpc\":\"2.0\"}\n"[..]);
+        let mut line = String::new();
+
+        let outcome = read_line_limited(&mut reader, 1024, &mut line)
+            .await
+            .unwrap();
+        assert_eq!(outcome, LineRead::Line);
+        assert_eq!(line, "{\"jsonrpc\":\"2.0\"}\n");
+    }
+
+    /// 恰好等于上限（不含换行）的行仍然合法。
+    #[tokio::test]
+    async fn line_at_limit_with_newline_is_allowed() {
+        let mut reader = BufReader::new(&b"0123456789abcdef\n"[..]);
+        let mut line = String::new();
+
+        let outcome = read_line_limited(&mut reader, 16, &mut line).await.unwrap();
+        assert_eq!(outcome, LineRead::Line);
+    }
+
+    #[tokio::test]
+    async fn eof_is_reported() {
+        let mut reader = BufReader::new(&b""[..]);
+        let mut line = String::new();
+
+        let outcome = read_line_limited(&mut reader, 1024, &mut line)
+            .await
+            .unwrap();
+        assert_eq!(outcome, LineRead::Eof);
     }
 }
