@@ -12,7 +12,7 @@ use crate::data::DataSourceId;
 use crate::plugins::enabled::is_plugin_enabled;
 use crate::plugins::fs::is_within_base;
 
-use super::plugin_api::handle_plugin_api;
+use super::plugin_api::{handle_plugin_api, request_cors_origin};
 
 /// Entry point registered as the `plugin://` URI scheme handler in `lib.rs`.
 pub fn handle_plugin_uri<R: Runtime>(
@@ -29,18 +29,28 @@ pub fn handle_plugin_uri<R: Runtime>(
         .decode_utf8_lossy()
         .to_string();
 
+    // Origin 只允许该插件自己的页面（plugin://<id> / http(s)://plugin.<id>）。
+    // 跨插件或外部网页发来的请求直接拒绝；无 Origin 的请求（顶层导航、<img>
+    // 等非 CORS 请求）不受影响。
+    if request_cors_origin(request.headers(), &plugin_id).is_err() {
+        return forbidden("origin not allowed");
+    }
+
     if !is_plugin_enabled(app, &plugin_id) {
         return forbidden("plugin disabled");
     }
 
     if let Some(cmd) = path.strip_prefix("/api/") {
         if request.method() == "OPTIONS" {
-            return Response::builder()
-                .header("Access-Control-Allow-Origin", "*")
-                .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                .header("Access-Control-Allow-Headers", "Content-Type")
-                .body(std::borrow::Cow::Owned(Vec::new()))
-                .unwrap();
+            return match request_cors_origin(request.headers(), &plugin_id) {
+                Ok(Some(origin)) => Response::builder()
+                    .header("Access-Control-Allow-Origin", origin)
+                    .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                    .header("Access-Control-Allow-Headers", "Content-Type")
+                    .body(std::borrow::Cow::Owned(Vec::new()))
+                    .unwrap(),
+                _ => forbidden("origin not allowed"),
+            };
         }
         if !cmd.is_empty() {
             return handle_plugin_api(app, &plugin_id, cmd, request);

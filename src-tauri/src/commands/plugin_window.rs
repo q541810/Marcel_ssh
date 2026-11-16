@@ -29,6 +29,8 @@ use crate::error::AppError;
 use crate::plugins::auth::authorize;
 #[cfg(desktop)]
 use crate::plugins::enabled::is_plugin_enabled_async;
+#[cfg(desktop)]
+use crate::plugins::guard::{forget_plugin_webview, remember_plugin_webview};
 use crate::AppState;
 
 #[cfg(mobile)]
@@ -92,6 +94,7 @@ pub(crate) fn close_all_plugin_windows(app: &AppHandle) {
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.close();
         }
+        forget_plugin_webview(&label);
     }
 }
 
@@ -211,6 +214,11 @@ pub async fn plugin_window_create(
         let owned = map.as_mut().unwrap();
         let entry = owned.entry(plugin_id.clone()).or_default();
         if entry.iter().any(|l| l == &params.label) {
+            // 幂等分支：只补登记，不覆盖已有归属（标签由调用方给，不能借此把
+            // 另一个插件的页面认成自己的）。
+            if crate::plugins::guard::plugin_of_webview(&params.label).is_none() {
+                remember_plugin_webview(&params.label, &plugin_id);
+            }
             return Ok(()); // idempotent: same label already exists
         }
         if entry.len() >= MAX_WINDOWS_PER_PLUGIN {
@@ -251,7 +259,10 @@ pub async fn plugin_window_create(
     if params.transparent {
         builder = builder.background_color(Color(0, 0, 0, 0));
     }
+    // 先登记再创建：页面 JS 可能在 build 返回后立刻发起 IPC。
+    remember_plugin_webview(&label, &plugin_id);
     let webview_window = builder.build().map_err(|e| {
+        forget_plugin_webview(&label);
         remove_window(&plugin_id, &label);
         AppError::Other(format!("failed to create window: {}", e))
     })?;
@@ -270,6 +281,7 @@ pub async fn plugin_window_create(
         match event {
             WindowEvent::CloseRequested { .. } => {
                 remove_window(&plugin_id_close, &label_close);
+                forget_plugin_webview(&label_close);
                 let _ = crate::emit_event(
                     &app_close,
                     &format!("window://closed/{}", label_close),
@@ -370,6 +382,7 @@ pub async fn plugin_window_close(
         }
     }
     remove_window(&plugin_id, &label);
+    forget_plugin_webview(&label);
     Ok(())
 }
 

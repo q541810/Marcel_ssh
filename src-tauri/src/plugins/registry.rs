@@ -21,7 +21,6 @@ use std::time::SystemTime;
 use tokio::sync::RwLock;
 
 use crate::config::settings::AppSettings;
-use crate::data::DataSourceId;
 use crate::plugins::manifest::PluginManifest;
 use crate::plugins::scan::scan_plugins;
 
@@ -166,36 +165,51 @@ impl PluginRegistry {
                 if rel.is_empty() {
                     None
                 } else {
-                    let section_path = DataSourceId::Plugins.path(config_dir).join(id).join(rel);
-                    match std::fs::metadata(&section_path)
-                        .and_then(|md| md.modified().map(|mtime| (section_path.clone(), mtime)))
-                    {
-                        Ok((path, mtime)) => {
-                            let need_refresh = prev
-                                .and_then(|e| e.section_cache.as_ref())
-                                .map_or(true, |(cached_mtime, _)| *cached_mtime != mtime);
-                            if need_refresh {
-                                match std::fs::read_to_string(&path) {
-                                    Ok(content) => Some((mtime, content)),
-                                    Err(e) => {
-                                        log::warn!(
-                                            "插件 {} systemPromptSection 读取失败 ({}): {}",
-                                            id,
-                                            path.display(),
-                                            e
-                                        );
-                                        None
+                    // 与 fs.read 共用同一套「相对路径 + canonicalize 后
+                    // starts_with(插件目录)」判定：绝对路径 / `..` / 指到
+                    // 目录外的链接一律跳过，避免把本机任意文件塞进提示词。
+                    match crate::plugins::fs::resolve_existing_plugin_file(config_dir, id, rel) {
+                        Ok(section_path) => {
+                            match std::fs::metadata(&section_path).and_then(|md| {
+                                md.modified().map(|mtime| (section_path.clone(), mtime))
+                            }) {
+                                Ok((path, mtime)) => {
+                                    let need_refresh = prev
+                                        .and_then(|e| e.section_cache.as_ref())
+                                        .map_or(true, |(cached_mtime, _)| *cached_mtime != mtime);
+                                    if need_refresh {
+                                        match std::fs::read_to_string(&path) {
+                                            Ok(content) => Some((mtime, content)),
+                                            Err(e) => {
+                                                log::warn!(
+                                                    "插件 {} systemPromptSection 读取失败 ({}): {}",
+                                                    id,
+                                                    path.display(),
+                                                    e
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        prev.and_then(|e| e.section_cache.clone())
                                     }
                                 }
-                            } else {
-                                prev.and_then(|e| e.section_cache.clone())
+                                Err(e) => {
+                                    log::warn!(
+                                        "插件 {} systemPromptSection stat 失败 ({}): {}",
+                                        id,
+                                        section_path.display(),
+                                        e
+                                    );
+                                    None
+                                }
                             }
                         }
                         Err(e) => {
                             log::warn!(
-                                "插件 {} systemPromptSection stat 失败 ({}): {}",
+                                "插件 {} systemPromptSection 路径非法或不存在 ({}): {}",
                                 id,
-                                section_path.display(),
+                                rel,
                                 e
                             );
                             None

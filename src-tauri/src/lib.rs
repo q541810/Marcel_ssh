@@ -899,6 +899,20 @@ fn append_load_warning(slot: &mut Option<String>, msg: String) {
     }
 }
 
+/// 包住 `tauri::generate_handler!`：所有 IPC 请求先过插件调用守卫，再交给
+/// 原来的命令分发。插件页面与主窗口共用 IPC，而 Tauri v2 不会对 app 自定义
+/// 命令做 ACL，所以调用者判定必须在统一入口做（见 `plugins::guard`）。
+macro_rules! plugin_guarded_handler {
+    ($($command:path),* $(,)?) => {
+        |__guarded_invoke| {
+            crate::plugins::guard::dispatch(
+                __guarded_invoke,
+                ::tauri::generate_handler![$($command),*],
+            )
+        }
+    };
+}
+
 /// Build and run the Tauri application.
 ///
 /// `mobile_entry_point` generates the JNI entry symbol Android needs to boot
@@ -1183,7 +1197,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(plugin_guarded_handler![
             commands::app_ready,
             commands::app_bootstrap::app_get_bootstrap,
             commands::mobile_set_app_foreground,

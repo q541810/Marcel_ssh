@@ -15,9 +15,29 @@ pub fn scan_plugins_filtered(config_dir: &Path, disabled: &[String]) -> Vec<Plug
         Ok(e) => e,
         Err(_) => return result,
     };
+    let plugins_root = match plugins_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return result,
+    };
 
     for entry in entries.flatten() {
-        let plugin_dir = entry.path();
+        // 只接受 plugins/ 下的真实目录：file_type() 不跟随链接，符号链接
+        // 一律跳过；canonicalize 再兜底一次（防止目录内容被链接换掉）。
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if file_type.is_symlink() {
+            log::warn!("跳过符号链接插件目录: {}", entry.path().display());
+            continue;
+        }
+        if !file_type.is_dir() {
+            continue;
+        }
+        let plugin_dir = match entry.path().canonicalize() {
+            Ok(path) if path.starts_with(&plugins_root) => path,
+            _ => continue,
+        };
         let manifest_path = plugin_dir.join("plugin.json");
         let content = match std::fs::read_to_string(&manifest_path) {
             Ok(c) => c,
@@ -55,16 +75,14 @@ pub fn scan_plugins_filtered(config_dir: &Path, disabled: &[String]) -> Vec<Plug
         }
 
         // Best-effort: warn (but do not block) if a declared systemPromptSection
-        // file does not exist yet. The plugin still loads; the missing section
-        // is simply skipped at prompt-build time.
+        // file does not exist or escapes the plugin dir. The plugin still loads;
+        // the invalid section is simply skipped at prompt-build time.
         if let Some(rel) = m.system_prompt_section.as_ref() {
-            let section_path = plugin_dir.join(rel);
-            if !section_path.exists() {
+            if crate::plugins::fs::resolve_existing_plugin_file(config_dir, &m.id, rel).is_err() {
                 log::warn!(
-                    "插件 {} 声明了 systemPromptSection={} 但文件不存在: {}",
+                    "插件 {} 声明了 systemPromptSection={} 但文件不存在或路径非法",
                     m.id,
-                    rel,
-                    section_path.display()
+                    rel
                 );
             }
         }

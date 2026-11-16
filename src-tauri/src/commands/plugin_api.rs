@@ -9,13 +9,51 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tauri::http::Response;
+use tauri::http::{header, HeaderMap, Response};
 use tauri::{Manager, Runtime};
 
+use crate::agent::risk::{Disposition, RiskAssessor, SecurityPolicy};
+use crate::config::settings::AppSettings;
 use crate::plugins::auth::{authorize, AuthResult};
 use crate::plugins::capability::capability_for;
 use crate::plugins::enabled::manifest_for;
 use crate::plugins::fs::{resolve_read_path, resolve_write_path};
+
+/// 校验请求的 `Origin`（若有）是否属于 `plugin_id` 自己的页面。
+///
+/// `Ok(None)` = 非浏览器请求（无 Origin），不需要 CORS 头；`Err(())` = 来源
+/// 与 URL 里的插件 id 不一致，调用方应直接拒绝且不要回任何 CORS 头。
+pub(crate) fn request_cors_origin(
+    headers: &HeaderMap,
+    plugin_id: &str,
+) -> Result<Option<String>, ()> {
+    let Some(raw) = headers.get(header::ORIGIN) else {
+        return Ok(None);
+    };
+    let origin = raw.to_str().map_err(|_| ())?;
+    if origin_matches_plugin(origin, plugin_id) {
+        Ok(Some(origin.to_string()))
+    } else {
+        Err(())
+    }
+}
+
+/// `plugin://<id>`（macOS/Linux）与 `http(s)://plugin.<id>`（Windows/Android
+/// 上 wry 对自定义协议的 workaround）都算该插件自己的页面；其它一律不算。
+pub(crate) fn origin_matches_plugin(origin: &str, plugin_id: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    match url.scheme() {
+        "plugin" => url
+            .host_str()
+            .map_or(false, |host| host.eq_ignore_ascii_case(plugin_id)),
+        "http" | "https" => url.host_str().map_or(false, |host| {
+            host.eq_ignore_ascii_case(&format!("plugin.{}", plugin_id))
+        }),
+        _ => false,
+    }
+}
 
 /// Handle a `plugin://<id>/api/<cmd>` request.
 pub fn handle_plugin_api<R: Runtime>(
@@ -31,20 +69,32 @@ pub fn handle_plugin_api<R: Runtime>(
         _ => serde_json::Map::new(),
     };
 
+    // 跨源请求只允许插件自己的页面；来源与 URL 里的 plugin id 不一致直接拒绝。
+    let cors_origin = match request_cors_origin(request.headers(), plugin_id) {
+        Ok(origin) => origin,
+        Err(()) => return json_error(None, 403, "origin not allowed"),
+    };
+
     let required_cap = match capability_for(cmd) {
         Some(cap) => cap,
-        None => return json_error(400, &format!("unknown command: {}", cmd)),
+        None => {
+            return json_error(
+                cors_origin.as_deref(),
+                400,
+                &format!("unknown command: {}", cmd),
+            )
+        }
     };
 
     let handle = match tokio::runtime::Handle::try_current() {
         Ok(h) => h,
-        Err(_) => return json_error(500, "no async runtime"),
+        Err(_) => return json_error(cors_origin.as_deref(), 500, "no async runtime"),
     };
 
     // Manifest comes from the registry (cached) — no per-request disk read.
     let manifest = match handle.block_on(manifest_for(app, plugin_id)) {
         Some(m) => m,
-        None => return json_error(404, "plugin not found"),
+        None => return json_error(cors_origin.as_deref(), 404, "plugin not found"),
     };
 
     let state = app.state::<crate::AppState>();
@@ -53,15 +103,35 @@ pub fn handle_plugin_api<R: Runtime>(
         authorize(plugin_id, required_cap, Some(&manifest), &settings)
     };
     if let AuthResult::Denied { reason } = auth {
-        return json_error(403, &reason);
+        return json_error(cors_origin.as_deref(), 403, &reason);
     }
 
     let result = handle.block_on(execute_command(app, cmd, &args_map, plugin_id));
 
     match result {
-        Ok(data) => json_ok(data),
-        Err(e) => json_error(500, &e),
+        Ok(data) => json_ok(cors_origin.as_deref(), data),
+        Err(e) => json_error(cors_origin.as_deref(), 500, &e),
     }
+}
+
+/// 插件 `ssh_exec` 的最小硬闸门：只拦「直接拒绝」。
+///
+/// 这是**刻意的最小闸门**：插件一旦获得 `ssh.exec` 授权，请求审批 / 强制审批 /
+/// 放行这些档位都不进入 Agent 的审批流（插件自己的交互由它负责）；但「直接拒绝」
+/// 是用户明确禁止的命令，插件也不能绕过去。判定与 Agent 共用同一份
+/// `SecurityPolicy::from_app_settings` + `RiskAssessor::assess_command`，规则表、
+/// 用户覆盖、自定义规则因此完全一致。
+///
+/// 纯函数（不碰 Tauri），单测直接喂 `AppSettings`。
+fn deny_reason_for_plugin_command(command: &str, settings: &AppSettings) -> Option<String> {
+    let policy = SecurityPolicy::from_app_settings(settings);
+    let assessment = RiskAssessor::from_optional(Some(&policy)).assess_command(command);
+    (assessment.disposition == Disposition::Deny).then(|| {
+        assessment
+            .reason
+            .filter(|reason| !reason.trim().is_empty())
+            .unwrap_or_else(|| "判定为灾难性操作".to_string())
+    })
 }
 
 async fn execute_command<R: Runtime>(
@@ -161,6 +231,15 @@ async fn execute_command<R: Runtime>(
             if sid.is_empty() || command.is_empty() {
                 return Err("sessionId and command required".into());
             }
+            // 刻意的最小闸门：只保证「直接拒绝」无法被插件绕过，其余档位保持
+            // 现有行为（插件已获 ssh.exec 授权，不引入审批流）。
+            let denied = {
+                let settings = state.settings.read().await;
+                deny_reason_for_plugin_command(command, &settings)
+            };
+            if let Some(reason) = denied {
+                return Err(format!("命令被风险规则拒绝，未执行：{}", reason));
+            }
             // 经 command_exec 统一管理器执行（登记记录 + 断连级联取消）。
             // 插件必须显式选择密码交互，轮询类调用默认不会弹框。
             // 默认 120s 超时与旧 `SshManager::exec_command` 一致。
@@ -168,7 +247,12 @@ async fn execute_command<R: Runtime>(
                 sid,
                 command,
                 crate::command_exec::CommandSource::Plugin,
-            ).interactive_sudo(args.get("interactiveSudo").and_then(|v| v.as_bool()).unwrap_or(false));
+            )
+            .interactive_sudo(
+                args.get("interactiveSudo")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            );
             // Production uses Wry; mock runtimes have no password UI.
             let ui = (app as &dyn std::any::Any).downcast_ref::<tauri::AppHandle>();
             let outcome = state.command_exec.submit_opt(ui, ticket).await;
@@ -260,25 +344,40 @@ fn config_dir_for<R: Runtime>(app: &tauri::AppHandle<R>) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn json_ok(data: serde_json::Value) -> Response<std::borrow::Cow<'static, [u8]>> {
+fn json_ok(
+    origin: Option<&str>,
+    data: serde_json::Value,
+) -> Response<std::borrow::Cow<'static, [u8]>> {
     let response = serde_json::json!({ "ok": true, "data": data });
-    Response::builder()
+    let builder = Response::builder()
         .header("Content-Type", "application/json; charset=utf-8")
-        .header("Access-Control-Allow-Origin", "*")
         .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        .header("Access-Control-Allow-Headers", "Content-Type")
+        .header("Access-Control-Allow-Headers", "Content-Type");
+    let builder = match origin {
+        Some(origin) => builder.header("Access-Control-Allow-Origin", origin),
+        None => builder,
+    };
+    builder
         .body(std::borrow::Cow::Owned(response.to_string().into_bytes()))
         .unwrap_or_else(|_| not_found("api build failed"))
 }
 
-fn json_error(status: u16, msg: &str) -> Response<std::borrow::Cow<'static, [u8]>> {
+fn json_error(
+    origin: Option<&str>,
+    status: u16,
+    msg: &str,
+) -> Response<std::borrow::Cow<'static, [u8]>> {
     let response = serde_json::json!({ "ok": false, "data": msg });
-    Response::builder()
+    let builder = Response::builder()
         .status(status)
         .header("Content-Type", "application/json; charset=utf-8")
-        .header("Access-Control-Allow-Origin", "*")
         .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        .header("Access-Control-Allow-Headers", "Content-Type")
+        .header("Access-Control-Allow-Headers", "Content-Type");
+    let builder = match origin {
+        Some(origin) => builder.header("Access-Control-Allow-Origin", origin),
+        None => builder,
+    };
+    builder
         .body(std::borrow::Cow::Owned(response.to_string().into_bytes()))
         .unwrap_or_else(|_| not_found("api build failed"))
 }
@@ -290,4 +389,79 @@ fn not_found(msg: &str) -> Response<std::borrow::Cow<'static, [u8]>> {
         .header("Content-Type", "text/plain; charset=utf-8")
         .body(std::borrow::Cow::Owned(msg.as_bytes().to_vec()))
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::risk::CustomRiskRule;
+
+    /// 「直接拒绝」是硬闸门：插件拿到 ssh.exec 也不能执行。
+    #[test]
+    fn plugin_ssh_gate_rejects_deny_level() {
+        let settings = AppSettings::default();
+        let reason =
+            deny_reason_for_plugin_command("rm -rf /", &settings).expect("删除根目录属于直接拒绝");
+        assert!(!reason.trim().is_empty());
+    }
+
+    /// 其余档位保持现状：请求审批 / 强制审批都不在这里变成弹窗或拒绝。
+    #[test]
+    fn plugin_ssh_gate_passes_non_deny_levels() {
+        let settings = AppSettings::default();
+        assert!(deny_reason_for_plugin_command("ls -la", &settings).is_none());
+        assert!(
+            deny_reason_for_plugin_command("systemctl restart nginx", &settings).is_none(),
+            "强制审批档不进入插件闸门（插件已获 ssh.exec 授权）"
+        );
+    }
+
+    /// 用户自定义的「直接拒绝」规则同样生效（证明 settings → policy 的接线没漏）。
+    #[test]
+    fn plugin_ssh_gate_uses_user_custom_rules() {
+        let mut settings = AppSettings::default();
+        settings.custom_risk_rules.push(CustomRiskRule {
+            id: "test-echo".into(),
+            command: "echo".into(),
+            level: Disposition::Deny,
+            enabled: true,
+            ..Default::default()
+        });
+        assert!(deny_reason_for_plugin_command("echo hi", &settings).is_some());
+    }
+
+    #[test]
+    fn own_plugin_origins_are_allowed() {
+        // macOS/Linux 的原生自定义 scheme
+        assert!(origin_matches_plugin("plugin://plug-a", "plug-a"));
+        // Windows/Android 上 wry 的 http(s)://<scheme>.<host> workaround
+        assert!(origin_matches_plugin("http://plugin.plug-a", "plug-a"));
+        assert!(origin_matches_plugin("https://plugin.plug-a", "plug-a"));
+    }
+
+    #[test]
+    fn cross_plugin_and_foreign_origins_are_rejected() {
+        assert!(!origin_matches_plugin("http://plugin.plug-b", "plug-a"));
+        assert!(!origin_matches_plugin("plugin://plug-b", "plug-a"));
+        // 主窗口 / 普通网页都不是插件页面
+        assert!(!origin_matches_plugin("tauri://localhost", "plug-a"));
+        assert!(!origin_matches_plugin("http://tauri.localhost", "plug-a"));
+        assert!(!origin_matches_plugin("https://evil.example", "plug-a"));
+        assert!(!origin_matches_plugin("null", "plug-a"));
+    }
+
+    #[test]
+    fn cors_origin_requires_header_and_matching_plugin() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(request_cors_origin(&headers, "plug-a"), Ok(None));
+
+        headers.insert(header::ORIGIN, "http://plugin.plug-a".parse().unwrap());
+        assert_eq!(
+            request_cors_origin(&headers, "plug-a"),
+            Ok(Some("http://plugin.plug-a".to_string()))
+        );
+
+        headers.insert(header::ORIGIN, "http://plugin.plug-b".parse().unwrap());
+        assert_eq!(request_cors_origin(&headers, "plug-a"), Err(()));
+    }
 }

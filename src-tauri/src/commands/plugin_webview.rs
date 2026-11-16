@@ -13,6 +13,8 @@ use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
 
 #[cfg(desktop)]
 use crate::plugins::enabled::is_plugin_enabled_async;
+#[cfg(desktop)]
+use crate::plugins::guard::{forget_plugin_webview, remember_plugin_webview};
 
 #[cfg(mobile)]
 const MOBILE_UNSUPPORTED: &str = "plugin webviews are not supported on mobile";
@@ -86,6 +88,11 @@ pub async fn plugin_webview_create(
     params: PluginWebviewCreateParams,
 ) -> Result<(), String> {
     if app.get_webview(&params.label).is_some() {
+        // 已有同名 webview：只补登记，不覆盖已有归属。标签由调用方给，不能让
+        // 一个插件凭一个已存在的标签把别人的页面认成自己的（幂等返回到此为止）。
+        if crate::plugins::guard::plugin_of_webview(&params.label).is_none() {
+            remember_plugin_webview(&params.label, &params.plugin_id);
+        }
         return Ok(());
     }
 
@@ -119,6 +126,8 @@ pub async fn plugin_webview_create(
         );
     };
 
+    // 先登记再创建：页面 JS 可能在 add_child 返回后立刻发起 IPC。
+    remember_plugin_webview(&params.label, &params.plugin_id);
     window
         .add_child(
             WebviewBuilder::new(&params.label, webview_url)
@@ -128,7 +137,10 @@ pub async fn plugin_webview_create(
             LogicalPosition::new(params.x, params.y),
             LogicalSize::new(params.width.max(1.0), params.height.max(1.0)),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            forget_plugin_webview(&params.label);
+            e.to_string()
+        })?;
 
     // Register a webview-event listener to surface crashes / navigation
     // failures to the main window. We resolve the webview by label after
@@ -200,5 +212,6 @@ pub async fn plugin_webview_close(app: tauri::AppHandle, label: String) -> Resul
     if let Some(webview) = app.get_webview(&label) {
         webview.close().map_err(|e| e.to_string())?;
     }
+    forget_plugin_webview(&label);
     Ok(())
 }

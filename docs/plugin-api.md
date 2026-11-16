@@ -771,6 +771,8 @@ marcel.events.on('menu://clicked/pet', (data) => {
 
 `interactiveSudo` 默认 `false`，需要 sudo 密码时直接返回需要认证的错误。由用户触发的操作可传 `true`：免密命令照常执行，需要密码时由主应用弹框，输入后继续同一次执行。密码不会返回给插件；等待输入不计入命令超时。不要给后台轮询启用它。
 
+插件通过 `ssh_exec` 直接执行命令时只做一道「直接拒绝」检查：命中内置或用户自定义风险规则中档位为「直接拒绝」的命令会返回错误、不会执行；其余档位不进入 Agent 的审批流（插件已获 `ssh.exec` 授权）。
+
 插件的 `kind=ssh` Agent 工具自动启用这项交互，与内置 `bash` 一致。已有风险评估与审批保持生效。用户输入的 sudo 密码会加密保存在本设备（系统密钥链，按连接存，并带上当时的目标地址 / 端口 / 用户名：改了地址或换用别的 sudo 用户后不会复用），同一条连接内也不会重复询问；被服务器拒绝时会自动清掉并重新询问。它不会覆盖登录凭据，也不会回传给模型或插件；临时会话只在当前连接内记住。手动终端不受影响。服务器须支持 POSIX shell 和 sudo askpass；临时文件优先放 `/tmp`，该目录禁止执行时改用用户家目录，结束后清理。显式 `sudo -n` / `sudo -S` 保留原行为。应用支持脚本中的普通 sudo、绝对路径 sudo 和字面量 `sh -c`；运行时拼出来的命令或另行启动的脚本不保证能弹框。
 
 ### `sftp.read` 授权的命令
@@ -979,6 +981,7 @@ await emit('plugin-request', {
 ## 安全边界
 
 - 事件 IPC 和 HTTP API **均执行相同的三层授权检查**（manifest 声明 + 用户授权 + 插件启用状态），由 `plugins::auth` 模块统一实现
+- **app 命令不对插件页开放**：插件页面不能直接 `invoke` SSH / SFTP / Agent / 密钥链等 app 命令（`plugin_fs_read` / `plugin_fs_write` 也只允许访问自己的目录），必须走 `plugin://<id>/api/*`、事件 IPC（`marcel.call` / `plugin-request`）或插件自己的工具
 - 插件无法绕过 manifest 中未声明的 capability
 - `fs.read` / `fs.write` 限制在插件目录内，路径穿越被拒绝
 - `net.request` 支持 HTTP 和 HTTPS，无域名限制

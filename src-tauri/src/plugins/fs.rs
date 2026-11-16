@@ -44,9 +44,12 @@ pub fn is_within_base(base_dir: &Path, candidate: &Path) -> bool {
     }
 }
 
-/// Resolve a plugin-relative read path, rejecting path traversal.
-/// The file must already exist (canonicalize is used to normalise).
-pub fn resolve_read_path(
+/// Resolve a plugin-relative path to an existing file inside the plugin dir.
+///
+/// Shared by [`resolve_read_path`] and the plugin `systemPromptSection` read
+/// (`plugins::registry`) so both enforce the same rule: safe relative path,
+/// then canonicalize both sides and require `starts_with(plugin_dir)`.
+pub fn resolve_existing_plugin_file(
     config_dir: &Path,
     plugin_id: &str,
     path: &str,
@@ -54,9 +57,6 @@ pub fn resolve_read_path(
     // Block internal bookkeeping files before any FS access
     if !is_safe_relative_path(path) {
         return Err(AppError::Other("path traversal rejected".into()));
-    }
-    if is_manifest_relative_path(path) {
-        return Err(AppError::Other("plugin.json access rejected".into()));
     }
     let plugin_dir = DataSourceId::Plugins.path(config_dir).join(plugin_id);
     let base_dir = plugin_dir
@@ -73,6 +73,19 @@ pub fn resolve_read_path(
     }
 
     Ok(file_path)
+}
+
+/// Resolve a plugin-relative read path, rejecting path traversal.
+/// The file must already exist (canonicalize is used to normalise).
+pub fn resolve_read_path(
+    config_dir: &Path,
+    plugin_id: &str,
+    path: &str,
+) -> Result<PathBuf, AppError> {
+    if is_manifest_relative_path(path) {
+        return Err(AppError::Other("plugin.json access rejected".into()));
+    }
+    resolve_existing_plugin_file(config_dir, plugin_id, path)
 }
 
 /// Resolve a plugin-relative write path, rejecting path traversal.
@@ -253,6 +266,43 @@ mod tests {
 
         let result = resolve_read_path(tmp.path(), "test-plugin", "assets/style.css");
         assert!(result.is_ok());
+    }
+
+    // ── resolve_existing_plugin_file（systemPromptSection 共用） ──
+
+    #[test]
+    fn existing_plugin_file_allows_in_dir() {
+        let tmp = TempDir::new().unwrap();
+        let plugin_dir = make_plugin(&tmp);
+        fs::write(plugin_dir.join("section.md"), "hello").unwrap();
+
+        let path = resolve_existing_plugin_file(tmp.path(), "test-plugin", "section.md")
+            .expect("目录内文件应放行");
+        assert_eq!(fs::read_to_string(path).unwrap(), "hello");
+    }
+
+    #[test]
+    fn existing_plugin_file_rejects_absolute_path() {
+        let tmp = TempDir::new().unwrap();
+        make_plugin(&tmp);
+
+        assert!(resolve_existing_plugin_file(tmp.path(), "test-plugin", "/etc/passwd").is_err());
+        assert!(
+            resolve_existing_plugin_file(tmp.path(), "test-plugin", "C:/Windows/win.ini").is_err(),
+            "Windows 盘符路径必须拒绝"
+        );
+    }
+
+    #[test]
+    fn existing_plugin_file_rejects_traversal() {
+        let tmp = TempDir::new().unwrap();
+        make_plugin(&tmp);
+        fs::write(tmp.path().join("outside.txt"), "secret").unwrap();
+
+        assert!(
+            resolve_existing_plugin_file(tmp.path(), "test-plugin", "../outside.txt").is_err(),
+            ".. 穿越必须拒绝"
+        );
     }
 
     // ── is_within_base ──
