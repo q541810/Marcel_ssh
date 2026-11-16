@@ -91,6 +91,23 @@ interface Props {
   grouped?: boolean;
 }
 
+/** 续派行行首的名字（首次派发那行仍叫工具自己的显示名「子agent」）。 */
+const CONTINUATION_LABEL = '续派agent';
+
+/** 「查看实时/完整调研过程 →」：时间线卡与续派行共用同一个入口。 */
+function WatchProcessButton({ subConversationId, running }: { subConversationId: string; running: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => void openSubConversation(subConversationId)}
+      className="flex items-center gap-1.5 pt-0.5 text-meta font-medium text-sky-400 transition-colors hover:text-sky-300 [@media(pointer:coarse)]:min-h-8"
+    >
+      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+      {running ? '查看实时调研过程 →' : '查看完整调研过程 →'}
+    </button>
+  );
+}
+
 /**
  * 子 agent 时间线卡：同一个子对话的「派活 → 提问 → 回答 → 继续 → 完成」并成一张卡。
  *
@@ -108,17 +125,6 @@ function SubagentThreadCard({ message, thread, grouped }: Props) {
   const running = thread.state === 'running';
   // 步骤数只挂在最后一个收尾行上（它描述的是子 agent 当前走到哪了）
   const lastOutcome = [...thread.items].reverse().find((i) => i.kind === 'outcome');
-  const watchLabel = running ? '查看实时调研过程 →' : '查看完整调研过程 →';
-  const watchButton = (
-    <button
-      type="button"
-      onClick={() => void openSubConversation(thread.subConversationId)}
-      className="flex items-center gap-1.5 pt-0.5 text-meta font-medium text-sky-400 transition-colors hover:text-sky-300 [@media(pointer:coarse)]:min-h-8"
-    >
-      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-      {watchLabel}
-    </button>
-  );
 
   return (
     <div className={`flex min-w-0 justify-start ${grouped ? 'pl-3' : ''}`}>
@@ -139,7 +145,9 @@ function SubagentThreadCard({ message, thread, grouped }: Props) {
         >
           {/* 运行中：和普通子 agent 行一样，实时过程的入口不用展开就在 */}
           {running && !expanded && (
-            <div className="ml-3 min-w-0 border-l border-edge/50 py-1 pl-3 pr-1.5">{watchButton}</div>
+            <div className="ml-3 min-w-0 border-l border-edge/50 py-1 pl-3 pr-1.5">
+              <WatchProcessButton subConversationId={thread.subConversationId} running />
+            </div>
           )}
           {expanded && (
             <div className="ml-3 min-w-0 space-y-1 border-l border-edge/50 py-1.5 pl-3 pr-1.5">
@@ -152,9 +160,33 @@ function SubagentThreadCard({ message, thread, grouped }: Props) {
                   case 'outcome': return <OutcomeRow key={i} item={item} steps={item === lastOutcome ? steps : 0} />;
                 }
               })}
-              {watchButton}
+              <WatchProcessButton subConversationId={thread.subConversationId} running={running} />
             </div>
           )}
+        </ToolCardFrame>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 执行中的续派行：和首次派发**同一副工具行骨架**，名字写「续派agent」+ 子 agent 的名字。
+ *
+ * 为什么单独一条：续派调用原本被并进上方的时间线卡（连执行中的也并），于是主 agent
+ * 去追问 / 转答子 agent 的这段时间里，消息流当前位置**什么都不出现**——用户看不见
+ * 「正在等它」，只会以为 agent 卡死了。这条行留在原位，跑完（拿到工具结果）才吸收。
+ *
+ * 执行中不展开（和所有运行中的工具行同一条规矩），入口只有行下的实时过程链接。
+ */
+export function SubagentContinuationRow({ message, thread, grouped }: Props) {
+  const toolName = message.toolResult?.toolName ?? 'subagent';
+  return (
+    <div className={`flex min-w-0 justify-start ${grouped ? 'pl-3' : ''}`}>
+      <div className="min-w-0 w-full max-w-[92%]" data-testid="subagent-continuation">
+        <ToolCardFrame toolName={toolName} label={CONTINUATION_LABEL} preview={thread.title} busy>
+          <div className="ml-3 min-w-0 border-l border-edge/50 py-1.5 pl-3 pr-1.5">
+            <WatchProcessButton subConversationId={thread.subConversationId} running />
+          </div>
         </ToolCardFrame>
       </div>
     </div>

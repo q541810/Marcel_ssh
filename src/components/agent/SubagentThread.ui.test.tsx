@@ -7,7 +7,7 @@ import { deriveSubagentMessages } from '@/lib/subagentThread';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useMessageJumpStore } from '@/stores/messageJumpStore';
 import { getToolView } from './toolViews';
-import SubagentThreadCard from './SubagentThreadCard';
+import SubagentThreadCard, { SubagentContinuationRow } from './SubagentThreadCard';
 import SubagentAwaitingNotice from './SubagentAwaitingNotice';
 import { QuestionSourceLine } from './QuestionSourceLine';
 
@@ -122,6 +122,28 @@ describe('时间线卡', () => {
     mountThread([user, asked, { ...answered, isExecuting: true, toolResult: { ...answered.toolResult!, metadata: undefined } }], true);
     expect(container.querySelector('svg.animate-spin')).not.toBeNull();
     expect(container.textContent).toContain('查看实时调研过程');
+  });
+
+  it('执行中的续派留在原位，渲染成一条「续派agent」行：转圈 + 实时过程入口', async () => {
+    const msgs = [user, asked, { ...answered, isExecuting: true, toolResult: { ...answered.toolResult!, metadata: undefined } }];
+    const derived = deriveSubagentMessages(msgs, { tailActive: true });
+    // 执行中的续派不在锚点上，而是一条独立消息（渲染器据此画「续派agent」行）
+    const live = derived.messages.find((m) => m.subagentContinuation)!;
+    expect(live).toBeTruthy();
+    expect(live.subagentThread).toBeUndefined();
+    act(() => root.render(<SubagentContinuationRow message={live} thread={live.subagentContinuation!} />));
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('续派agent');
+    expect(text).toContain('查日志');
+    expect(container.querySelector('svg.animate-spin')).not.toBeNull();
+    // 执行中不展开，也没有「问过 N 次」（那是锚点卡的摘要标记）
+    expect(text).toContain('查看实时调研过程');
+    expect(text).not.toContain('问过');
+
+    const btn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('查看实时调研过程'))!;
+    await act(async () => { btn.click(); });
+    expect(openConversation).toHaveBeenCalledWith(SUB);
   });
 
   it('失败 / 中断才有颜色字（和普通工具行一致），完成不说话', () => {

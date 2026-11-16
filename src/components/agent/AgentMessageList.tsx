@@ -22,7 +22,7 @@ import { useIsomorphicLayoutEffect } from '@/hooks/useStickyFollow';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
-import SubagentThreadCard from './SubagentThreadCard';
+import SubagentThreadCard, { SubagentContinuationRow } from './SubagentThreadCard';
 import { deriveSubagentMessages } from '@/lib/subagentThread';
 import TurnActions from './TurnActions';
 import { getToolView, isRetainedToolView } from './toolViews';
@@ -107,6 +107,7 @@ function MessageBody({ message, grouped, ...props }: {
 } & Pick<Props, 'onRollback' | 'onCopy' | 'rollbackDisabled' | 'alwaysShowActions' | 'searchKeyword'>) {
   const [expanded, setExpanded] = useMessageViewState('tool-width-expanded', false);
   const onExpand = useCallback((_id: string, open: boolean) => setExpanded(open), [setExpanded]);
+  if (message.subagentContinuation) return <SubagentContinuationRow message={message} thread={message.subagentContinuation} grouped={grouped} />;
   if (message.subagentThread) return <SubagentThreadCard message={message} thread={message.subagentThread} grouped={grouped} />;
   const ToolView = message.toolResult && getToolView(message.toolResult.toolName);
   if (ToolView) return <ToolView message={message} grouped={grouped} />;

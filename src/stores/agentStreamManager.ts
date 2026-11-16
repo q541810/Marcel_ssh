@@ -152,8 +152,57 @@ function settleAnsweredAsk(handler: StreamHandler, ev: SubTaskStartPayload) {
   handler.retireAwaitingParent(ev.subConversationId, ev.subTaskId);
 }
 
+/**
+ * 续派开始时把子对话**已落库的历史**补进消息桶（只补前缀，绝不覆盖实时内容）。
+ *
+ * 起因：应用重启后子对话只载入了元数据、消息桶是空的；而 `conversationStore.loadConversation`
+ * 在任务运行中**刻意不重载**（怕把实时流式消息冲掉）。续派一登记，桶里就只剩
+ * 「新追问 + 骨架」，用户点开子对话看到的是「历史全没了」。
+ *
+ * 时机由调用方保证：只在 `resumed` 且登记前桶为空时启动——此刻本轮还没有任何实时消息，
+ * 读到的这批行只能是历史；它们插在最前面，之后流进来的正文照常追加在后面。
+ */
+async function hydrateResumedSubConversation(
+  handler: StreamHandler,
+  conversationId: string,
+  prompt: string,
+) {
+  try {
+    const stored = await tauri.agentLoadConversation(conversationId);
+    // 读不到（命令失败 / 测试桩没配）就没有历史可补：不打断这一轮。
+    if (!stored?.length) return;
+    const history = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
+    handler.updateMessages(conversationId, (cur) => {
+      const known = new Set(cur.map((m) => m.dbId ?? m.id));
+      // 库里可能已经把这一轮的追问落好了：与实时那条重复。本轮追问若已落库，
+      // 必然是历史里的**最后一行**（它是最新的消息）——只认这一行；往前找同文会把
+      // 「用户两次都说『继续』」时更早那条历史一起丢掉。
+      const liveHasPrompt =
+        !!prompt && cur.some((c) => c.role === 'user' && c.content.trim() === prompt.trim());
+      let duplicateIndex = -1;
+      if (liveHasPrompt) {
+        const last = history[history.length - 1];
+        if (last && last.role === 'user' && last.content.trim() === prompt.trim()) {
+          duplicateIndex = history.length - 1;
+        }
+      }
+      const rows = history.filter((m, i) => {
+        if (known.has(m.dbId ?? m.id)) return false;
+        if (i === duplicateIndex) return false;
+        return true;
+      });
+      return rows.length ? [...rows, ...cur] : cur;
+    });
+  } catch (err) {
+    console.warn('[agent] failed to load sub-conversation history before resume', err);
+  }
+}
+
 /** subTaskStart 事件：注册子对话并挂载子agent实时流 listener。 */
 export function handleSubTaskStart(handler: StreamHandler, parentTaskId: string, ev: SubTaskStartPayload) {
+  // 续派 + 消息桶还空着 = 重启后第一次接上这个子对话：这一轮登记完要把历史补回来。
+  // 必须在 `registerSubTaskContext` **之前**判断（它会把新追问和骨架写进桶里）。
+  const needsHistory = !!ev.resumed && handler.getMessages(ev.subConversationId).length === 0;
   const loadingId = registerSubTaskContext(
     handler,
     parentTaskId,
@@ -173,6 +222,7 @@ export function handleSubTaskStart(handler: StreamHandler, parentTaskId: string,
     // 子agent仍在运行：挂 listener 消费实时流事件。
     void attachStreamListener(ev.subTaskId, ev.subConversationId, loadingId);
   }
+  if (needsHistory) void hydrateResumedSubConversation(handler, ev.subConversationId, ev.prompt);
   // 把子对话 id 挂到主对话的 subagent 工具卡片上：运行中即可"查看"实时过程
   // （toolResult 完成后会被后端 metadata 覆盖，无冲突）。
   const parentTask = handler.getTask(parentTaskId);

@@ -627,6 +627,13 @@ export interface AgentMessage {
    * 工具消息是同一个子对话的「时间线卡」锚点，后续的续派调用已并入它。
    */
   subagentThread?: SubagentThread;
+  /**
+   * **仅渲染期派生**：这次 `subagent` / `local_subagent` 调用是同一个子对话的**续派**，
+   * 而且此刻还在执行——它不并进时间线卡，留在当前位置显示成一条「续派agent」行
+   * （同一副工具行骨架 + 实时过程入口），拿到结果后才被吸收。
+   * 带这条字段的消息不渲染时间线卡；`subagentThread` 只出现在锚点上。
+   */
+  subagentContinuation?: SubagentThread;
   /** 持久化消息的 DB row id（`messages.id`，统一 id 域）：load 时填充，
    *  压缩事件据此按 id 定位卡片插入点（取代位置数数与指纹验证）。 */
   dbId?: string;

@@ -14,6 +14,11 @@
  * 很久以后时卡片离当前位置较远，所以卡片头部带状态（等待回答 / 未回答 / 继续中），
  * 子对话一侧的「回到主对话」会直接跳到这张卡。
  *
+ * **唯一例外：还在执行中的续派不并**（`isExecuting` → 带 `subagentContinuation` 留在原位）。
+ * 主 agent 去追问 / 转答子 agent 的这段时间里，锚点卡通常已经在几屏之外——并掉它等于把
+ * 「正在等它」这唯一的活动痕迹从光标处抹掉，用户看到一片静止会以为 agent 死了。
+ * 拿到工具结果后照旧吸收，历史里仍然只有一张卡。
+ *
  * 另外在**子对话**一侧：重载后一次未回答的 `ask_parent`（只有 assistant 的 toolCalls、没有
  * 结果行）补一条占位的 tool 消息，让它能渲染成气泡、被跳转命中。
  */
@@ -269,16 +274,30 @@ export function deriveSubagentMessages(
       memberIds: members.map((m) => m.id),
       toolCallIds: members.flatMap((m) => (m.toolResult?.toolCallId ? [m.toolResult.toolCallId] : [])),
     };
+    // 锚点只在「执行中的成员与锚点属于同一回合」时才算执行中。新回合里的续派
+    // 有自己的「续派agent」行，不需要把上一回合的锚点顶成执行中——回合折叠看到
+    // 任何 `isExecuting` 就不收，那会把已折叠的旧回合整段展开。
+    const anchorInTail = indices[0] > tailFloor;
+    const executingInAnchorTurn = members.some(
+      (m, k) => m.isExecuting && (indices[k] > tailFloor) === anchorInTail,
+    );
     threads.set(first.id, thread);
     replace.set(indices[0], {
       ...first,
-      // 任一成员还在跑，整张卡就是执行中（工具分组据此不把它收进折叠组）
-      isExecuting: members.some((m) => m.isExecuting) || undefined,
+      isExecuting: executingInAnchorTurn || undefined,
       subagentThread: thread,
     });
     for (let k = 1; k < indices.length; k += 1) {
+      const member = members[k];
+      // 执行中的续派**留在原位**：它是「主 agent 正在等这个子 agent」唯一看得见的痕迹。
+      // 并进锚点等于把这件正在发生的事从当前位置抹掉——用户只看到一片静止，以为 agent 死了。
+      // 拿到结果后再吸收，历史里仍然只有一张卡。
+      if (member.isExecuting) {
+        replace.set(indices[k], { ...member, subagentContinuation: thread });
+        continue;
+      }
       drop.add(indices[k]);
-      absorbed.set(members[k].id, first.id);
+      absorbed.set(member.id, first.id);
     }
   }
 

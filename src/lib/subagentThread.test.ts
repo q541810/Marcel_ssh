@@ -114,14 +114,45 @@ describe('deriveSubagentMessages 分组', () => {
     expect(r.messages[1].subagentThread!.items.map((i) => i.kind)).toEqual(['dispatch', 'ask', 'answer', 'outcome']);
   });
 
-  it('续派调用还在执行（metadata 尚未回填）：靠 continue_id 就能并进去，整张卡为执行中', () => {
+  it('续派还在执行：不并进时间线卡，留在原位当一条「续派agent」行（跑完才吸收）', () => {
     const d1 = asked('d1');
-    const d2 = cont('d2', '答', undefined, { isExecuting: true });
-    const r = deriveSubagentMessages([user('u'), d1, d2], { tailActive: true });
+    const live = cont('d2', '答', undefined, { isExecuting: true });
+    const r = deriveSubagentMessages([user('u'), d1, text('mid'), live], { tailActive: true });
+
+    // 位置不动：执行中的续派仍是一条可见消息，锚点卡留在 d1
+    expect(r.messages.map((m) => m.id)).toEqual(['u', 'd1', 'mid', 'd2']);
+    expect(r.absorbed.has('d2')).toBe(false);
+
+    // 锚点照旧是「继续中」，时间线里也看得见这次续派
     const anchor = r.messages[1];
     expect(anchor.isExecuting).toBe(true);
     expect(anchor.subagentThread!.state).toBe('running');
     expect(anchor.subagentThread!.items[anchor.subagentThread!.items.length - 1]).toMatchObject({ kind: 'outcome', state: 'running' });
+
+    // 原位那条只带「我是续派」的标记，不画第二张时间线卡
+    const { subagentContinuation, subagentThread } = r.messages[3];
+    expect(subagentThread).toBeUndefined();
+    expect(subagentContinuation!.subConversationId).toBe(SUB);
+    expect(subagentContinuation!.title).toBe('查日志');
+
+    // 拿到结果之后照旧吸收：历史里仍然只有一张卡
+    const after = deriveSubagentMessages([user('u'), d1, text('mid'), cont('d2', '答', done)], { tailActive: false });
+    expect(after.messages.map((m) => m.id)).toEqual(['u', 'd1', 'mid']);
+    expect(after.absorbed.get('d2')).toBe('d1');
+  });
+
+  it('上一回合的锚点 + 新回合执行中的续派：锚点不变成执行中（不顶开已折叠的旧回合）', () => {
+    const d1 = asked('d1');
+    const live = cont('d2', '答', undefined, { isExecuting: true });
+    const r = deriveSubagentMessages([user('u1'), d1, text('a1'), user('u2'), live], { tailActive: true });
+
+    const anchor = r.messages[1];
+    expect(anchor.subagentThread).toBeTruthy();
+    // 锚点与执行中的续派不在同一回合：旧回合不能被标成执行中（否则折叠被顶开）
+    expect(anchor.isExecuting).toBeUndefined();
+    // 续派仍留在原位，由它自己那条「续派agent」行显示执行中
+    expect(r.messages.map((m) => m.id)).toEqual(['u1', 'd1', 'a1', 'u2', 'd2']);
+    expect(r.messages[4].subagentContinuation!.subConversationId).toBe(SUB);
   });
 
   it('结果 metadata 里的子对话 id 与参数 continue_id 重载后同样分组', () => {

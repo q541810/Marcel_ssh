@@ -188,6 +188,126 @@ describe('subagent wiring', () => {
     expect(msgs[2].isLoading).toBe(true);
   });
 
+  it('重启后第一次续派：先把子对话已落库的历史补到最前面，再接这一轮', async () => {
+    const handler = createDefaultStreamHandler();
+    seedParentTask();
+    // 重启后的样子：子对话只有元数据，消息桶是空的
+    useConversationStore.setState((s) => ({
+      conversations: {
+        ...s.conversations,
+        'sub-conv-1': {
+          id: 'sub-conv-1',
+          connectionId: 'conn-1',
+          title: 'explore nginx（子agent）',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+          parentConversationId: 'main-conv',
+        },
+      },
+      messages: {},
+    }));
+    agentLoadConversation.mockResolvedValue([
+      {
+        id: 'm1',
+        conversationId: 'sub-conv-1',
+        role: 'user',
+        content: 'look at /etc/nginx',
+        timestamp: '2026-01-01T00:00:00Z',
+        createdAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        id: 'm2',
+        conversationId: 'sub-conv-1',
+        role: 'assistant',
+        content: 'nginx listens on 80',
+        timestamp: '2026-01-01T00:00:01Z',
+        createdAt: '2026-01-01T00:00:01Z',
+      },
+    ]);
+
+    handleSubTaskStart(handler, 'parent-1', {
+      type: 'subTaskStart',
+      toolCallId: 'call-2',
+      subTaskId: 'sub-2',
+      subConversationId: 'sub-conv-1',
+      description: 'explore nginx',
+      prompt: '接着查 upstream',
+      parentConversationId: 'main-conv',
+      resumed: true,
+    });
+    // 补历史是异步读库：等一拍
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const msgs = useConversationStore.getState().messages['sub-conv-1'];
+    // 历史在前，本轮追问与骨架在后 —— 点开子对话看到的是完整上下文
+    expect(msgs.map((m) => m.content)).toEqual([
+      'look at /etc/nginx',
+      'nginx listens on 80',
+      '接着查 upstream',
+      '',
+    ]);
+    expect(agentLoadConversation).toHaveBeenCalledWith('sub-conv-1');
+  });
+
+  it('重启后第一次续派补水：同文历史只丢库里最后一条（本轮追问的副本）', async () => {
+    const handler = createDefaultStreamHandler();
+    seedParentTask();
+    // 重启后的样子：子对话只有元数据，消息桶是空的
+    useConversationStore.setState((s) => ({
+      conversations: {
+        ...s.conversations,
+        'sub-conv-1': {
+          id: 'sub-conv-1',
+          connectionId: 'conn-1',
+          title: '继续（子agent）',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+          parentConversationId: 'main-conv',
+        },
+      },
+      messages: {},
+    }));
+    const stored = [
+      ['m1', 'user', '继续'],
+      ['m2', 'assistant', '第一轮结论'],
+      ['m3', 'user', '继续'],
+      ['m4', 'assistant', '第二轮结论'],
+      // 库里刚落下的本轮追问：与实时那条重复，补水时只丢这一条
+      ['m5', 'user', '继续'],
+    ].map(([id, role, content]) => ({
+      id,
+      conversationId: 'sub-conv-1',
+      role,
+      content,
+      timestamp: '2026-01-01T00:00:00Z',
+      createdAt: '2026-01-01T00:00:00Z',
+    }));
+    agentLoadConversation.mockResolvedValue(stored);
+
+    handleSubTaskStart(handler, 'parent-1', {
+      type: 'subTaskStart',
+      toolCallId: 'call-2',
+      subTaskId: 'sub-2',
+      subConversationId: 'sub-conv-1',
+      description: '继续',
+      prompt: '继续',
+      parentConversationId: 'main-conv',
+      resumed: true,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const msgs = useConversationStore.getState().messages['sub-conv-1'];
+    // 两条同文历史都保留；库里第三条（本轮追问的副本）被丢掉，实时追问留下
+    expect(msgs.filter((m) => m.role === 'user').map((m) => m.id)).toEqual([
+      'm1',
+      'm3',
+      'sub-user-sub-2',
+    ]);
+    expect(msgs.map((m) => m.id)).not.toContain('m5');
+  });
+
   it('subTaskStart answersAsk：回答成为 ask_parent 的结果（不追加追问 user 消息），旧的「提问中」任务被收掉', () => {
     const handler = createDefaultStreamHandler();
     seedParentTask();
