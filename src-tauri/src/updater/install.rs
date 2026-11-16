@@ -49,7 +49,7 @@ pub(super) fn install_on_exit(app: &AppHandle) {
         if !inner.manual_install_requested && !auto_install_allowed(app) {
             if let Some(p) = &inner.pending {
                 log::info!(
-                    "自动更新未启用（更新方式为「关闭」或开发构建），跳过退出时自动安装 v{}（安装包保留，可在设置页手动安装）",
+                    "自动更新未启用（更新方式为「关闭」、开发构建或设置暂时不可读），跳过退出时自动安装 v{}（安装包保留，可在设置页手动安装）",
                     p.version
                 );
             }
@@ -78,9 +78,10 @@ pub(super) fn install_on_exit(app: &AppHandle) {
     spawn_installer(&pending.installer_path, restart);
 }
 
-/// 退出时是否允许自动安装。读不到设置时按「允许」处理：这是门控引入前的
-/// 行为，宁可照旧也不要静默吞掉用户期待的更新（此时 pending 来自一次
-/// 正常完成的自动下载）。
+/// 退出时是否允许自动安装。**读不到设置时按「不允许」处理**（fail-closed）：
+/// 宁可这次不装，也不能在用户已关闭自动更新的情况下、退出瞬间静默装上 ——
+/// 那是最让人措手不及、也最难挽回的一种意外。包仍留在缓存里，下次启动会恢复
+/// 成「已就绪」，用户可在设置页手动安装。
 #[cfg(windows)]
 fn auto_install_allowed(app: &AppHandle) -> bool {
     // 开发版：手动下载好的包也不许在关掉 dev 时静默覆盖本机发布版
@@ -89,13 +90,14 @@ fn auto_install_allowed(app: &AppHandle) -> bool {
         return false;
     }
     let Some(state) = app.try_state::<crate::AppState>() else {
-        return true;
+        return false;
     };
     // 先落到局部变量：直接把 match 当尾表达式会让读锁守卫活到函数末尾，
     // 与 `state` 的析构顺序冲突（E0597）。
     let mode = match state.settings.try_read() {
         Ok(settings) => settings.update_mode,
-        Err(_) => return true,
+        // 设置正在写盘/提交时读不到当前值：无法证明用户仍允许自动安装，按关闭处理。
+        Err(_) => return false,
     };
     mode != crate::config::settings::UpdateMode::Off
 }

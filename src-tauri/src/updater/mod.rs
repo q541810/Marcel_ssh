@@ -135,12 +135,20 @@ pub struct UpdaterState(Mutex<UpdaterInner>);
 
 impl UpdaterInner {
     /// 抢占下载槽位：返回 `true` 表示调用方拿到了这次下载的所有权，必须随后
-    /// 起下载任务并在收尾时复位标志；`false` = 已有下载在跑。
+    /// 起下载任务并在收尾时复位标志；`false` = 已有下载在跑，或自动下载入口的
+    /// 模式复核未通过。
+    ///
+    /// `mode_allows_auto_download`：占位时的模式复核结果。`false` 表示当前更新
+    /// 方式已不再允许自动下载（例如 `tick` 的网络请求期间用户切成了「关闭」/
+    /// 「仅提醒」），本轮直接当作取消——不占位、不下载、也不写 Failed。
     ///
     /// 「查 downloading + 置位」必须是一把锁里的原子动作，且**只能在这里做**：
     /// 拆成「先查后置」的话，两个并发入口会同时判定「没人在下载」，
     /// 各自起一个任务写同一份 `.part`。
-    fn try_reserve_download(&mut self) -> bool {
+    fn try_reserve_download(&mut self, mode_allows_auto_download: bool) -> bool {
+        if !mode_allows_auto_download {
+            return false;
+        }
         if self.downloading {
             return false;
         }
@@ -311,6 +319,24 @@ fn publish(app: &AppHandle, state: &UpdateState) {
 
 // ── 检查调度 ─────────────────────────────────────────────────────
 
+/// 当前更新方式是否允许自动下载（同步、非阻塞读）。
+///
+/// 自动入口在真正占位前的二次复核用：`tick` 开头的模式只读一次，
+/// `check_for_update()` 的网络请求期间用户可能已经切到「关闭」/「仅提醒」。
+/// 读不到设置按「不允许」处理（fail-closed）。
+fn auto_download_allowed_now(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return false;
+    };
+    // 先把值落到局部变量：直接把 match 当尾表达式会让读锁守卫活到函数末尾，
+    // 与 `state` 的析构顺序冲突（E0597）。
+    let allowed = match state.settings.try_read() {
+        Ok(settings) => settings.update_mode.auto_downloads(),
+        Err(_) => false,
+    };
+    allowed
+}
+
 /// 单次检查 + 决策 + 执行。检查失败静默（log），不打扰用户。
 async fn tick(app: &AppHandle) {
     let mode = {
@@ -382,9 +408,21 @@ async fn tick(app: &AppHandle) {
             })
         }),
         TickAction::StartDownload(rel) => {
+            // 模式在 tick 开头只读一次，`check_for_update()` 的网络请求期间用户
+            // 可能已把更新方式改成「关闭」/「仅提醒」。这里在 start_download 之前
+            // 重新读一次：不允许自动下载就把本轮当作取消（不写 Failed、不下包）。
+            let mode_now = {
+                let app_state = app.state::<crate::AppState>();
+                let settings = app_state.settings.read().await;
+                settings.update_mode
+            };
+            if !mode_now.auto_downloads() {
+                log::info!("更新检查期间更新方式已不再允许自动下载，放弃本轮下载");
+                return;
+            }
             // 起不来（已有一个下载在跑）不是错误：状态与进度归先到者所有，
             // 这里静默让路即可。
-            let _ = start_download(app, rel);
+            let _ = start_download(app, rel, false);
         }
     }
 }
@@ -658,7 +696,8 @@ pub async fn start_update_download_impl(app: &AppHandle) -> Result<(), AppError>
         ));
     }
     // 抢占失败 = 已有下载在跑：对用户而言这就是「后台下载中」，不算错误。
-    let _ = start_download(app, offer);
+    // 用户当面点的下载不受更新方式限制（见 `start_download` 的 `manual`）。
+    let _ = start_download(app, offer, true);
     Ok(())
 }
 
@@ -715,20 +754,26 @@ enum DownloadOutcome {
 }
 
 /// 启动下载任务。返回 `true` 表示本次调用**真的起了**一个下载任务；
-/// `false` = 已有下载在跑，本次让路（调用方不得当成错误）。
+/// `false` = 已有下载在跑，或自动入口的模式复核未通过，本次让路（调用方不得
+/// 当成错误）。
+///
+/// `manual`：用户当面点「后台下载」。手动动作**不受更新方式限制**（这是产品
+/// 约定）；自动入口（`manual == false`）会在占位时再复核一次当前模式，防止
+/// `tick` 读完模式、发起网络请求之后用户把更新方式切成了「关闭」/「仅提醒」。
 ///
 /// 「是否已在下载」的判定与 spawn 决策必须在**同一临界区**里：`apply_state`
 /// 的闭包返回 `None` 只表示「状态不写」，若 spawn 仍无条件执行，两个并发
 /// 调用者（`tick` 的自动下载与设置页的「后台下载」都在 `check_for_update`
 /// 之后才落 `downloading`）会各起一个任务写同一个 `.part` —— 互相截断、
 /// 抢 rename 源，带宽翻倍，还可能把已经下好的包报成失败。
-fn start_download(app: &AppHandle, offer: LatestRelease) -> bool {
+fn start_download(app: &AppHandle, offer: LatestRelease, manual: bool) -> bool {
     // 闭包只改辅助字段（downloading），状态通过返回值表达 —— 见 apply_state 说明。
     // 抢占结果用 Cell 带出闭包：闭包在锁内执行，所以「判定 + 置位 + 写状态」
     // 是一次原子动作。
     let reserved = std::cell::Cell::new(false);
     apply_state(app, |inner| {
-        if !inner.try_reserve_download() {
+        let mode_allows = manual || auto_download_allowed_now(app);
+        if !inner.try_reserve_download(mode_allows) {
             return None;
         }
         reserved.set(true);
@@ -988,6 +1033,19 @@ fn installer_file_name(version: &str) -> String {
     }
 }
 
+/// `pending.json` 里的 `file_name` 是否可信。
+///
+/// `pending.json` 与安装包同处用户可写的更新缓存目录（插件/同权限进程可改写），
+/// 恢复时若直接 `dir.join(file_name)`，一条 `../...` 就能把读写删指向目录之外。
+/// 因此要求它逐字等于由版本号在本地推导出的名字，且不含路径分隔符或 `..` ——
+/// 只比「相等」不够：版本号本身可能带这些字符，推导名会原样带上。
+fn pending_file_name_is_valid(version: &str, file_name: &str) -> bool {
+    file_name == installer_file_name(version)
+        && !file_name.contains('/')
+        && !file_name.contains('\\')
+        && !file_name.contains("..")
+}
+
 #[cfg(windows)]
 fn final_bytes_of(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("无法读取下载文件: {}", e))
@@ -1143,6 +1201,18 @@ fn cleanup_update_dir_with(
         let _ = std::fs::remove_file(&meta_path);
         return None;
     };
+
+    if !pending_file_name_is_valid(&meta.version, &meta.file_name) {
+        // 不可信的路径：只删 pending.json，**不碰磁盘上任何其他文件**。
+        // file_name 可能被改写成目录外的路径，照它去删除等于把攻击者可控的
+        // 路径交给 remove_file；这里直接放弃恢复，UI 回到 Idle。
+        log::warn!(
+            "pending.json 的 file_name 不可信（可能被改写），丢弃待装记录: {}",
+            meta.file_name
+        );
+        let _ = std::fs::remove_file(&meta_path);
+        return None;
+    }
 
     let installer_path = dir.join(&meta.file_name);
     let version_ok = semver::Version::parse(&meta.version)
@@ -1640,6 +1710,68 @@ mod tests {
         assert!(!dir.join("Marcel-SSH_1.5.0_x64-setup.exe").exists());
     }
 
+    /// `pending.json` 的 `file_name` 必须与本地推导名一致，且不含路径分隔符/`..`。
+    #[test]
+    fn pending_file_name_must_be_local_installer_name() {
+        let ok = installer_file_name("1.5.0");
+        assert!(pending_file_name_is_valid("1.5.0", &ok));
+        // 与版本号不符
+        assert!(!pending_file_name_is_valid(
+            "1.5.0",
+            "Marcel-SSH_1.6.0_x64-setup.exe"
+        ));
+        // 显式路径穿越
+        assert!(!pending_file_name_is_valid("1.5.0", "../outside.exe"));
+        assert!(!pending_file_name_is_valid(
+            "1.5.0",
+            &format!("{}.bak/..", ok)
+        ));
+        assert!(!pending_file_name_is_valid(
+            "1.5.0",
+            &format!("{}.bak\\..", ok)
+        ));
+        // 版本号本身带路径字符时推导名也会带上：不能只比「相等」
+        let hostile = installer_file_name("../evil");
+        assert!(
+            !pending_file_name_is_valid("../evil", &hostile),
+            "推导名与 file_name 相等也不够，必须排除路径分隔符/.."
+        );
+    }
+
+    /// 被改写的 `pending.json` 不得让清理逻辑按它去读写目录之外的文件：
+    /// 只删 pending.json，磁盘上的目标（这里是上级目录里的文件）必须原样保留。
+    #[test]
+    fn cleanup_rejects_pending_file_name_outside_update_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("update");
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = tmp.path().join("outside.bin");
+        write_file(&outside, b"do-not-delete");
+        let meta = PendingUpdateMeta {
+            version: "9.9.9".into(),
+            file_name: "../outside.bin".into(),
+            sha256: format!("{:x}", Sha256::digest(b"do-not-delete")),
+            signature: String::new(),
+        };
+        write_file(
+            &dir.join(PENDING_FILE_NAME),
+            serde_json::to_vec(&meta).unwrap().as_slice(),
+        );
+
+        let restored = cleanup_update_dir_with(
+            &dir,
+            &semver::Version::from_str("1.0.0").unwrap(),
+            &|_, _| true,
+        );
+
+        assert!(restored.is_none(), "不可信的 file_name 不得恢复为待装");
+        assert!(outside.exists(), "不得按 pending.json 的路径删目录外文件");
+        assert!(
+            !dir.join(PENDING_FILE_NAME).exists(),
+            "无效的 pending.json 必须删掉"
+        );
+    }
+
     /// 目录不存在 → 静默返回（首次安装/用户手动清空的场景）。
     #[test]
     fn cleanup_missing_dir_is_noop() {
@@ -1697,7 +1829,7 @@ mod tests {
             for _ in 0..4 {
                 scope.spawn(|| {
                     let mut guard = inner.lock().expect("锁不得中毒");
-                    if guard.try_reserve_download() {
+                    if guard.try_reserve_download(true) {
                         winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     }
                 });
@@ -1715,27 +1847,43 @@ mod tests {
     fn second_reservation_is_rejected_and_resets_cancel() {
         let mut inner = idle_inner();
         inner.cancel_requested = true;
-        assert!(inner.try_reserve_download(), "第一次必须拿到下载权");
-        assert!(!inner.try_reserve_download(), "已有下载时必须让路");
+        assert!(inner.try_reserve_download(true), "第一次必须拿到下载权");
+        assert!(!inner.try_reserve_download(true), "已有下载时必须让路");
         assert!(!inner.cancel_requested, "上一次的取消请求必须被复位");
 
         // 下载收尾（成功 / 失败 / 取消）复位标志 → 下一轮还能起
         inner.downloading = false;
-        assert!(inner.try_reserve_download(), "收尾后必须可以再起一次");
+        assert!(inner.try_reserve_download(true), "收尾后必须可以再起一次");
+    }
+
+    /// 自动下载入口占位前的模式复核：模式已不允许自动下载时不得占位；
+    /// 手动入口（传 `true`）照常不受更新方式限制。
+    #[test]
+    fn reservation_rejected_when_mode_no_longer_allows_auto_download() {
+        let mut inner = idle_inner();
+        assert!(
+            !inner.try_reserve_download(false),
+            "tick 网络请求期间切成 off/notify 后，自动下载不得再占位"
+        );
+        assert!(!inner.downloading, "被拒后下载槽位必须保持空闲");
+        assert!(
+            inner.try_reserve_download(true),
+            "用户当面的手动下载不受更新方式限制"
+        );
     }
 
     /// 进度更新不得让第二个任务进来（槽位只由抢占/reset 改变）。
     #[test]
     fn progress_update_does_not_allow_second_task() {
         let mut inner = idle_inner();
-        assert!(inner.try_reserve_download());
+        assert!(inner.try_reserve_download(true));
         inner.state = UpdateState::Downloading {
             version: "1.5.0".into(),
             downloaded: 1024,
             total: 2048,
         };
         assert!(
-            !inner.try_reserve_download(),
+            !inner.try_reserve_download(true),
             "进度更新不得放第二个任务进来"
         );
     }

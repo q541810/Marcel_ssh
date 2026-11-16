@@ -434,7 +434,8 @@ impl KeyStore {
         };
 
         let text = match key_material::read_key_file(&origin_path) {
-            Ok(text) => text,
+            // 这是私钥明文：包进 Zeroizing，比对完随作用域清零，别以普通 String 落回分配器。
+            Ok(text) => Zeroizing::new(text),
             Err(AppError::KeyAuth {
                 code: KeyAuthCode::KeyNotFound,
                 ..
@@ -453,7 +454,7 @@ impl KeyStore {
         // 库里那份可能是加密的：这一层拿不到它的 passphrase，所以只比公开部分
         // ——加密私钥的公开部分同样是明文，身份照样认得出来。
         let same = match (
-            public_fingerprint(&text),
+            public_fingerprint(text.as_str()),
             public_fingerprint(stored.as_str()),
         ) {
             (Some(from_origin), Some(from_store)) => from_origin == from_store,
