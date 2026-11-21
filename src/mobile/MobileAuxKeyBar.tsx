@@ -94,17 +94,11 @@ export default function MobileAuxKeyBar({
   );
 
   return (
-    <div
-      className="flex flex-shrink-0 flex-col gap-1 border-t border-edge-subtle bg-surface px-1.5 py-1.5"
-      style={{
-        // When the IME is open the content area already sits above the
-        // keyboard, so subtract --ime-bottom from the nav-bar safe-area to
-        // avoid a double gap. When the keyboard is closed --ime-bottom is 0
-        // and this collapses to the normal safe-area pad.
-        paddingBottom:
-          'max(0.375rem, calc(env(safe-area-inset-bottom, 0px) - var(--ime-bottom, 0px)))',
-      }}
-    >
+    // 底部只留 py-1.5 的视觉留白，不再叠安全区：它下面压着的低栏已经吃过一次
+    // （键盘弹起时则是键盘本体占掉）。再算一遍就成了重复扣减 —— 各机型
+    // env(safe-area-inset-bottom) 报的值不同（小米有、iQOO 报 0），于是同一份
+    // 代码在一台上贴着低栏、另一台凭空多一截缝。
+    <div className="flex flex-shrink-0 flex-col gap-1 border-t border-edge-subtle bg-surface px-1.5 py-1.5">
       {renderRow(ROW1)}
       {renderRow(ROW2)}
     </div>

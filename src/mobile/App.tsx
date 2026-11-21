@@ -52,6 +52,26 @@ export default function MobileApp() {
   const showOnboarding =
     settingsLoaded && !hasCompletedOnboarding && !onboardingDone;
 
+  // 低栏真实高度。内容区必须正好让到它上沿，否则最底下一截会被低栏盖住：
+  // 以前这里写死 `3rem`（照 min-h-12 推的），但按钮只是 min-height —— 内边距
+  // py-2 + 图标 h-5 + 文字行（手机端 text-caption 16px）+ 1px 上边框实测 55px，
+  // 差出的 7px 正好吃掉辅助键栏的底部留白，键就贴在低栏上了。这里直接量盒子，
+  // 字号 / 内边距 / 安全区怎么变都跟得上。
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  const [tabBarHeight, setTabBarHeight] = useState<string | null>(null);
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      // 取 rect 的亚像素高度：安全区带小数（如 21.3px）时，offsetHeight 的
+      // 取整会让内容区与低栏上沿差零点几像素。
+      const h = Math.round(el.getBoundingClientRect().height * 100) / 100;
+      if (h > 0) setTabBarHeight((prev) => (prev === `${h}px` ? prev : `${h}px`));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // 归档清理：与桌面 App 同一约定——等设置加载完成后只跑一次（天数来自设置，0 = 永不清理）。
   // 归档会话和「已删除的服务器」的对话都靠它到期清理，手机上不跑就永远不会清。
   const archivePurgedRef = useRef(false);
@@ -220,12 +240,12 @@ export default function MobileApp() {
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
-        // Tab buttons: min-h-12. Content bottom = max(tab, IME) so the
-        // keyboard covers the tab bar instead of lifting it. The navigation
-        // bar (3-button nav) is injected as --nav-bar-bottom from MainActivity
-        // (env(safe-area-inset-bottom) ignores it on Android WebView).
+        // 内容区底边 = max(低栏, 键盘)，键盘盖住低栏而不是把它顶起来。
+        // 低栏高度优先用实测值；首帧（还没量到）用同构算式兜底：3.4375rem
+        // = 1px 上边框 + 54px 按钮实测高度，比 min-h-12 的 3rem 多出 7px。
         ['--tab-bar-height' as string]:
-          'calc(3rem + max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px)))',
+          tabBarHeight ??
+          'calc(3.4375rem + max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px)))',
       }}
     >
       <main
@@ -266,7 +286,7 @@ export default function MobileApp() {
         </div>
 
       </main>
-      <div className="absolute inset-x-0 bottom-0">
+      <div ref={tabBarRef} className="absolute inset-x-0 bottom-0">
         <MobileTabBar activeTab={activeTab} onTabChange={setActiveTab} />
       </div>
 
