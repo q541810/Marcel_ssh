@@ -588,6 +588,31 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(bodyText()).toContain('38%');
     });
 
+    it('有字节进度时显示真实大小，没有时不显示假的 0 B', async () => {
+      await mountEnabled(
+        status({
+          tiers: { config: true, conversation: true, secret: false },
+          streams: [
+            {
+              key: 'conv',
+              tier: 'conversation',
+              pending: 0,
+              lastError: null,
+              progress: {
+                done: 2,
+                total: 5,
+                label: '正在下载对话快照',
+                bytesDone: 3 * 1024 * 1024,
+                bytesTotal: 8 * 1024 * 1024,
+              },
+            },
+          ],
+        }),
+      );
+      expect(bodyText()).toContain('正在下载对话快照 2 / 5');
+      expect(bodyText()).toContain('3.0 MB / 8.0 MB');
+    });
+
     it('设备列表显示每台设备开了哪几档', async () => {
       await mountEnabled();
       expect(document.body.querySelector('[aria-label="开启了配置、对话"]')).not.toBeNull();

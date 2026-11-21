@@ -1873,6 +1873,9 @@ export interface StreamProgress {
   done: number;
   total: number;
   label: string;
+  /** 可选：实际接收的密文字节数；旧版本 / 无总量时缺省。 */
+  bytesDone?: number;
+  bytesTotal?: number;
 }
 
 /** 一条同步流的状态（`sync_status` 的 `streams`）。 */

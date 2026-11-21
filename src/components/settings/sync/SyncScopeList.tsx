@@ -428,6 +428,11 @@ export function ScopeList({ variant, status }: { variant: SyncVariant; status: S
                   <div className="flex items-center justify-between gap-2 text-meta text-indigo-300">
                     <span className="min-w-0 truncate">
                       {progress.label || '正在同步对话'} {progress.done} / {progress.total}
+                      {progress.bytesTotal !== undefined && progress.bytesDone !== undefined && (
+                        <span className="text-fg-tertiary">
+                          {' '}· {formatSize(progress.bytesDone)} / {formatSize(progress.bytesTotal)}
+                        </span>
+                      )}
                     </span>
                     <span className="flex-shrink-0 tabular-nums text-fg-tertiary">{percent}%</span>
                   </div>
