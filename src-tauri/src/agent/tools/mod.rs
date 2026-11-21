@@ -207,7 +207,9 @@ impl ToolContext {
                 ticket.task_id = self.task_id.clone();
             }
             if ticket.owner_conversation_id.is_none() {
-                ticket.owner_conversation_id = self.owner_conversation_id.clone()
+                ticket.owner_conversation_id = self
+                    .owner_conversation_id
+                    .clone()
                     .or_else(|| self.conversation_id.clone());
             }
         }
@@ -357,7 +359,10 @@ impl ToolContext {
             // 不可能到达：无 manager 时调用方走 ssh 回退分支
             AppError::Agent("command_exec manager not configured".into())
         })?;
-        Self::map_finished(mgr.submit(&self.app_handle, self.prepare_remote_ticket(ticket)).await)
+        Self::map_finished(
+            mgr.submit(&self.app_handle, self.prepare_remote_ticket(ticket))
+                .await,
+        )
     }
 
     /// 前台命令的结果映射（`submit_full` 与可转后台的路径共用）。
@@ -409,8 +414,12 @@ impl ToolContext {
             .command_exec
             .as_ref()
             .ok_or_else(|| AppError::Agent("command_exec manager not configured".into()))?;
-        mgr.submit_background(Some(&self.app_handle), self.prepare_remote_ticket(ticket), description)
-            .await
+        mgr.submit_background(
+            Some(&self.app_handle),
+            self.prepare_remote_ticket(ticket),
+            description,
+        )
+        .await
     }
 
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.
@@ -423,7 +432,10 @@ impl ToolContext {
                 crate::command_exec::CommandSource::Agent,
             )
             .timeout(Duration::from_secs(120));
-            match mgr.submit(&self.app_handle, self.prepare_remote_ticket(ticket)).await {
+            match mgr
+                .submit(&self.app_handle, self.prepare_remote_ticket(ticket))
+                .await
+            {
                 crate::command_exec::SubmitOutcome::Completed { output, .. } => return Ok(output),
                 crate::command_exec::SubmitOutcome::TimedOut { .. } => {
                     return Err(AppError::Ssh(format!(
@@ -431,12 +443,12 @@ impl ToolContext {
                         crate::command_exec::executor::timeout_preview(command)
                     )))
                 }
-                crate::command_exec::SubmitOutcome::Cancelled { reason: crate::command_exec::CancelReason::Disconnected } => {
-                    return Err(AppError::Ssh("命令已取消（会话断开）".into()))
-                }
+                crate::command_exec::SubmitOutcome::Cancelled {
+                    reason: crate::command_exec::CancelReason::Disconnected,
+                } => return Err(AppError::Ssh("命令已取消（会话断开）".into())),
                 crate::command_exec::SubmitOutcome::Cancelled { .. } => {
                     return Err(AppError::Cancelled(
-                        "已取消命令并关闭通道；远端已执行的操作不会回退".into()
+                        "已取消命令并关闭通道；远端已执行的操作不会回退".into(),
                     ))
                 }
                 crate::command_exec::SubmitOutcome::Failed { error } => return Err(error),
@@ -548,7 +560,11 @@ impl ToolContext {
     ) -> Result<ExecTicketOutcome, AppError> {
         use crate::command_exec::{DetachableOutcome, SubmitOutcome};
         match mgr
-            .submit_detachable(Some(&self.app_handle), self.prepare_remote_ticket(ticket), description)
+            .submit_detachable(
+                Some(&self.app_handle),
+                self.prepare_remote_ticket(ticket),
+                description,
+            )
             .await
         {
             DetachableOutcome::Detached { job, output } => Ok(ExecTicketOutcome {

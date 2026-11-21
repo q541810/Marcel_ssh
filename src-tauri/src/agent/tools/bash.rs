@@ -110,7 +110,12 @@ impl BashTool {
             }))));
         }
 
-        log::info!("bash: disposition={:?} cmd={} bg={}", assessment.disposition, command, run_in_background);
+        log::info!(
+            "bash: disposition={:?} cmd={} bg={}",
+            assessment.disposition,
+            command,
+            run_in_background
+        );
 
         if run_in_background {
             // 后台作业走统一命令执行体系：立即返回 job_id，输出沉淀进
@@ -133,7 +138,6 @@ impl BashTool {
             let job_info = ctx
                 .submit_background(ticket, Some(description.clone()))
                 .await?;
-
 
             let summary = format!("$ {} (Job ID: {})", command, job_info.job_id);
             let output = format!(
@@ -178,7 +182,6 @@ impl BashTool {
         }
         // 超时不掐断：到点还没结束就把同一个进程原地转成后台作业（见 `exec_ticket`）。
         let exec_result = ctx.exec_ticket(ticket, Some(description.clone())).await;
-
 
         match exec_result {
             Ok(shaped) => {
@@ -391,11 +394,9 @@ impl AgentTool for BashTool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     // ── 必填参数：命令说明（会被审批弹窗显示给用户） ──
 
@@ -479,5 +480,4 @@ mod tests {
         let from_execute = missing_required_argument(&params).expect("应当判定为缺失");
         assert_eq!(from_preflight, from_execute);
     }
-
 }

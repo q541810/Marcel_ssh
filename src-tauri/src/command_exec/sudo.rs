@@ -408,7 +408,9 @@ async fn answer(
         let mut password = if rejected {
             conn.sudo_passwords.lock().remove(&request.username);
             None
-        } else { conn.sudo_passwords.lock().get(&request.username).cloned() };
+        } else {
+            conn.sudo_passwords.lock().get(&request.username).cloned()
+        };
         if password.is_none() && !rejected {
             // 用户亲手输入过的那份优先：它是专门为 sudo 问的，比借来的登录密码准。
             password = stored_password(conn, &request.username);
@@ -417,10 +419,19 @@ async fn answer(
             if let Some(id) = &conn.connection_id {
                 // A saved connection can be edited while its old session is still open.
                 let state = app.state::<crate::AppState>();
-                let same_target = state.connection_store.read().await.get_by_id(id)
-                    .is_some_and(|c| c.host == conn.host && c.port == conn.port && c.username == conn.username);
+                let same_target = state
+                    .connection_store
+                    .read()
+                    .await
+                    .get_by_id(id)
+                    .is_some_and(|c| {
+                        c.host == conn.host && c.port == conn.port && c.username == conn.username
+                    });
                 if same_target {
-                    password = keychain::get(&SecretSlot::SshPassword(id.clone())).ok().flatten().map(Zeroizing::new);
+                    password = keychain::get(&SecretSlot::SshPassword(id.clone()))
+                        .ok()
+                        .flatten()
+                        .map(Zeroizing::new);
                 }
             }
         }
@@ -443,8 +454,16 @@ async fn answer(
             };
             typed = password.is_some();
         }
-        let Some(password) = password else { return Err(AppError::Cancelled("已取消 sudo 密码输入；命令不会自动重试".into())); };
-        if *stop.borrow() || !ssh.is_generation_active(&ticket.session_id, conn.generation).await {
+        let Some(password) = password else {
+            return Err(AppError::Cancelled(
+                "已取消 sudo 密码输入；命令不会自动重试".into(),
+            ));
+        };
+        if *stop.borrow()
+            || !ssh
+                .is_generation_active(&ticket.session_id, conn.generation)
+                .await
+        {
             return Err(AppError::Cancelled("SSH 连接已变化，未发送密码".into()));
         }
         let mut bytes = Zeroizing::new(password.as_bytes().to_vec());
@@ -454,9 +473,12 @@ async fn answer(
             // 只记用户亲手输入的那份；从登录密码借来的不复制（它自己就在 SshPassword 里）。
             remember_password(conn, &request.username, &password);
         }
-        conn.sudo_passwords.lock().insert(request.username.clone(), password);
+        conn.sudo_passwords
+            .lock()
+            .insert(request.username.clone(), password);
         Ok(())
-    }.await;
+    }
+    .await;
     let _ = reply.eof().await;
     // Let cat flush the pipe before closing the channel; never read password data back.
     // On cancellation there are no bytes to flush. Report it before sudo's

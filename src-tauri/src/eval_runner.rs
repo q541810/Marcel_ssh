@@ -318,7 +318,11 @@ fn build_settings(job: &EvalJob) -> Result<AppSettings, String> {
 
 /// 与 `AppState::new` 同构、但完全隔离的宿主状态：不读用户配置目录、不碰密钥链、
 /// 不初始化全局图片/私钥目录。远端执行器是真的（经 SSH），本机执行器是拒绝替身。
-async fn eval_state(dir: &Path, settings: AppSettings, known_hosts: Arc<KnownHostsStore>) -> AppState {
+async fn eval_state(
+    dir: &Path,
+    settings: AppSettings,
+    known_hosts: Arc<KnownHostsStore>,
+) -> AppState {
     let ssh_manager = SshManager::with_known_hosts(known_hosts.clone());
     let command_exec = CommandExecutionManager::new(
         ssh_manager.clone(),
@@ -346,9 +350,8 @@ async fn eval_state(dir: &Path, settings: AppSettings, known_hosts: Arc<KnownHos
     let mcp_store = JsonStore::new(dir, crate::mcp::store::McpServerStore::new(), None);
     let mcp_manager = Arc::new(crate::mcp::manager::McpManager::new());
     let data_changes = DataChangeBus::new();
-    let conversation_db = Arc::new(
-        ConversationDb::new(DataSourceId::Conversations.path(dir)).expect("eval SQLite"),
-    );
+    let conversation_db =
+        Arc::new(ConversationDb::new(DataSourceId::Conversations.path(dir)).expect("eval SQLite"));
     let sync = crate::sync::SyncManager::new(crate::sync::SyncWiring {
         config_dir: dir.to_path_buf(),
         stores: crate::sync::sources::SourceStores {
@@ -429,7 +432,10 @@ fn respond(
     started: Instant,
     seen: &mut HashSet<String>,
 ) -> Result<Option<InteractionRecord>, String> {
-    let interaction_id = payload["interactionId"].as_str().unwrap_or_default().to_string();
+    let interaction_id = payload["interactionId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     if !seen.insert(interaction_id.clone()) {
         return Ok(None);
     }
@@ -536,7 +542,12 @@ fn collect(state: &AppState, main_conversation_id: &str, result: &mut EvalResult
                     result.main_rounds += 1;
                 }
                 result.total_rounds += 1;
-                for call in tool_calls.as_ref().and_then(Value::as_array).into_iter().flatten() {
+                for call in tool_calls
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     let name = call["name"].as_str().unwrap_or_default().to_string();
                     let outcome = call["id"].as_str().and_then(|id| outcomes.get(id));
                     result.tool_calls.push(ToolCallRecord {
@@ -551,7 +562,10 @@ fn collect(state: &AppState, main_conversation_id: &str, result: &mut EvalResult
                     });
                 }
             }
-            if row.content.starts_with(crate::agent::conversation_persister::COMPACTION_CARD_PREFIX) {
+            if row
+                .content
+                .starts_with(crate::agent::conversation_persister::COMPACTION_CARD_PREFIX)
+            {
                 result.compactions += 1;
             }
             messages.push(TranscriptMessage {
@@ -586,10 +600,9 @@ fn write_result(path: &Path, result: &EvalResult) {
 #[ignore = "评测入口：由 evals/server.mjs 带 MARCEL_EVAL_JOB 调起"]
 fn run_job() {
     let job_path = std::env::var("MARCEL_EVAL_JOB").expect("MARCEL_EVAL_JOB 未设置");
-    let job: EvalJob = serde_json::from_str(
-        &std::fs::read_to_string(&job_path).expect("读取 job 文件"),
-    )
-    .expect("解析 job 文件");
+    let job: EvalJob =
+        serde_json::from_str(&std::fs::read_to_string(&job_path).expect("读取 job 文件"))
+            .expect("解析 job 文件");
     let result_path = job.result_path.clone();
     let mut result = EvalResult::default();
     let settings = match build_settings(&job) {
@@ -779,7 +792,10 @@ fn run_job() {
                 result.status = if timed_out {
                     "timeout".into()
                 } else {
-                    match task.as_ref().map(|t| format!("{:?}", t.status).to_lowercase()) {
+                    match task
+                        .as_ref()
+                        .map(|t| format!("{:?}", t.status).to_lowercase())
+                    {
                         Some(s) => s,
                         None => "failed".into(),
                     }
@@ -857,7 +873,10 @@ mod tests {
             pattern: "API".into(),
             answer: "改 api 那个".into(),
         }];
-        assert_eq!(pick_answer(&rules, None, "改哪个 api 服务？"), "改 api 那个");
+        assert_eq!(
+            pick_answer(&rules, None, "改哪个 api 服务？"),
+            "改 api 那个"
+        );
         assert_eq!(pick_answer(&rules, Some("随意"), "装到哪个目录？"), "随意");
         assert_eq!(pick_answer(&rules, None, "装到哪？"), "按你的判断来就行。");
     }

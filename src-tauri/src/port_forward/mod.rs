@@ -211,9 +211,9 @@ fn info_of(entry: &Entry, online: bool) -> ForwardInfo {
 async fn bind_local(requested: Option<u16>, remote_port: u16) -> Result<TcpListener, AppError> {
     let loopback = |port: u16| SocketAddr::from(([127, 0, 0, 1], port));
     match requested {
-        Some(port) => TcpListener::bind(loopback(port)).await.map_err(|e| {
-            AppError::Ssh(format!("本机端口 {} 无法使用：{}", port, e))
-        }),
+        Some(port) => TcpListener::bind(loopback(port))
+            .await
+            .map_err(|e| AppError::Ssh(format!("本机端口 {} 无法使用：{}", port, e))),
         None => match TcpListener::bind(loopback(remote_port)).await {
             Ok(l) => Ok(l),
             // 被占用 / 低位端口没权限：换一个系统分配的，界面上会如实显示换成了几号

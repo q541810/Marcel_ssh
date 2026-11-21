@@ -202,9 +202,7 @@ impl SecretSlot {
         match self {
             SecretSlot::LegacyLlmApiKey => Cow::Borrowed("llm_api_key"),
             SecretSlot::LlmChannel(id) => Cow::Owned(format!("llm_channel_{}", id)),
-            SecretSlot::LlmChannelHeaders(id) => {
-                Cow::Owned(format!("llm_channel_headers_{}", id))
-            }
+            SecretSlot::LlmChannelHeaders(id) => Cow::Owned(format!("llm_channel_headers_{}", id)),
             SecretSlot::WebSearchApiKey => Cow::Borrowed("web_search_api_key"),
             SecretSlot::DeepseekToolsApiKey => Cow::Borrowed("deepseek_tools_api_key"),
             SecretSlot::CustomSearchApiKey => Cow::Borrowed("custom_search_api_key"),
@@ -857,8 +855,14 @@ mod tests {
             channel_id_of_account(&format!("llm_channel_{}", U1.to_uppercase())),
             None
         );
-        assert_eq!(channel_id_of_account(&format!("llm_channel_{}", &U1[1..])), None);
-        assert_eq!(channel_id_of_account("pk:27164dff-fef7-4a58-9cec-ad2cf3948bd6"), None);
+        assert_eq!(
+            channel_id_of_account(&format!("llm_channel_{}", &U1[1..])),
+            None
+        );
+        assert_eq!(
+            channel_id_of_account("pk:27164dff-fef7-4a58-9cec-ad2cf3948bd6"),
+            None
+        );
     }
 
     #[test]

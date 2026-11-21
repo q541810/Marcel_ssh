@@ -137,7 +137,11 @@ pub async fn config_get_llm_channel_headers(
         Ok(map) => Ok(map),
         Err(e) => {
             // 坏数据不该让设置页打不开：记一条 warn，当成「没有自定义头」。
-            log::warn!("渠道 {} 的自定义请求头无法解析，按空处理: {}", channel_id, e);
+            log::warn!(
+                "渠道 {} 的自定义请求头无法解析，按空处理: {}",
+                channel_id,
+                e
+            );
             Ok(Default::default())
         }
     }
