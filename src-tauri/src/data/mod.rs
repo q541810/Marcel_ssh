@@ -343,7 +343,7 @@ impl DataSourceId {
     pub const fn sync_trigger(self) -> bool {
         match self {
             // 密钥链变了：机密流（三期）要捕获。它不是经由 JSON 写入口广播的，所以不靠 sync_key。
-            DataSourceId::Secrets => true,
+            DataSourceId::Secrets | DataSourceId::Conversations | DataSourceId::Memory => true,
             other => other.sync_key().is_some(),
         }
     }

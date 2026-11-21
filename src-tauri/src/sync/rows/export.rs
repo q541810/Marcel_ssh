@@ -26,6 +26,8 @@ pub struct ExportOptions {
     pub db: Option<&'static str>,
     /// 单段上限（0 = 不切）。调用方通常传 [`super::DEFAULT_MAX_SEGMENT_BYTES`]。
     pub batch_bytes: usize,
+    /// 完整检查点保留墓碑；首次加入保留历史零时钟语义。
+    pub include_tombstones: bool,
 }
 
 impl ExportOptions {
@@ -34,11 +36,17 @@ impl ExportOptions {
             stream,
             db: None,
             batch_bytes,
+            include_tombstones: false,
         }
     }
 
     pub fn with_db(mut self, db: &'static str) -> Self {
         self.db = Some(db);
+        self
+    }
+
+    pub fn checkpoint(mut self) -> Self {
+        self.include_tombstones = true;
         self
     }
 }
@@ -81,11 +89,105 @@ pub fn export_all_with(
     );
 
     // 每张表流式读（`query` 返回游标，行是逐条取的），不 collect 整表。
-    for table in tables {
-        let columns: Vec<&str> = table.shared_columns().collect();
-        export_table(conn, table, &columns, device, aliases, &mut builder)?;
+    let mut sink = |op| {
+        builder.push(op);
+        Ok(())
+    };
+    if options.include_tombstones {
+        for_each_checkpoint_op(conn, tables, device, aliases, &mut sink)?;
+    } else {
+        for table in tables {
+            let columns: Vec<&str> = table.shared_columns().collect();
+            export_table(conn, table, &columns, device, aliases, &mut sink, false)?;
+        }
     }
     Ok(builder.finish())
+}
+
+/// 逐行读取完整检查点，不经过中间的「段 JSON → 再解析成行」往返。
+///
+/// 调用方可以在回调里归组、打包，但**不能在回调里再次访问同一个数据库连接**：
+/// 这里正持有只读游标，业务句柄通常也用同一把连接锁。
+pub fn for_each_checkpoint_op(
+    conn: &Connection,
+    tables: &'static [RowTable],
+    device: &str,
+    aliases: &AliasMap,
+    sink: &mut dyn FnMut(RowOp) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    for table in tables {
+        let columns: Vec<&str> = table.shared_columns().collect();
+        export_table(conn, table, &columns, device, aliases, sink, true)?;
+    }
+    export_unregistered_ops(conn, tables, sink)
+}
+
+/// 老设备还存着新版本表的待重放 op。检查点不能只因本版本不认识表名就把它抹掉。
+fn export_unregistered_ops(
+    conn: &Connection,
+    tables: &'static [RowTable],
+    sink: &mut dyn FnMut(RowOp) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT tbl, row_id, hlc, deleted, extra_json FROM sync_row_clock
+             ORDER BY tbl, row_id",
+        )
+        .map_err(|e| sql_err("准备导出未知同步行失败", e))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|e| sql_err("导出未知同步行失败", e))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| sql_err("导出未知同步行失败", e))?
+    {
+        let table: String = row
+            .get(0)
+            .map_err(|e| sql_err("读取未知同步行失败", e))?;
+        let known = tables.iter().any(|t| t.name == table);
+        let extra: Option<String> = row
+            .get(4)
+            .map_err(|e| sql_err("读取未知同步行失败", e))?;
+        let pending = extra
+            .and_then(|text| {
+                serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&text).ok()
+            })
+            .and_then(|mut map| map.remove(super::capture::UNKNOWN_OP_KEY))
+            .map(serde_json::from_value::<RowOp>)
+            .transpose()
+            .map_err(|e| AppError::Other(format!("导出待重放同步行失败：{e}")))?;
+        if let Some(op) = pending {
+            // 已知表也可能有「等父行」的子行；它和存活行一起保留，重放是幂等的。
+            sink(op)?;
+            continue;
+        }
+        if known {
+            continue;
+        }
+        let deleted: i64 = row
+            .get(3)
+            .map_err(|e| sql_err("读取未知同步行失败", e))?;
+        if deleted == 0 {
+            // 没有原始 op 就没有可恢复的列；不伪造一行空业务数据。
+            continue;
+        }
+        let id: String = row
+            .get(1)
+            .map_err(|e| sql_err("读取未知同步行失败", e))?;
+        let hlc: String = row
+            .get(2)
+            .map_err(|e| sql_err("读取未知同步行失败", e))?;
+        sink(RowOp {
+            table,
+            id,
+            hlc: serde_json::from_str(&hlc)
+                .map_err(|e| AppError::Other(format!("导出行时钟损坏：{e}")))?,
+            cols: None,
+            extra: None,
+            del: true,
+        })?;
+    }
+    Ok(())
 }
 
 fn export_table(
@@ -94,7 +196,8 @@ fn export_table(
     columns: &[&str],
     device: &str,
     aliases: &AliasMap,
-    builder: &mut SegmentBuilder,
+    sink: &mut dyn FnMut(RowOp) -> Result<(), AppError>,
+    include_tombstones: bool,
 ) -> Result<(), AppError> {
     // 左连行时钟：一次查询就把「本机不认识的列」与「这一行自己的时钟」带出来，
     // 免得每行再点查两次（十万条消息就是二十万次查询）。
@@ -155,21 +258,65 @@ fn export_table(
             .collect();
         // 占位时钟里的「待重放 op」不是一列数据。
         extra.remove(super::capture::UNKNOWN_OP_KEY);
+        // 首次加入沿用旧的零时钟语义；完整检查点保留真实墓碑，不能用「空存活行」冒充。
+        let deleted = deleted.unwrap_or(0) != 0;
         let hlc = match hlc_text {
-            // 没有时钟 / 时钟是墓碑：用零时钟（加入同步语义，输给任何真实改动）。
-            Some(t) if deleted.unwrap_or(0) == 0 => serde_json::from_str(&t)
+            Some(t) if !deleted || include_tombstones => serde_json::from_str(&t)
                 .map_err(|e| AppError::Other(format!("导出行时钟损坏：{e}")))?,
             _ => Hlc::zero_for(device),
         };
+        let del = include_tombstones && deleted;
 
-        builder.push(RowOp {
+        sink(RowOp {
             table: table.name.to_string(),
             id,
             hlc,
-            cols: Some(cols),
-            extra: if extra.is_empty() { None } else { Some(extra) },
-            del: false,
-        });
+            cols: if del { None } else { Some(cols) },
+            extra: if del || extra.is_empty() {
+                None
+            } else {
+                Some(extra)
+            },
+            del,
+        })?;
+    }
+
+    if include_tombstones {
+        // 业务表已级联删除子行，墓碑只存在时钟表里。只补「表里没有对应行」的项。
+        let sql = format!(
+            "SELECT row_id, hlc FROM sync_row_clock
+             WHERE tbl = ?1 AND deleted = 1
+               AND NOT EXISTS (SELECT 1 FROM {table} AS t WHERE t.{pk} = sync_row_clock.row_id)
+             ORDER BY row_id",
+            table = quote_ident(table.name),
+            pk = quote_ident(table.pk),
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| sql_err("准备导出同步墓碑失败", e))?;
+        let mut rows = stmt
+            .query([table.name])
+            .map_err(|e| sql_err("导出同步墓碑失败", e))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| sql_err("导出同步墓碑失败", e))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|e| sql_err("读取同步墓碑失败", e))?;
+            let hlc: String = row
+                .get(1)
+                .map_err(|e| sql_err("读取同步墓碑失败", e))?;
+            sink(RowOp {
+                table: table.name.to_string(),
+                id,
+                hlc: serde_json::from_str(&hlc)
+                    .map_err(|e| AppError::Other(format!("导出行时钟损坏：{e}")))?,
+                cols: None,
+                extra: None,
+                del: true,
+            })?;
+        }
     }
     Ok(())
 }

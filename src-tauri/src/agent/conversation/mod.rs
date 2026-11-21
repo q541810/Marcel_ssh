@@ -389,6 +389,18 @@ impl ConversationDb {
         )
         .map_err(|e| ConversationError::SchemaError { source: e })?;
 
+        // 图片 blob 的待上传队列很小：只为「未登记且有本地附件」的消息建部分索引，
+        // 空闲同步不再扫描整张消息表。所有旧消息仍由同一个查询覆盖，不需要额外水位。
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_pending_sync_images
+             ON messages(synced_images_json)
+             WHERE synced_images_json IS NULL
+               AND image_paths_json IS NOT NULL
+               AND image_paths_json != '[]'",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
+
         log::info!("Conversation database initialized at: {}", path_str);
 
         // 行同步的表清单（T1 的 `rows::install`）：建 changelog / 时钟表 + 连接级触发器。
@@ -396,7 +408,11 @@ impl ConversationDb {
         // **失败只记日志**：同步本身不是应用启动的前提，但触发器装不上意味着这台设备的
         // 对话改动永远无法同步出去——必须留一条显眼的日志，让「同步没反应」有据可查。
         // 每次打开连接都要装：触发器是 TEMP 的（要引用 temp.sync_applying），随连接消失。
-        if let Err(e) = crate::sync::rows::install(&conn, crate::sync::streams::CONV_TABLES) {
+        if let Err(e) = crate::sync::rows::install_for_source(
+            &conn,
+            crate::sync::streams::CONV_TABLES,
+            Some(crate::data::DataSourceId::Conversations),
+        ) {
             log::error!("对话库安装同步触发器失败（本机的对话改动将无法同步出去）: {e}");
         }
 
@@ -490,6 +506,23 @@ impl ConversationDb {
         crate::sync::rows::apply(&conn, crate::sync::streams::CONV_TABLES, ops_json, aliases)
     }
 
+    /// 整份检查点在同一库事务内合并，失败不会暴露半个库。
+    pub fn sync_apply_checkpoint(
+        &self,
+        ops: &[crate::sync::rows::RowOp],
+        aliases: &crate::sync::rows::AliasMap,
+    ) -> Result<crate::sync::rows::RowApplied, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::in_savepoint(&conn, "sync_conv_checkpoint", || {
+            crate::sync::rows::apply_ops(
+                &conn,
+                crate::sync::streams::CONV_TABLES,
+                ops,
+                aliases,
+            )
+        })
+    }
+
     /// 全量导出（首次开启对话档 / 启动时补齐）。
     pub fn sync_export_all(
         &self,
@@ -508,6 +541,23 @@ impl ConversationDb {
                 batch_bytes,
             )
             .with_db(CONV_DB_NAME),
+        )
+    }
+
+    /// 完整检查点逐行导出：保留墓碑与未知数据，不经过中间段 JSON。
+    pub fn sync_for_each_checkpoint_op(
+        &self,
+        device: &str,
+        aliases: &crate::sync::rows::AliasMap,
+        sink: &mut dyn FnMut(crate::sync::rows::RowOp) -> Result<(), crate::error::AppError>,
+    ) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::for_each_checkpoint_op(
+            &conn,
+            crate::sync::streams::CONV_TABLES,
+            device,
+            aliases,
+            sink,
         )
     }
 

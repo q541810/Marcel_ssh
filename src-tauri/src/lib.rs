@@ -29,11 +29,11 @@ pub mod ssh;
 pub mod sync;
 // 跨读取块的 UTF-8 解码器：终端 / 远端命令通道 / 本机命令管道共用，
 // 避免多字节字符被包边界切开后变成 U+FFFD。
-pub(crate) mod utf8_carry;
-pub mod util;
 /// 评测入口（只在测试编译里存在），由 `evals/server.mjs` 调起，见模块注释。
 #[cfg(test)]
 mod eval_runner;
+pub(crate) mod utf8_carry;
+pub mod util;
 // 无感更新器：桌面 Windows 走 NSIS「退出即静默安装」，Android 走 APK
 // 「后台下载 + 一键拉起系统安装器」，其他桌面平台只检查提示。
 pub mod updater;
@@ -235,6 +235,7 @@ impl AppState {
         // 密钥链没有变更通知：把总线上报口装上，机密流才知道「本机 Key 变了」。
         // 只发「机密变了」、不带槽位也不带值——订阅方自己做全量比对。
         crate::config::keychain::install_change_bus(data_changes.clone());
+        crate::sync::rows::install_change_bus(data_changes.clone());
 
         // Pre-compute file paths so each `spawn_blocking` closure can own its
         // own copy without borrowing `config_dir`.

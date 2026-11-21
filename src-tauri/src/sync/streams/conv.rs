@@ -39,6 +39,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::{StreamExt, TryStreamExt};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,11 +54,12 @@ use super::super::rows::{
 use super::super::store::StreamState;
 use super::super::types::HeldSummary;
 use super::{
-    StreamApplied, StreamDriver, StreamDriverContext, StreamDriverFactory, StreamFileKind,
-    StreamName, StreamProgress, StreamRemote, StreamSnapshot, StreamSnapshotLayout,
+    SnapshotApplied, SnapshotManifest, SnapshotManifestPart, SnapshotPublication, StreamApplied,
+    StreamDriver, StreamDriverContext, StreamDriverFactory, StreamFileKind, StreamName,
+    StreamProgress, StreamRemote, StreamSnapshot, StreamSnapshotLayout,
 };
 use crate::agent::image_store;
-use crate::config::persist::atomic_write;
+use crate::config::persist::{atomic_write, atomic_write_bytes};
 use crate::data::DataSourceId;
 use crate::error::AppError;
 
@@ -303,7 +305,15 @@ pub trait ConvDbHandle: Send + Sync {
     ) -> Result<CapturedRows, AppError>;
     fn ack(&self, watermark: i64) -> Result<(), AppError>;
     fn apply(&self, ops: &[u8], aliases: &AliasMap) -> Result<RowApplied, AppError>;
+    fn apply_ops(&self, ops: &[RowOp], aliases: &AliasMap) -> Result<RowApplied, AppError>;
     fn export_all(&self, device: &str, aliases: &AliasMap) -> Result<Vec<Vec<u8>>, AppError>;
+    /// 检查点直接逐行打包，普通首次加入保持零时钟存活行语义。
+    fn for_each_checkpoint_op(
+        &self,
+        device: &str,
+        aliases: &AliasMap,
+        sink: &mut dyn FnMut(RowOp) -> Result<(), AppError>,
+    ) -> Result<(), AppError>;
     fn pending_count(&self) -> Result<usize, AppError>;
 
     /// 还没登记图片 blob 的消息：`(message_id, [本地相对路径])`。
@@ -396,6 +406,10 @@ impl ConvDbHandle for ConversationHandle {
         self.db.sync_apply(ops, aliases)
     }
 
+    fn apply_ops(&self, ops: &[RowOp], aliases: &AliasMap) -> Result<RowApplied, AppError> {
+        self.db.sync_apply_checkpoint(ops, aliases)
+    }
+
     fn export_all(&self, device: &str, aliases: &AliasMap) -> Result<Vec<Vec<u8>>, AppError> {
         self.db
             .sync_export_all(device, aliases, DEFAULT_MAX_SEGMENT_BYTES)
@@ -403,6 +417,15 @@ impl ConvDbHandle for ConversationHandle {
 
     fn pending_count(&self) -> Result<usize, AppError> {
         self.db.sync_pending_count()
+    }
+
+    fn for_each_checkpoint_op(
+        &self,
+        device: &str,
+        aliases: &AliasMap,
+        sink: &mut dyn FnMut(RowOp) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        self.db.sync_for_each_checkpoint_op(device, aliases, sink)
     }
 
     fn row_conversation(&self, table: &str, row_id: &str) -> Option<String> {
@@ -591,6 +614,18 @@ struct PersistedConvState {
     release_gated: bool,
     /// 用户点了「撤销」：这些墓碑只留在本机，不再同步。
     drop_gated: bool,
+    /// 正在接收的完整快照。包暂存在 SyncState 下，完整后才改业务库。
+    resume: BTreeMap<String, SnapshotResume>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotResume {
+    peer: String,
+    seq: u64,
+    manifest_sha256: String,
+    manifest: SnapshotManifest,
+    ready_parts: BTreeSet<u32>,
 }
 
 impl Default for PersistedConvState {
@@ -603,6 +638,7 @@ impl Default for PersistedConvState {
             gated: Vec::new(),
             release_gated: false,
             drop_gated: false,
+            resume: BTreeMap::new(),
         }
     }
 }
@@ -626,6 +662,9 @@ fn load_pending(path: &std::path::Path) -> PersistedConvState {
 fn save_pending(path: &std::path::Path, state: &PersistedConvState) -> Result<(), AppError> {
     let text = serde_json::to_string(state)
         .map_err(|e| AppError::Other(format!("序列化对话同步状态失败：{e}")))?;
+    if std::fs::read_to_string(path).ok().as_deref() == Some(text.as_str()) {
+        return Ok(());
+    }
     atomic_write(path, &text).map_err(|e| AppError::Other(format!("写入对话同步状态失败：{e}")))
 }
 
@@ -1033,64 +1072,64 @@ struct SnapshotUnit {
 }
 
 impl ConvStreamDriver {
+    fn snapshot_conversation_of(op: &RowOp) -> Option<String> {
+        if op.table == "conversations" {
+            return Some(op.id.clone());
+        }
+        let field = conversation_field(&op.table)?;
+        for map in [&op.cols, &op.extra].into_iter().flatten() {
+            if let Some(Value::String(value)) = map.get(field) {
+                if !value.is_empty() {
+                    return Some(value.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// 按会话聚合出全部分包（内部实现）。
     fn build_snapshot(&self) -> Result<Option<StreamSnapshot>, AppError> {
         let mut units: BTreeMap<(String, String), SnapshotUnit> = BTreeMap::new();
         for db in &self.databases {
-            let segments = db.handle.export_all(&self.device, &self.aliases)?;
-            for segment in segments {
-                let parsed = rows::parse_segment(&segment)?;
-                let from_segment = parsed.db_or_default().to_string();
-                if from_segment != db.name {
-                    // 句柄导出的段必须标着它自己的库；标错会让对端把行写进另一个库。
-                    return Err(AppError::Other(format!(
-                        "同步：{} 导出的快照段标成了另一个库（{}）",
-                        db.name, from_segment
-                    )));
-                }
-                for op in parsed.ops {
-                    let Some(conversation) = self.conversation_of(db, &op) else {
-                        continue;
-                    };
-                    let bytes = serde_json::to_vec(&op)
-                        .map_err(|e| AppError::Other(format!("序列化快照行失败：{e}")))?
-                        .len()
-                        + 1;
-                    let entry = units
-                        .entry((db.name.to_string(), conversation.clone()))
-                        .or_insert_with(|| SnapshotUnit {
-                            db: db.name,
-                            conversation,
-                            updated_at: String::new(),
-                            ops: Vec::new(),
-                            bytes: 0,
-                        });
-                    entry.bytes += bytes;
-                    entry.ops.push(op);
-                }
-            }
+            let mut collect = |op: RowOp| {
+                // 检查点导出持有业务连接锁，不能在回调里再次回查同一连接。
+                // 没有显式会话字段的墓碑 / 未知表使用稳定的行单位分组即可。
+                let conversation = Self::snapshot_conversation_of(&op)
+                    .unwrap_or_else(|| format!("__rows:{}:{}", op.table, op.id));
+                let bytes = serde_json::to_vec(&op)
+                    .map_err(|e| AppError::Other(format!("序列化快照行失败：{e}")))?
+                    .len()
+                    + 1;
+                let entry = units
+                    .entry((db.name.to_string(), conversation.clone()))
+                    .or_insert_with(|| SnapshotUnit {
+                        db: db.name,
+                        conversation,
+                        updated_at: String::new(),
+                        ops: Vec::new(),
+                        bytes: 0,
+                    });
+                entry.bytes += bytes;
+                entry.ops.push(op);
+                Ok(())
+            };
+            db.handle
+                .for_each_checkpoint_op(&self.device, &self.aliases, &mut collect)?;
         }
-
         if units.is_empty() {
             return Ok(None);
         }
-
         let mut units: Vec<SnapshotUnit> = units.into_values().collect();
-        // 先算每个单位的 updatedAt（会话行的 updated_at 优先；消息落库会 touch 会话，
-        // 所以它确实反映「最近活跃」——见 `save_message_with_user_input` 的 touch_at）。
         for unit in &mut units {
             unit.updated_at = Self::unit_marker(&unit.ops)
                 .map(|(_, updated)| updated)
                 .unwrap_or_default();
         }
-        // 从新到旧；同一时间戳按 id 稳定排序，保证两台设备的快照顺序一致、可复现。
         units.sort_by(|a, b| {
-            b.updated_at
-                .cmp(&a.updated_at)
+            a.db.cmp(b.db)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
                 .then_with(|| a.conversation.cmp(&b.conversation))
         });
-
-        // 贪心装包：每包约 4 MB，一个会话永远整包（哪怕它自己就超过 4 MB）。
         struct PartBuild {
             db: &'static str,
             units: Vec<usize>,
@@ -1100,7 +1139,12 @@ impl ConvStreamDriver {
         for (i, unit) in units.iter().enumerate() {
             let need_new = match parts.last() {
                 None => true,
-                Some(part) => part.db != unit.db || part.bytes + unit.bytes > PART_TARGET_BYTES,
+                Some(part) => {
+                    part.db != unit.db
+                        || part.bytes > 0
+                            && (part.bytes + unit.bytes > PART_TARGET_BYTES
+                                || cfg!(test) && part.bytes + unit.bytes > 128 * 1024)
+                }
             };
             if need_new {
                 parts.push(PartBuild {
@@ -1113,63 +1157,327 @@ impl ConvStreamDriver {
             part.units.push(i);
             part.bytes += unit.bytes;
         }
-
-        let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-        let mut index_parts: Vec<ConvPartEntry> = Vec::new();
-        // 会话 → 它落在哪个包（本实现一个会话只落一个包）。
-        let mut part_of: BTreeMap<(String, String), u32> = BTreeMap::new();
+        let mut files = BTreeMap::new();
+        let mut manifest_parts = Vec::new();
         for (index, part) in parts.iter().enumerate() {
             let index = index as u32;
-            let mut ops: Vec<RowOp> = Vec::new();
-            for &unit_index in &part.units {
-                let unit = &units[unit_index];
-                part_of.insert((unit.db.to_string(), unit.conversation.clone()), index);
-                ops.extend(unit.ops.iter().cloned());
-            }
-            let bytes = encode_ops(&self.device, part.db, &ops)?;
-            files.insert(format!("part-{index:04}.msync"), bytes.clone());
-            index_parts.push(ConvPartEntry {
+            let ops = part
+                .units
+                .iter()
+                .flat_map(|i| units[*i].ops.iter().cloned())
+                .collect::<Vec<_>>();
+            let plain = encode_ops(&self.device, part.db, &ops)?;
+            manifest_parts.push(SnapshotManifestPart {
                 index,
-                bytes: bytes.len() as u64,
-                db: part.db.to_string(),
+                bytes: plain.len() as u64,
+                sealed_bytes: 0,
+                plain_sha256: super::sha256_hex(&plain),
+                sealed_sha256: String::new(),
             });
+            files.insert(format!("part-{index:04}.msync"), plain);
         }
-
-        let conversations = units
-            .iter()
-            .map(|unit| ConvIndexEntry {
-                id: unit.conversation.clone(),
-                updated_at: unit.updated_at.clone(),
-                parts: part_of
-                    .get(&(unit.db.to_string(), unit.conversation.clone()))
-                    .map(|p| vec![*p])
-                    .unwrap_or_default(),
-                bytes: unit.bytes as u64,
-                db: unit.db.to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        let index = ConvSnapshotIndex {
+        let manifest = SnapshotManifest {
             format: 1,
-            kind: "conv-index".to_string(),
+            kind: "conv-checkpoint".to_string(),
             device: self.device.clone(),
             seq: self.state.seq,
-            conversations,
-            parts: index_parts,
+            parts: manifest_parts,
         };
         files.insert(
-            "index.msync".to_string(),
-            serde_json::to_vec(&index)
-                .map_err(|e| AppError::Other(format!("序列化对话快照索引失败：{e}")))?,
+            "manifest.msync".to_string(),
+            serde_json::to_vec(&manifest)
+                .map_err(|e| AppError::Other(format!("序列化对话检查点清单失败：{e}")))?,
         );
-        let total_items = index.conversations.len();
-        Ok(Some(StreamSnapshot { files, total_items }))
+        Ok(Some(StreamSnapshot {
+            files,
+            total_items: units.len(),
+            publication: SnapshotPublication::CommittedManifest,
+        }))
     }
 }
 
-// ---------------------------------------------------------------------------
-// StreamDriver
-// ---------------------------------------------------------------------------
+/// 单个检查点的密文暂存上限。日常增量不受它影响；超大库仍可沿增量链加入。
+const MAX_STAGED_SNAPSHOT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// 同时预取的网络请求数。合并始终按清单顺序，预取不改变父子行与墓碑语义。
+const SNAPSHOT_PREFETCH: usize = 2;
+
+fn staging_dir(base: &std::path::Path, manifest_sha256: &str) -> PathBuf {
+    base.join("checkpoint-cache").join(&manifest_sha256[..16])
+}
+
+fn cached_part_path(
+    base: &std::path::Path,
+    manifest_sha256: &str,
+    part: u32,
+) -> PathBuf {
+    staging_dir(base, manifest_sha256).join(format!("part-{part:04}.msync"))
+}
+
+fn remove_staging(base: &std::path::Path, manifest_sha256: &str) {
+    if manifest_sha256.len() >= 16 && manifest_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let path = staging_dir(base, manifest_sha256);
+        if let Err(e) = std::fs::remove_dir_all(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("同步：清理检查点暂存失败: {e}");
+            }
+        }
+    }
+}
+
+fn decode_cached_part(
+    remote: &dyn StreamRemote,
+    seq: u64,
+    part: &SnapshotManifestPart,
+    sealed: &[u8],
+) -> Result<Vec<u8>, AppError> {
+    if sealed.len() as u64 != part.sealed_bytes
+        || super::sha256_hex(sealed) != part.sealed_sha256
+    {
+        return Err(AppError::Other(format!(
+            "对话检查点第 {} 包的密文摘要不匹配。",
+            part.index
+        )));
+    }
+    let plain = remote.open(StreamFileKind::SnapshotPart, seq, Some(part.index), sealed)?;
+    if plain.len() as u64 != part.bytes || super::sha256_hex(&plain) != part.plain_sha256 {
+        return Err(AppError::Other(format!(
+            "对话检查点第 {} 包的内容摘要不匹配。",
+            part.index
+        )));
+    }
+    let parsed = rows::parse_segment(&plain)?;
+    if parsed.device.as_deref() != Some(remote.peer()) || parsed.stream.as_deref() != Some(CONV_STREAM)
+    {
+        return Err(AppError::Other("对话检查点的分包身份与清单不一致。".into()));
+    }
+    Ok(plain)
+}
+
+impl ConvStreamDriver {
+    fn snapshot_cache_root(&self) -> Option<PathBuf> {
+        self.path.parent().map(std::path::Path::to_path_buf)
+    }
+
+    /// 新快照先暂存密文，完整校验后按库、按清单顺序合并。
+    async fn apply_committed_snapshot(
+        &mut self,
+        remote: &dyn StreamRemote,
+        seq: u64,
+    ) -> Result<SnapshotApplied, AppError> {
+        let root = self
+            .snapshot_cache_root()
+            .ok_or_else(|| AppError::Other("同步状态目录不可用，无法暂存检查点".into()))?;
+        let dir = format::committed_snapshot_dir(remote.peer(), seq);
+        let Some(sealed_manifest) = remote.get(&format!("{dir}/manifest.msync")).await? else {
+            // 包正在上传时不存在提交清单：既不是损坏，也绝不是应用成功。
+            return Ok(SnapshotApplied::Incomplete);
+        };
+        let manifest_plain = remote.open(
+            StreamFileKind::SnapshotIndex,
+            seq,
+            None,
+            &sealed_manifest,
+        )?;
+        let manifest_sha256 = super::sha256_hex(&manifest_plain);
+        let manifest: SnapshotManifest = serde_json::from_slice(&manifest_plain)
+            .map_err(|e| AppError::Other(format!("对话检查点清单无法解析：{e}")))?;
+        super::validate_snapshot_manifest(&manifest, remote.peer(), seq)?;
+        let staged_bytes = manifest.parts.iter().map(|p| p.sealed_bytes).sum::<u64>();
+        if staged_bytes > MAX_STAGED_SNAPSHOT_BYTES {
+            return Err(AppError::Other(
+                "这份检查点超过了本机暂存上限；请先沿增量段同步，或腾出足够空间后重试。".into(),
+            ));
+        }
+        if self
+            .persisted
+            .resume
+            .get(remote.peer())
+            .is_some_and(|r| r.seq != seq || r.manifest_sha256 != manifest_sha256)
+        {
+            if let Some(old) = self.persisted.resume.remove(remote.peer()) {
+                remove_staging(&root, &old.manifest_sha256);
+                self.save_state()?;
+            }
+        }
+        if !self.persisted.resume.contains_key(remote.peer()) {
+            self.persisted.resume.insert(
+                remote.peer().to_string(),
+                SnapshotResume {
+                    peer: remote.peer().to_string(),
+                    seq,
+                    manifest_sha256: manifest_sha256.clone(),
+                    manifest: manifest.clone(),
+                    ready_parts: BTreeSet::new(),
+                },
+            );
+            self.save_state()?;
+        }
+        let total = manifest.parts.len();
+        self.report_progress(StreamProgress::parts(
+            0,
+            total,
+            "正在校验对话快照",
+            Some((0, staged_bytes)),
+        ));
+
+        // 重启后先复核磁盘中的包。即使上次写完密文、尚未来得及写 readyParts，也能安全复用。
+        let mut verified = BTreeSet::new();
+        for part in &manifest.parts {
+            let path = cached_part_path(&root, &manifest_sha256, part.index);
+            if let Ok(sealed) = std::fs::read(&path) {
+                if decode_cached_part(remote, seq, part, &sealed).is_ok() {
+                    verified.insert(part.index);
+                } else {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+        if let Some(resume) = self.persisted.resume.get_mut(remote.peer()) {
+            resume.ready_parts = verified.clone();
+        }
+        self.save_state()?;
+
+        let missing = manifest
+            .parts
+            .iter()
+            .filter(|p| !verified.contains(&p.index))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let received = manifest
+                .parts
+                .iter()
+                .filter(|part| verified.contains(&part.index))
+                .map(|part| part.sealed_bytes)
+                .sum();
+            self.report_progress(StreamProgress::parts(
+                total - missing.len(),
+                total,
+                "正在下载对话快照",
+                Some((received, staged_bytes)),
+            ));
+        }
+        let dir = dir.clone();
+        let downloads = futures::stream::iter(missing.into_iter().map(|part| {
+            let dir = dir.clone();
+            async move {
+                let path = format!("{dir}/part-{:04}.msync", part.index);
+                let Some(sealed) = remote.get(&path).await? else {
+                    return Err(AppError::Other(format!(
+                        "对话检查点缺少第 {} 个分包。",
+                        part.index
+                    )));
+                };
+                // 在落盘前先验密文与明文身份，坏包不能进入已验证集合。
+                let plain = decode_cached_part(remote, seq, &part, &sealed)?;
+                let _ = plain;
+                Ok::<_, AppError>((part, sealed))
+            }
+        }))
+        .buffered(SNAPSHOT_PREFETCH);
+        futures::pin_mut!(downloads);
+        while let Some((part, sealed)) = downloads.try_next().await? {
+            let path = cached_part_path(&root, &manifest_sha256, part.index);
+            atomic_write_bytes(&path, &sealed)
+                .map_err(|e| AppError::Other(format!("保存检查点暂存包失败：{e}")))?;
+            if let Some(resume) = self.persisted.resume.get_mut(remote.peer()) {
+                resume.ready_parts.insert(part.index);
+            }
+            self.save_state()?;
+            let done = self
+                .persisted
+                .resume
+                .get(remote.peer())
+                .map(|r| r.ready_parts.len())
+                .unwrap_or(0);
+            let received = self
+                .persisted
+                .resume
+                .get(remote.peer())
+                .map(|resume| {
+                    manifest
+                        .parts
+                        .iter()
+                        .filter(|part| resume.ready_parts.contains(&part.index))
+                        .map(|part| part.sealed_bytes)
+                        .sum()
+                })
+                .unwrap_or(0);
+            self.report_progress(StreamProgress::parts(
+                done,
+                total,
+                "正在下载对话快照",
+                Some((received, staged_bytes)),
+            ));
+        }
+
+        self.report_progress(StreamProgress::parts(
+            0,
+            total,
+            "正在校验并写入对话",
+            Some((staged_bytes, staged_bytes)),
+        ));
+        let mut grouped: BTreeMap<String, Vec<RowOp>> = BTreeMap::new();
+        for part in &manifest.parts {
+            let path = cached_part_path(&root, &manifest_sha256, part.index);
+            let sealed = std::fs::read(&path)
+                .map_err(|e| AppError::Other(format!("读取检查点暂存包失败：{e}")))?;
+            let plain = decode_cached_part(remote, seq, part, &sealed)?;
+            let parsed = rows::parse_segment(&plain)?;
+            self.observe_ops(&parsed.ops);
+            grouped
+                .entry(parsed.db_or_default().to_string())
+                .or_default()
+                .extend(parsed.ops);
+        }
+        let mut changed_ids = Vec::new();
+        for (db_name, ops) in grouped {
+            let db = self.database(&db_name)?.clone();
+            let mut pass = Vec::new();
+            for op in ops {
+                if op.del && op.table == "conversations" {
+                    self.deleted.insert(op.id.clone());
+                }
+                let running = self
+                    .conversation_of(&db, &op)
+                    .is_some_and(|id| self.is_running(&id));
+                if running {
+                    self.persisted.deferred.push(DeferredOp {
+                        db: db_name.clone(),
+                        op,
+                    });
+                } else {
+                    pass.push(op);
+                }
+            }
+            let applied = db.handle.apply_ops(&pass, &self.aliases)?;
+            self.landing.merge(&applied);
+            for id in applied.conversation_ids {
+                if !changed_ids.contains(&id) {
+                    changed_ids.push(id);
+                }
+            }
+        }
+        // resume 保留到引擎把正式游标刷入账本；ack_snapshot 才清暂存。
+        self.save_state()?;
+        self.snapshot_finished = true;
+        let progress = StreamProgress::parts(
+            total,
+            total,
+            "对话快照已校验并写入",
+            Some((staged_bytes, staged_bytes)),
+        );
+        self.progress = Some(progress.clone());
+        self.report_progress(progress.clone());
+        Ok(SnapshotApplied::Complete(StreamApplied {
+            changed: !changed_ids.is_empty(),
+            conversation_ids: changed_ids,
+            progress: Some(progress),
+        }))
+    }
+}
+
+
 
 #[async_trait]
 impl StreamDriver for ConvStreamDriver {
@@ -1292,16 +1600,39 @@ impl StreamDriver for ConvStreamDriver {
         self.build_snapshot()
     }
 
+    async fn ack_snapshot(&mut self, peer: &str, seq: u64) -> Result<(), AppError> {
+        if self
+            .persisted
+            .resume
+            .get(peer)
+            .is_some_and(|r| r.seq == seq)
+        {
+            let resume = self.persisted.resume.remove(peer).expect("刚检查过");
+            if let Some(root) = self.snapshot_cache_root() {
+                remove_staging(&root, &resume.manifest_sha256);
+            }
+            self.save_state()?;
+        }
+        Ok(())
+    }
+
     async fn apply_snapshot(
         &mut self,
         remote: &dyn StreamRemote,
         index_seq: u64,
-    ) -> Result<StreamApplied, AppError> {
+    ) -> Result<SnapshotApplied, AppError> {
+        let checkpoint = format!(
+            "{}/manifest.msync",
+            format::committed_snapshot_dir(remote.peer(), index_seq)
+        );
+        if remote.get(&checkpoint).await?.is_some() {
+            return self.apply_committed_snapshot(remote, index_seq).await;
+        }
         let dir = format::snapshot_dir(remote.peer(), RemoteStream::Conv, index_seq);
         let index_path = format!("{dir}/index.msync");
         let Some(bytes) = remote.get(&index_path).await? else {
-            // 列出来又读不到（对方正在写快照）：下一轮重新列，不算错误。
-            return Ok(StreamApplied::default());
+            // 列出来又读不到：这不是一份已完成的快照。
+            return Ok(SnapshotApplied::Incomplete);
         };
         let plain = remote.open(StreamFileKind::SnapshotIndex, index_seq, None, &bytes)?;
         let index: ConvSnapshotIndex = serde_json::from_slice(&plain)
@@ -1359,6 +1690,8 @@ impl StreamDriver for ConvStreamDriver {
                 done,
                 total,
                 label: "正在同步对话".to_string(),
+                bytes_done: None,
+                bytes_total: None,
             };
             self.progress = Some(progress.clone());
             // 立刻推给引擎：前端要看到「正在同步对话 3 / 12」在涨。
@@ -1366,11 +1699,11 @@ impl StreamDriver for ConvStreamDriver {
         }
 
         self.snapshot_finished = true;
-        Ok(StreamApplied {
+        Ok(SnapshotApplied::Complete(StreamApplied {
             changed: !changed_ids.is_empty(),
             conversation_ids: changed_ids,
             progress: self.progress.clone(),
-        })
+        }))
     }
 }
 

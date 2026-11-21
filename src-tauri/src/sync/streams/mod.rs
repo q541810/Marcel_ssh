@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use std::sync::Arc;
 
@@ -53,6 +54,8 @@ pub enum StreamFileKind {
     SnapshotIndex,
     /// 分包快照的一个包（`conv/snap-<seq>/part-<i:04>.msync`）。
     SnapshotPart,
+    /// 每台设备的对话保留声明（`conv/retention.msync`），不是数据段。
+    Retention,
 }
 
 impl StreamFileKind {
@@ -91,6 +94,14 @@ pub struct StreamApplied {
     pub progress: Option<StreamProgress>,
 }
 
+/// 快照是否完整落地。游标只认 `Complete`，不能把「暂时没有读到」当成「已经同步」。
+#[derive(Debug)]
+pub enum SnapshotApplied {
+    Complete(StreamApplied),
+    Incomplete,
+    Unsupported,
+}
+
 /// `sync_status.streams[].progress`（契约第 8 节）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +109,81 @@ pub struct StreamProgress {
     pub done: usize,
     pub total: usize,
     pub label: String,
+    /// 已接收 / 清单声明的密文字节数。增量没有预先总字节数时不填。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_done: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+}
+
+impl StreamProgress {
+    pub fn parts(done: usize, total: usize, label: impl Into<String>, bytes: Option<(u64, u64)>) -> Self {
+        Self {
+            done,
+            total,
+            label: label.into(),
+            bytes_done: bytes.map(|(done, _)| done),
+            bytes_total: bytes.map(|(_, total)| total),
+        }
+    }
+}
+
+/// 远端回收的保留声明。**只表达本机需求**：谁的目录就代表谁；不代替别的设备做决定。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvRetention {
+    pub format: u32,
+    /// source device id → 本机仍需要的最旧检查点序号。缺少键等同于未知。
+    pub needs: BTreeMap<String, u64>,
+}
+
+/// 读其他设备的保留声明。文件缺失 / 解不开 / 不认识的版本一律按「仍需要最旧历史」处理。
+pub async fn read_peer_retention(
+    remote: &dyn StreamRemote,
+) -> Result<Option<ConvRetention>, AppError> {
+    let path = format::conv_retention_path(remote.peer());
+    let Some(sealed) = remote.get(&path).await? else {
+        return Ok(None);
+    };
+    let plain = remote.open(StreamFileKind::Retention, 0, None, &sealed)?;
+    let retention: ConvRetention = serde_json::from_slice(&plain)
+        .map_err(|e| AppError::Other(format!("保留声明无法解析：{e}")))?;
+    if retention.format != 1 {
+        return Ok(None);
+    }
+    Ok(Some(retention))
+}
+
+/// 判断哪些本机旧检查点可以回收。
+///
+/// `source_device` 是这些检查点所在的本机设备 id。每个对端都必须在保留声明里
+/// 明确给出这个 source 的需求上界，缺失 / 0 / 声明无法读取都不会回收任何文件。
+pub fn reclaimable_checkpoints(
+    source_device: &str,
+    own_published: &[u64],
+    peers: &[Option<ConvRetention>],
+) -> Vec<u64> {
+    if own_published.len() <= 1 || peers.iter().any(|p| p.is_none()) {
+        return Vec::new();
+    }
+    let Some(latest) = own_published.iter().copied().max() else {
+        return Vec::new();
+    };
+    let mut oldest_needed = u64::MAX;
+    for retention in peers.iter().flatten() {
+        let Some(&needed) = retention.needs.get(source_device) else {
+            return Vec::new();
+        };
+        if needed == 0 {
+            return Vec::new();
+        }
+        oldest_needed = oldest_needed.min(needed);
+    }
+    own_published
+        .iter()
+        .copied()
+        .filter(|seq| *seq != latest && *seq < oldest_needed)
+        .collect()
 }
 
 /// 快照的远端布局：单文件（配置 / 机密）还是目录 + 分包（对话）。
@@ -114,7 +200,80 @@ pub enum StreamSnapshotLayout {
 pub struct StreamSnapshot {
     pub files: BTreeMap<String, Vec<u8>>,
     pub total_items: usize,
+    /// 新版对话快照：数据包先就位，引擎最后发布 manifest；旧配置流仍为 Legacy。
+    pub publication: SnapshotPublication,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SnapshotPublication {
+    #[default]
+    Legacy,
+    CommittedManifest,
+}
+
+/// 新快照的最终清单。路径使用 `checkpoint-<seq>`，与旧 `snap-<seq>` 隔离。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotManifest {
+    pub format: u32,
+    pub kind: String,
+    pub device: String,
+    pub seq: u64,
+    pub parts: Vec<SnapshotManifestPart>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotManifestPart {
+    pub index: u32,
+    /// 明文段长度。
+    pub bytes: u64,
+    /// 暂存与下载预算使用的密文长度。
+    pub sealed_bytes: u64,
+    /// SHA-256（明文 / 密文），均非密钥，仅用于完整性。
+    pub plain_sha256: String,
+    pub sealed_sha256: String,
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn validate_snapshot_manifest(
+    manifest: &SnapshotManifest,
+    peer: &str,
+    seq: u64,
+) -> Result<(), AppError> {
+    if manifest.format > 1 {
+        return Err(AppError::Other("对话检查点来自更新版本，请升级应用。".into()));
+    }
+    if manifest.format != 1
+        || manifest.kind != "conv-checkpoint"
+        || manifest.device != peer
+        || manifest.seq != seq
+        || manifest.parts.is_empty()
+    {
+        return Err(AppError::Other("对话检查点清单与它所在的位置不一致。".into()));
+    }
+    for (expected, part) in manifest.parts.iter().enumerate() {
+        if part.index != expected as u32
+            || part.plain_sha256.len() != 64
+        {
+            return Err(AppError::Other("对话检查点的分包清单不完整。".into()));
+        }
+    }
+    if manifest.parts.iter().any(|p| p.sealed_bytes > 0) {
+        if manifest
+            .parts
+            .iter()
+            .any(|p| p.sealed_bytes == 0 || p.sealed_sha256.len() != 64)
+        {
+            return Err(AppError::Other("对话检查点的密文摘要不完整。".into()));
+        }
+    }
+    Ok(())
+}
+
 
 #[async_trait]
 pub trait StreamDriver: Send + Sync {
@@ -169,8 +328,14 @@ pub trait StreamDriver: Send + Sync {
     }
 
     /// 本机增量段攒够 `COMPACT_AFTER_SEGS` 后调用，生成快照。`None` = 这条流不做快照。
+    /// 对话检查点可直接按现有导出遍历打包；旧配置快照维持原样。
     async fn make_snapshot(&mut self) -> Result<Option<StreamSnapshot>, AppError> {
         Ok(None)
+    }
+
+    /// 游标已成功写入账本，驱动才能删除已合并的密文暂存。
+    async fn ack_snapshot(&mut self, _peer: &str, _seq: u64) -> Result<(), AppError> {
+        Ok(())
     }
 
     /// 快照的远端布局。配置流是单文件，对话流是分包目录。
@@ -195,9 +360,9 @@ pub trait StreamDriver: Send + Sync {
         &mut self,
         remote: &dyn StreamRemote,
         index_seq: u64,
-    ) -> Result<StreamApplied, AppError> {
+    ) -> Result<SnapshotApplied, AppError> {
         let _ = (remote, index_seq);
-        Ok(StreamApplied::default())
+        Ok(SnapshotApplied::Unsupported)
     }
 }
 
@@ -296,15 +461,18 @@ pub fn aad_tag_for(stream: StreamName, kind: StreamFileKind) -> &'static str {
         (StreamName::Conv, StreamFileKind::Segment) => aad_tag::CONV_SEG,
         (StreamName::Conv, StreamFileKind::SnapshotIndex) => aad_tag::CONV_SNAP_INDEX,
         (StreamName::Conv, StreamFileKind::SnapshotPart) => aad_tag::CONV_SNAP_PART,
+        (StreamName::Conv, StreamFileKind::Retention) => aad_tag::CONV_RETENTION,
         // 对话流只用分包快照；单文件快照的 tag 不存在，归到索引（不会被用到）
         (StreamName::Conv, StreamFileKind::Snapshot) => aad_tag::CONV_SNAP_INDEX,
         (StreamName::Sec, StreamFileKind::Segment) => aad_tag::SEC_SEG,
         (StreamName::Sec, StreamFileKind::Snapshot) => aad_tag::SEC_SNAP,
         (StreamName::Sec, StreamFileKind::SnapshotIndex)
-        | (StreamName::Sec, StreamFileKind::SnapshotPart) => aad_tag::SEC_SNAP,
+        | (StreamName::Sec, StreamFileKind::SnapshotPart)
+        | (StreamName::Sec, StreamFileKind::Retention) => aad_tag::SEC_SNAP,
         // 配置流从不用分包快照（单文件）。给个同流 tag 而不是 panic：真被误用时 AAD 仍限在本流内。
         (StreamName::Config, StreamFileKind::SnapshotIndex)
-        | (StreamName::Config, StreamFileKind::SnapshotPart) => aad_tag::CONFIG_SNAP,
+        | (StreamName::Config, StreamFileKind::SnapshotPart)
+        | (StreamName::Config, StreamFileKind::Retention) => aad_tag::CONFIG_SNAP,
     }
 }
 
@@ -441,10 +609,54 @@ mod tests {
             done: 3,
             total: 10,
             label: "正在同步对话".into(),
+            bytes_done: None,
+            bytes_total: None,
         };
         assert_eq!(
             serde_json::to_value(&p).unwrap(),
             serde_json::json!({"done": 3, "total": 10, "label": "正在同步对话"})
+        );
+    }
+
+    #[test]
+    fn checkpoint_retention_never_drops_history_a_peer_still_needs() {
+        let r = |needs: &[(&str, u64)]| ConvRetention {
+            format: 1,
+            needs: needs.iter().map(|(device, seq)| ((*device).into(), *seq)).collect(),
+        };
+        assert_eq!(
+            reclaimable_checkpoints("source", &[3, 7, 12], &[Some(r(&[("source", 12)]))]),
+            vec![3, 7],
+            "对端声明 source 已越过 12，更旧检查点可以回收"
+        );
+        assert_eq!(
+            reclaimable_checkpoints("source", &[3, 7, 12], &[Some(r(&[("source", 3)]))]),
+            Vec::<u64>::new(),
+            "对端还需要 3 起的检查点，一个都不能删"
+        );
+        assert_eq!(
+            reclaimable_checkpoints(
+                "source",
+                &[3, 7, 12],
+                &[Some(r(&[("source", 12)])), Some(r(&[("source", 7)]))],
+            ),
+            vec![3],
+            "多个对端取最保守的需求阈值"
+        );
+        assert_eq!(
+            reclaimable_checkpoints("source", &[3, 7, 12], &[Some(r(&[]))]),
+            Vec::<u64>::new(),
+            "缺少本机来源声明时必须保守保留"
+        );
+        assert_eq!(
+            reclaimable_checkpoints("source", &[3, 7, 12], &[None]),
+            Vec::<u64>::new(),
+            "旧设备没有保留声明时必须保守保留"
+        );
+        assert_eq!(
+            reclaimable_checkpoints("source", &[12], &[Some(r(&[("source", 12)]))]),
+            Vec::<u64>::new(),
+            "唯一一份已提交检查点永远保留"
         );
     }
 }

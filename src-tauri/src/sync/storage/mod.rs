@@ -26,7 +26,7 @@ pub mod sftp;
 pub mod webdav;
 
 #[cfg(test)]
-mod contract_tests;
+pub(crate) mod contract_tests;
 
 pub use memory::MemoryStorage;
 pub use sftp::{SavedConnectionConnector, SftpConnector, SftpStorage};
@@ -115,7 +115,7 @@ pub trait SyncStorage: Send + Sync {
     async fn put(&self, path: &str, bytes: &[u8]) -> Result<(), StorageError>;
     /// 删文件或目录（目录连内容一起删）。不存在也算成功。
     async fn delete(&self, path: &str) -> Result<(), StorageError>;
-    /// 连通性 + 权限自检：确保 root 存在，并写入 / 读回 / 删除一个探针文件。
+    /// 连通性 + 权限自检：确保 root 存在，并写入 / 读回一个探针文件（删除是尽力清理，删不掉不算失败）。
     async fn probe(&self) -> Result<(), StorageError>;
 }
 
@@ -152,8 +152,12 @@ pub(crate) fn random_suffix() -> String {
 
 /// 探针的「写入 → 读回 → 删除」三步，WebDAV / SFTP 共用（root 的创建与列目录自检各适配器自己做）。
 ///
-/// 删不掉也要报错：压缩旧文件要靠删除，只能写不能删的位置会让同步目录越攒越大，早点让用户知道。
-/// 探针用随机文件名，不会撞上也不会留下痕迹。
+/// **只有写和读回算硬指标**：同步协议的每一步都离不开它们，读写不通这个位置就没法用。
+///
+/// 删除只是尽力清理：删不掉只记一条日志，不让自检失败。同步本身不在正常轮次里删东西——只有配置流
+/// 攒够 50 段压缩时才会删自己旧的段，删不掉的结果是云端多留几份旧段，不影响正确性。反过来把
+/// 删除当硬指标，会让「能写能读、偏偏不能删」的位置（有的网盘桥接服务是这样）连开启同步都做不到，
+/// 代价远大于收益。探针用随机文件名，服务器能删时不会留下痕迹。
 pub(crate) async fn write_read_delete_probe(s: &dyn SyncStorage) -> Result<(), StorageError> {
     let name = format!("probe-{}.tmp", random_suffix());
     let payload = format!("marcel-sync-probe-{}", random_suffix()).into_bytes();
@@ -174,7 +178,12 @@ pub(crate) async fn write_read_delete_probe(s: &dyn SyncStorage) -> Result<(), S
             ))
         }
     }
-    deleted
+    if let Err(e) = deleted {
+        log::warn!(
+            "同步存储自检：探针文件删不掉（{e}）。同步照常进行，但云端旧的同步段不会被自动清理。"
+        );
+    }
+    Ok(())
 }
 
 /// `list` 要不要把这个名字藏起来：以 `.` 开头的是适配器自己的临时文件。

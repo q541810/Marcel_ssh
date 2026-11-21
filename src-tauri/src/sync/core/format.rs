@@ -239,6 +239,12 @@ pub fn snapshot_dir(device_id: &str, stream: RemoteStream, seq: u64) -> String {
     format!("{}/snap-{:012}", stream_dir(device_id, stream), seq)
 }
 
+/// 对话流 v2 快照目录。与旧 `snap-<seq>/` 隔离：包全部就位后 `manifest.msync` 才出现，
+/// 旧客户端不会把未完成的目录认成快照。
+pub fn committed_snapshot_dir(device_id: &str, seq: u64) -> String {
+    format!("{}/checkpoint-{seq:012}", stream_dir(device_id, RemoteStream::Conv))
+}
+
 /// 分包快照的索引（`…/snap-<seq>/index.msync`）。
 pub fn snapshot_index_path(device_id: &str, stream: RemoteStream, seq: u64) -> String {
     format!(
@@ -314,6 +320,11 @@ pub fn is_valid_blob_name(name: &str) -> bool {
 /// devices/<id>/sec/snap-N.msync          机密 · 快照
 /// devices/<id>/blob/<64hex>.msync        大块
 /// ```
+/// 对话流的保留声明路径（每台设备只写自己目录下这一份）。
+pub fn conv_retention_path(device_id: &str) -> String {
+    format!("{}/retention.msync", stream_dir(device_id, RemoteStream::Conv))
+}
+
 /// 其它一律 `None`（目录本身、探针、未知名字）。设备 id 来自远端，先过
 /// [`is_valid_device_id`] 才敢用它拼路径。
 pub fn parse_device_rel_path(path: &str) -> Option<ParsedRemoteFile> {
@@ -322,6 +333,10 @@ pub fn parse_device_rel_path(path: &str) -> Option<ParsedRemoteFile> {
         return None;
     };
     if !is_valid_device_id(device) {
+        return None;
+    }
+    // 保留声明不是数据文件：老客户端列目录时不会把它认成段 / 快照。
+    if matches!(rest, ["conv", "retention.msync"]) {
         return None;
     }
     let device = device.to_string();
@@ -375,6 +390,37 @@ pub fn parse_device_rel_path(path: &str) -> Option<ParsedRemoteFile> {
                     None,
                 ))
             }
+        }
+        ["conv", checkpoint, "manifest.msync"] if checkpoint.starts_with("checkpoint-") => {
+            let num = checkpoint.strip_prefix("checkpoint-")?;
+            if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(file(
+                RemoteStream::Conv,
+                RemoteFileKind::SnapshotIndex,
+                num.parse().ok()?,
+                None,
+                None,
+            ))
+        }
+        ["conv", checkpoint, part] if checkpoint.starts_with("checkpoint-") => {
+            let num = checkpoint.strip_prefix("checkpoint-")?;
+            if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let seq = num.parse().ok()?;
+            let digits = part.strip_prefix("part-")?.strip_suffix(&format!(".{FILE_EXT}"))?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(file(
+                RemoteStream::Conv,
+                RemoteFileKind::SnapshotPart,
+                seq,
+                digits.parse().ok(),
+                None,
+            ))
         }
         ["conv", snap, "index.msync"] => {
             let num = snap.strip_prefix("snap-")?;

@@ -22,7 +22,8 @@ use std::sync::Arc;
 
 use super::super::core::HlcClock;
 use super::super::rows::{
-    AliasMap, CaptureOptions, CapturedRows, ColumnScope, RowApplied, RowColumn, RowMerge, RowTable,
+    AliasMap, CaptureOptions, CapturedRows, ColumnScope, RowApplied, RowColumn, RowMerge, RowOp,
+    RowTable,
 };
 use super::conv::{ConvDatabase, ConvDbHandle};
 use crate::error::AppError;
@@ -168,6 +169,11 @@ impl ConvDbHandle for MemoryHandle {
         self.store.sync_apply(ops, aliases, MEMORY_TABLES)
     }
 
+    fn apply_ops(&self, ops: &[RowOp], aliases: &AliasMap) -> Result<RowApplied, AppError> {
+        self.store
+            .sync_apply_checkpoint(ops, aliases, MEMORY_TABLES)
+    }
+
     fn export_all(&self, device: &str, aliases: &AliasMap) -> Result<Vec<Vec<u8>>, AppError> {
         self.store
             .sync_export_all(device, aliases, MEMORY_TABLES, MEMORY_DB_NAME)
@@ -175,6 +181,16 @@ impl ConvDbHandle for MemoryHandle {
 
     fn pending_count(&self) -> Result<usize, AppError> {
         self.store.sync_pending_count(MEMORY_TABLES)
+    }
+
+    fn for_each_checkpoint_op(
+        &self,
+        device: &str,
+        aliases: &AliasMap,
+        sink: &mut dyn FnMut(crate::sync::rows::RowOp) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        self.store
+            .sync_for_each_checkpoint_op(device, aliases, MEMORY_TABLES, sink)
     }
 
     fn after_land(&self, applied: &RowApplied) -> Result<(), AppError> {

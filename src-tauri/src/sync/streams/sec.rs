@@ -932,6 +932,8 @@ pub fn sync_progress(done: usize, total: usize) -> StreamProgress {
         done,
         total,
         label: "正在同步机密".into(),
+        bytes_done: None,
+        bytes_total: None,
     }
 }
 

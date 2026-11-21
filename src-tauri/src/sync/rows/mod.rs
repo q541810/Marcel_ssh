@@ -54,10 +54,22 @@ pub use apply::{
     NoHook, RowApplyHook,
 };
 pub use capture::{ack, capture, capture_with, pending_count, CaptureOptions};
-pub use export::{export_all, export_all_with, ExportOptions};
-pub use install::{install, ROW_TABLE_VERSION};
+pub use export::{export_all, export_all_with, for_each_checkpoint_op, ExportOptions};
+pub use install::{install, install_for_source, ROW_TABLE_VERSION};
+
+/// 生产启动时把现有数据总线接进行同步触发器。广播只带数据源身份，不携带正文。
+pub fn install_change_bus(bus: crate::data::DataChangeBus) {
+    let _ = CHANGE_BUS.set(bus);
+}
+
+pub(crate) fn change_bus() -> Option<crate::data::DataChangeBus> {
+    CHANGE_BUS.get().cloned()
+}
+
+static CHANGE_BUS: std::sync::OnceLock<crate::data::DataChangeBus> =
+    std::sync::OnceLock::new();
 pub use segment::{encode_segment, parse_segment, ParsedSegment};
-pub use shared::{suppress_capture, with_capture_suppressed, CaptureGuard};
+pub use shared::{in_savepoint, suppress_capture, with_capture_suppressed, CaptureGuard};
 
 /// 段 JSON 的 `kind`。段头里写死，读到别的 kind 说明这条流的数据被投错了地方。
 pub const SEGMENT_KIND: &str = "rows";

@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use futures::{StreamExt, TryStreamExt};
 use parking_lot::{Mutex, RwLock};
 use zeroize::Zeroizing;
 
@@ -43,8 +44,9 @@ use super::sources::SourceAdapter;
 use super::storage::{StorageConfig, StorageError};
 use super::store::{Cursor, LedgerFiles, StreamName};
 use super::streams::{
-    seal_stream_file, BackendStreamRemote, ConfigStreamDriver, StreamApplied, StreamDriver,
-    StreamDriverContext, StreamDriverFactory, StreamFileKind, StreamProgress, StreamSnapshotLayout,
+    seal_stream_file, BackendStreamRemote, ConfigStreamDriver, SnapshotApplied, StreamApplied,
+    StreamDriver, StreamDriverContext, StreamDriverFactory, StreamFileKind, StreamProgress,
+    StreamSnapshotLayout,
 };
 use super::types::{
     HeldSummary, JoinStrategy, StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus,
@@ -58,6 +60,11 @@ use crate::ssh::known_hosts::KnownHostsStore;
 
 /// 本机增量段攒到这么多就压缩成快照。
 pub const COMPACT_AFTER_SEGS: u32 = 50;
+/// 每轮每台对端最多吸收的增量段 / 网络字节。剩余尾部下一轮继续，游标绝不跳段。
+const MAX_SEGMENTS_PER_PEER_ROUND: usize = 256;
+const MAX_SEGMENT_BYTES_PER_PEER_ROUND: u64 = 64 * 1024 * 1024;
+/// 下载下一段与当前段落地重叠；处理顺序仍由 buffered 保证。
+const SEGMENT_PREFETCH: usize = 2;
 
 /// 前端事件的出口。
 pub trait SyncEvents: Send + Sync {
@@ -672,7 +679,7 @@ impl SyncEngine {
             if failed.contains(name) {
                 continue;
             }
-            if let Err(e) = self.compact_stream(*name, &backend, &dk).await {
+            if let Err(e) = self.compact_stream(*name, &backend, &dk, false).await {
                 log::warn!(
                     "同步：压缩{}失败（下一轮再试）: {}",
                     stream_label(*name),
@@ -802,6 +809,11 @@ impl SyncEngine {
         })
     }
 
+    fn report_progress(&mut self, name: StreamName, progress: StreamProgress) {
+        self.stream_progress.insert(name, progress.clone());
+        (self.progress_reporter())(name, progress);
+    }
+
     fn config_driver(&mut self, dk: Option<DataKey>) -> ConfigStreamDriver<'_> {
         ConfigStreamDriver::new(
             &mut self.ledger,
@@ -911,9 +923,9 @@ impl SyncEngine {
         self.pull_generic_stream(name, backend, dk).await
     }
 
-    /// conv / sec 的通用拉取：列 `devices/` → 每台对端设备 → 该流的目录 → 段按游标、
-    /// 快照（目录或单文件）按「比游标新」优先。驱动只接受明文，AAD / 解密封装由
-    /// [`BackendStreamRemote`] 做。
+    /// conv / sec 的通用拉取：列 `devices/` → 每台对端设备 → 该流的目录。
+    /// 已有检查点的设备优先顺序读增量；快照用于首次加入 / 检查点无效，不再看到就整包下载。
+    /// 驱动只接受明文，AAD / 解密封装由 [`BackendStreamRemote`] 做。
     async fn pull_generic_stream(
         &mut self,
         name: StreamName,
@@ -946,16 +958,26 @@ impl SyncEngine {
                     _ => {}
                 }
             }
-            // 分包快照是目录：`snap-<seq>/` 下放 index + part。
+            // 分包快照：新版 checkpoint 目录先读 manifest，旧版 snap 目录仍兼容。
+            let mut checkpoint_snaps: Vec<u64> = Vec::new();
+            let mut legacy_snaps: Vec<u64> = Vec::new();
             for f in files.iter().filter(|f| f.is_dir) {
-                if let Some(num) = f.name.strip_prefix("snap-") {
+                if let Some(num) = f.name.strip_prefix("checkpoint-") {
                     if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
                         if let Ok(seq) = num.parse::<u64>() {
-                            snaps.push(seq);
+                            checkpoint_snaps.push(seq);
+                        }
+                    }
+                } else if let Some(num) = f.name.strip_prefix("snap-") {
+                    if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
+                        if let Ok(seq) = num.parse::<u64>() {
+                            legacy_snaps.push(seq);
                         }
                     }
                 }
             }
+            checkpoint_snaps.sort_unstable();
+            legacy_snaps.sort_unstable();
             segs.sort_unstable();
             snaps.sort_unstable();
 
@@ -968,11 +990,21 @@ impl SyncEngine {
                 .cloned()
                 .unwrap_or_default();
 
-            // 快照优先：比游标新的最新快照整份吸收，再把游标抬到它。
-            if let Some(&latest) = snaps.last() {
-                if latest > cursor.seg {
-                    let remote =
-                        BackendStreamRemote::new(backend.clone(), dk.clone(), device.clone(), name);
+            // 已建立游标的设备只读连续增量。首次加入才在「已提交检查点 / 旧快照」中选最新。
+            if !cursor.initialized {
+                let checkpoint = checkpoint_snaps.last().copied();
+                let legacy = snaps.last().copied().into_iter().chain(legacy_snaps.last().copied()).max();
+                let latest = match (checkpoint, legacy) {
+                    (Some(new), Some(old)) => Some(new.max(old)),
+                    (new, old) => new.or(old),
+                };
+                if let Some(latest) = latest.filter(|latest| *latest > cursor.seg) {
+                    let remote = BackendStreamRemote::new(
+                        backend.clone(),
+                        dk.clone(),
+                        device.clone(),
+                        name,
+                    );
                     let outcome = self
                         .drivers
                         .get_mut(&name)
@@ -980,13 +1012,21 @@ impl SyncEngine {
                         .apply_snapshot(&remote, latest)
                         .await;
                     match outcome {
-                        Ok(applied) => {
+                        Ok(SnapshotApplied::Complete(applied)) => {
                             self.record_stream_applied(name, &applied);
-                            cursor = Cursor {
-                                snap: latest,
-                                seg: latest,
-                            };
+                            cursor = Cursor::snapshot(latest);
                             self.set_stream_cursor(name, &device, cursor.clone());
+                            // 游标落盘后才允许驱动清理已校验的密文暂存。
+                            self.ledger.flush(&self.files)?;
+                            if let Some(driver) = self.drivers.get_mut(&name) {
+                                driver.ack_snapshot(&device, latest).await?;
+                            }
+                        }
+                        Ok(SnapshotApplied::Incomplete | SnapshotApplied::Unsupported) => {
+                            report.soft_errors.push(format!(
+                                "读取「{device}」的快照失败：快照尚未完整发布，请等待对端完成上传"
+                            ));
+                            continue;
                         }
                         Err(e) => {
                             let text = plain_error(&e);
@@ -1003,37 +1043,81 @@ impl SyncEngine {
                 }
             }
 
-            for seq in segs {
-                if seq <= cursor.seg {
-                    continue;
+            let pending = segs
+                .into_iter()
+                .filter(|seq| *seq > cursor.seg)
+                .collect::<Vec<_>>();
+            let total = pending.len();
+            let total_bytes = pending
+                .iter()
+                .filter_map(|seq| files.iter().find(|f| f.name == format!("seg-{seq:012}.msync")))
+                .map(|f| f.size)
+                .sum::<u64>();
+            let mut budget_bytes = 0u64;
+            let selected = pending
+                .iter()
+                .copied()
+                .take(MAX_SEGMENTS_PER_PEER_ROUND)
+                .take_while(|seq| {
+                    let size = files
+                        .iter()
+                        .find(|f| {
+                            !f.is_dir
+                                && f.name == format!("seg-{seq:012}.msync")
+                        })
+                        .map(|f| f.size)
+                        .unwrap_or(0);
+                    let fits = budget_bytes == 0
+                        || budget_bytes + size <= MAX_SEGMENT_BYTES_PER_PEER_ROUND;
+                    if fits {
+                        budget_bytes += size;
+                    }
+                    fits
+                })
+                .collect::<Vec<_>>();
+            if !selected.is_empty() {
+                self.report_progress(
+                    name,
+                    StreamProgress::parts(
+                        0,
+                        total,
+                        match name {
+                            StreamName::Conv => "正在补齐对话与记忆",
+                            StreamName::Sec => "正在补齐机密",
+                            StreamName::Config => "正在补齐配置",
+                        },
+                        Some((0, total_bytes)),
+                    ),
+                );
+            }
+            let downloads = futures::stream::iter(selected.into_iter().map(|seq| {
+                let backend = backend.clone();
+                let dk = dk.clone();
+                let device = device.clone();
+                async move {
+                    let path = format::stream_segment_path(&device, remote_stream_of(name), seq);
+                    let Some(bytes) = backend.get(&path).await.map_err(storage_err)? else {
+                        return Ok::<_, AppError>(None);
+                    };
+                    let remote = BackendStreamRemote::new(backend, dk, device, name);
+                    let plain = super::streams::StreamRemote::open(
+                        &remote,
+                        StreamFileKind::Segment,
+                        seq,
+                        None,
+                        &bytes,
+                    )?;
+                    Ok(Some((seq, bytes.len() as u64, plain)))
                 }
-                let path = format::stream_segment_path(&device, remote_stream_of(name), seq);
-                let Some(bytes) = backend.get(&path).await.map_err(storage_err)? else {
+            }))
+            .buffered(SEGMENT_PREFETCH);
+            futures::pin_mut!(downloads);
+            let mut processed = 0usize;
+            let mut received_bytes = 0u64;
+            while let Some(item) = downloads.try_next().await? {
+                let Some((seq, bytes, plain)) = item else {
                     break; // 列出来又读不到（对方正在写）：下一轮重新列
                 };
-                let remote =
-                    BackendStreamRemote::new(backend.clone(), dk.clone(), device.clone(), name);
-                let plain = match super::streams::StreamRemote::open(
-                    &remote,
-                    StreamFileKind::Segment,
-                    seq,
-                    None,
-                    &bytes,
-                ) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if e.is_too_new() {
-                            report.needs_upgrade = true;
-                        } else {
-                            report
-                                .soft_errors
-                                .push(format!("读取「{device}」的同步数据失败：{e}"));
-                        }
-                        break;
-                    }
-                };
-                // 二、三期的段结构由各自的驱动解析，但「格式过新要提示升级」是统一的：
-                // 先看 format 再交给驱动，别让新版本的文件被当成损坏数据反复重读。
                 if let Err(e) = format::check_format(&plain) {
                     if e.is_too_new() {
                         report.needs_upgrade = true;
@@ -1058,7 +1142,27 @@ impl SyncEngine {
                     break;
                 }
                 cursor.seg = seq;
+                cursor.initialized = true;
+                processed += 1;
+                received_bytes += bytes;
                 self.set_stream_cursor(name, &device, cursor.clone());
+                self.report_progress(
+                    name,
+                    StreamProgress::parts(
+                        processed,
+                        total,
+                        match name {
+                            StreamName::Conv => "正在补齐对话与记忆",
+                            StreamName::Sec => "正在补齐机密",
+                            StreamName::Config => "正在补齐配置",
+                        },
+                        Some((received_bytes, total_bytes)),
+                    ),
+                );
+            }
+            if files.iter().all(|f| f.is_dir || parse_device_rel_path(&format!("{dir}/{}", f.name)).is_none()) {
+                // 对端尚无内容也算追平：等它第一段出现时走增量，不必等待快照。
+                self.set_stream_cursor(name, &device, Cursor::at(0));
             }
             self.ledger.flush(&self.files)?;
         }
@@ -1077,6 +1181,10 @@ impl SyncEngine {
         };
         let applied: StreamApplied = driver.land().await?;
         let mut st = self.ledger.st.stream(name);
+        if st.applied {
+            self.record_stream_applied(name, &applied);
+            return Ok(Vec::new());
+        }
         st.applied = true;
         self.ledger.st.set_stream(name, st.clone());
         driver.set_state(st);
@@ -1090,23 +1198,39 @@ impl SyncEngine {
         name: StreamName,
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
+        requested_checkpoint: bool,
     ) -> Result<(), AppError> {
         if name == StreamName::Config {
             let mut driver = self.config_driver(Some(dk.clone()));
             return driver.maybe_compact(backend).await;
         }
+        // 对话 / 机密的日常轮次永远保留连续增量。只有首次开启对话档等显式入口
+        // 才发布完整检查点，不能每 50 段重扫一次全库。
+        if !requested_checkpoint || name != StreamName::Conv {
+            return Ok(());
+        }
         let Some(driver) = self.drivers.get_mut(&name) else {
             return Ok(());
         };
         let st = self.ledger.st.stream(name);
-        if st.segs_since_snapshot < COMPACT_AFTER_SEGS {
-            return Ok(());
-        }
         let Some(snapshot) = driver.make_snapshot().await? else {
             return Ok(());
         };
         let seq = st.seq;
         let device = self.ledger.st.device_id.clone();
+        // 已提交的目录是只读发布物：同一 seq 不再重写（否则读端可能拿到与清单不符的包）。
+        if backend
+            .get(&format!(
+                "{}/manifest.msync",
+                format::committed_snapshot_dir(&device, seq)
+            ))
+            .await
+            .map_err(storage_err)?
+            .is_some()
+        {
+            log::debug!("同步：对话检查点 {seq} 已提交，跳过重复发布");
+            return Ok(());
+        }
         match driver.snapshot_layout() {
             StreamSnapshotLayout::SingleFile => {
                 for (name_in_dir, plain) in &snapshot.files {
@@ -1124,25 +1248,101 @@ impl SyncEngine {
                 }
             }
             StreamSnapshotLayout::Directory => {
+                let committed = snapshot.publication
+                    == super::streams::SnapshotPublication::CommittedManifest;
+                let dir = if committed {
+                    format::committed_snapshot_dir(&device, seq)
+                } else {
+                    format::snapshot_dir(&device, remote_stream_of(name), seq)
+                };
+                let mut sealed_files = Vec::new();
+                let mut manifest: Option<super::streams::SnapshotManifest> = None;
                 for (name_in_dir, plain) in &snapshot.files {
-                    let (kind, part) = if name_in_dir == "index.msync" {
+                    let is_manifest = name_in_dir == "manifest.msync";
+                    let (kind, part) = if name_in_dir == "index.msync" || is_manifest {
                         (StreamFileKind::SnapshotIndex, None)
                     } else {
                         let p = name_in_dir
                             .trim_start_matches("part-")
                             .trim_end_matches(".msync")
                             .parse::<u32>()
-                            .unwrap_or(0);
+                            .map_err(|_| AppError::Other("快照分包名无效".into()))?;
                         (StreamFileKind::SnapshotPart, Some(p))
                     };
-                    let path = format!(
-                        "{}/snap-{:012}/{}",
-                        name.remote_dir(&device),
-                        seq,
-                        name_in_dir
-                    );
+                    if is_manifest {
+                        manifest = Some(
+                            serde_json::from_slice::<super::streams::SnapshotManifest>(plain)
+                                .map_err(|e| AppError::Other(format!("检查点清单无效：{e}")))?,
+                        );
+                    }
                     let bytes = seal_stream_file(dk, name, kind, &device, seq, part, plain)?;
-                    backend.put(&path, &bytes).await.map_err(storage_err)?;
+                    sealed_files.push((name_in_dir.clone(), plain.clone(), bytes, part));
+                }
+                // 先封好所有包并补出密文摘要，再上传。manifest 绝不先于任何数据包发布。
+                if committed {
+                    let mut manifest = manifest.take().ok_or_else(|| {
+                        AppError::Other("已提交格式的快照没有清单".into())
+                    })?;
+                    super::streams::validate_snapshot_manifest(&manifest, &device, seq)?;
+                    for (name_in_dir, plain, bytes, part) in &sealed_files {
+                        if let Some(part) = *part {
+                            let entry = manifest
+                                .parts
+                                .get_mut(part as usize)
+                                .filter(|p| p.index == part)
+                                .ok_or_else(|| AppError::Other("检查点包号不连续".into()))?;
+                            if entry.bytes != plain.len() as u64
+                                || entry.plain_sha256 != super::streams::sha256_hex(plain)
+                            {
+                                return Err(AppError::Other("检查点包摘要与明文不一致".into()));
+                            }
+                            entry.sealed_bytes = bytes.len() as u64;
+                            entry.sealed_sha256 = super::streams::sha256_hex(bytes);
+                            let _ = name_in_dir;
+                        }
+                    }
+                    let manifest_plain = serde_json::to_vec(&manifest)
+                        .map_err(|e| AppError::Other(format!("序列化检查点清单失败：{e}")))?;
+                    for (name_in_dir, _, bytes, part) in &sealed_files {
+                        if part.is_some() {
+                            let path = format!("{dir}/{name_in_dir}");
+                            backend.put(&path, bytes).await.map_err(storage_err)?;
+                        }
+                    }
+                    let manifest_sealed = seal_stream_file(
+                        dk,
+                        name,
+                        StreamFileKind::SnapshotIndex,
+                        &device,
+                        seq,
+                        None,
+                        &manifest_plain,
+                    )?;
+                    // 最后一步才是提交标记：新客户端不会应用没有它的半成品。
+                    backend
+                        .put(&format!("{dir}/manifest.msync"), &manifest_sealed)
+                        .await
+                        .map_err(storage_err)?;
+                } else {
+                    // 旧布局必须最后上传 index，兼容已有客户端。
+                    for (name_in_dir, _, bytes, _) in sealed_files
+                        .iter()
+                        .filter(|(name, _, _, _)| name != "index.msync")
+                    {
+                        backend
+                            .put(&format!("{dir}/{name_in_dir}"), bytes)
+                            .await
+                            .map_err(storage_err)?;
+                    }
+                    for (name_in_dir, _, bytes, _) in sealed_files
+                        .iter()
+                        .filter(|(name, _, _, _)| name == "index.msync")
+                    {
+                        backend
+                            .put(&format!("{dir}/{name_in_dir}"), bytes)
+                            .await
+                            .map_err(storage_err)?;
+                    }
                 }
             }
         }
@@ -1151,7 +1351,18 @@ impl SyncEngine {
         self.ledger.st.set_stream(name, st.clone());
         driver.set_state(st);
         self.ledger.dirty.state = true;
-        self.ledger.flush(&self.files)
+        self.ledger.flush(&self.files)?;
+        // 只有整份新检查点已提交、账本已落盘之后才允许考虑回收。
+        if name == StreamName::Conv {
+            let latest = self.ledger.st.stream(name).seq;
+            if let Err(error) = self.publish_conv_retention(backend, dk).await {
+                log::warn!("同步：发布对话保留声明失败（不影响已提交检查点）: {}", plain_error(&error));
+            }
+            if let Err(error) = self.reclaim_conv_checkpoints(backend, dk).await {
+                log::warn!("同步：回收旧对话检查点失败（保留文件，下一次再试）: {}", plain_error(&error));
+            }
+        }
+        Ok(())
     }
 
     /// 记录一次落地结果：进度进 `sync_status`，变化的会话 id 发给前端。
@@ -1169,8 +1380,98 @@ impl SyncEngine {
         }
     }
 
+    /// 发布本机对话流的保留声明（只写本设备目录）。
+    async fn publish_conv_retention(
+        &mut self,
+        backend: &Arc<dyn Backend>,
+        dk: &DataKey,
+    ) -> Result<(), AppError> {
+        let st = self.ledger.st.stream(StreamName::Conv);
+        let device = self.ledger.st.device_id.clone();
+        let retention = super::streams::ConvRetention {
+            format: 1,
+            needs: st
+                .cursors
+                .iter()
+                .map(|(source, cursor)| (source.clone(), cursor.snap.max(1)))
+                .collect(),
+        };
+        let plain = serde_json::to_vec(&retention)
+            .map_err(|e| AppError::Other(format!("序列化保留声明失败：{e}")))?;
+        let sealed = seal_stream_file(
+            dk,
+            StreamName::Conv,
+            StreamFileKind::Retention,
+            &device,
+            0,
+            None,
+            &plain,
+        )?;
+        backend
+            .put(&format::conv_retention_path(&device), &sealed)
+            .await
+            .map_err(storage_err)?;
+        Ok(())
+    }
+
+    /// 回收本机已发布的旧检查点。调用方必须先保证新检查点已完整提交。
+    async fn reclaim_conv_checkpoints(
+        &mut self,
+        backend: &Arc<dyn Backend>,
+        dk: &DataKey,
+    ) -> Result<(), AppError> {
+        let device = self.ledger.st.device_id.clone();
+        let own = backend.list(&StreamName::Conv.remote_dir(&device)).await.map_err(storage_err)?;
+        let mut published = Vec::new();
+        for entry in own.iter().filter(|e| e.is_dir) {
+            if let Some(num) = entry.name.strip_prefix("checkpoint-") {
+                if let Ok(seq) = num.parse::<u64>() {
+                    if backend
+                        .get(&format!("{}/manifest.msync", format::committed_snapshot_dir(&device, seq)))
+                        .await
+                        .map_err(storage_err)?
+                        .is_some()
+                    {
+                        published.push(seq);
+                    }
+                }
+            }
+        }
+        published.sort_unstable();
+        if published.len() <= 1 {
+            return Ok(());
+        }
+        let mut peers = Vec::new();
+        for peer in self
+            .ledger
+            .st
+            .cursors
+            .keys()
+            .filter(|p| *p != &device)
+        {
+            let remote = BackendStreamRemote::new(
+                backend.clone(),
+                dk.clone(),
+                peer.clone(),
+                StreamName::Conv,
+            );
+            peers.push(super::streams::read_peer_retention(&remote).await?);
+        }
+        let reclaim = super::streams::reclaimable_checkpoints(&device, &published, &peers);
+        for seq in reclaim {
+            backend
+                .delete(&format::committed_snapshot_dir(&device, seq))
+                .await
+                .map_err(storage_err)?;
+        }
+        Ok(())
+    }
+
     fn set_stream_cursor(&mut self, name: StreamName, device: &str, cursor: Cursor) {
         let mut st = self.ledger.st.stream(name);
+        if st.cursors.get(device) == Some(&cursor) {
+            return;
+        }
         st.cursors.insert(device.to_string(), cursor);
         self.ledger.st.set_stream(name, st);
         self.ledger.dirty.state = true;
@@ -1281,6 +1582,11 @@ impl SyncEngine {
             let segments = driver.export_full_for_join(strategy).await?;
             self.pending_segments.insert(name, segments);
             self.upload_stream(name, &backend, &dk).await?;
+            if name == StreamName::Conv {
+                // 首次开启会留下较多增量段；只在这里为未来的新设备发布一次完整检查点。
+                // 它与每 50 段的旧周期压缩无关，也不会让老设备重新下载整份历史。
+                self.compact_stream(name, &backend, &dk, true).await?;
+            }
         }
         self.flush()?;
         self.publish();

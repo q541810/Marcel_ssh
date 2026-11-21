@@ -204,7 +204,7 @@ pub fn with_capture_suppressed<T>(
 /// 用 SAVEPOINT 而不是 `BEGIN`：`apply` 可能被调用方包在自己的事务里
 /// （T2/T4 落地时还要顺手做级联删除、缓存失效），嵌套的 `BEGIN` 会直接报
 /// 「cannot start a transaction within a transaction」。
-pub(super) fn in_savepoint<T>(
+pub fn in_savepoint<T>(
     conn: &Connection,
     name: &str,
     f: impl FnOnce() -> Result<T, AppError>,

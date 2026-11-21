@@ -602,9 +602,11 @@ impl MemoryStore {
         );
         // 行同步：建 changelog / 时钟表 + 连接级触发器。失败只记日志，记忆库照常可用
         // （同步坏了不该让长期记忆整个用不了）。
-        if let Err(e) =
-            crate::sync::rows::install(&conn, crate::sync::streams::memory::MEMORY_TABLES)
-        {
+        if let Err(e) = crate::sync::rows::install_for_source(
+            &conn,
+            crate::sync::streams::memory::MEMORY_TABLES,
+            Some(crate::data::DataSourceId::Memory),
+        ) {
             log::warn!("记忆库安装同步触发器失败（同步会缺失，功能照常）: {e}");
         }
         // 记忆库建立时间：这之前的消息不做后台复盘（功能上线前的旧会话不自动补，
@@ -1689,6 +1691,19 @@ impl MemoryStore {
         crate::sync::rows::apply(&conn, tables, ops_json, aliases)
     }
 
+    /// 整份检查点在同一库事务内合并，失败不会暴露半个库。
+    pub fn sync_apply_checkpoint(
+        &self,
+        ops: &[crate::sync::rows::RowOp],
+        aliases: &crate::sync::rows::AliasMap,
+        tables: &'static [crate::sync::rows::RowTable],
+    ) -> Result<crate::sync::rows::RowApplied, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::in_savepoint(&conn, "sync_memory_checkpoint", || {
+            crate::sync::rows::apply_ops(&conn, tables, ops, aliases)
+        })
+    }
+
     /// 全量导出（首次开启对话档时用）。
     pub fn sync_export_all(
         &self,
@@ -1709,6 +1724,18 @@ impl MemoryStore {
             )
             .with_db(db),
         )
+    }
+
+    /// 完整检查点逐行导出，继续使用业务连接的锁。
+    pub fn sync_for_each_checkpoint_op(
+        &self,
+        device: &str,
+        aliases: &crate::sync::rows::AliasMap,
+        tables: &'static [crate::sync::rows::RowTable],
+        sink: &mut dyn FnMut(crate::sync::rows::RowOp) -> Result<(), crate::error::AppError>,
+    ) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::for_each_checkpoint_op(&conn, tables, device, aliases, sink)
     }
 
     /// 待上传条数（按行去重）。

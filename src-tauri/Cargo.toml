@@ -40,7 +40,7 @@ futures = "^0.3"
 html2md = "^0.2"
 parking_lot = "^0.12"
 scraper = "^0.22"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 zip = "^2"
 serde_yaml = "^0.9"
 base64 = "^0.22"

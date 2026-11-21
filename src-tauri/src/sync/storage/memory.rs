@@ -18,6 +18,8 @@ struct Shared {
     files: BTreeMap<String, Vec<u8>>,
     /// 待消费的注入失败，先进先出：每次 trait 调用先取一个，取到就直接返回它。
     failures: VecDeque<StorageError>,
+    /// 指定路径的按需故障队列：用于精确打断一个快照分包。
+    path_failures: BTreeMap<String, VecDeque<StorageError>>,
     /// 调用流水（`put devices/a/seg-1` 这样的短句），测试用来断言「没有多余的请求」。
     calls: Vec<String>,
 }
@@ -49,6 +51,7 @@ impl MemoryStorage {
     /// 清掉还没消费的注入失败。
     pub fn clear_failures(&self) {
         self.shared.lock().failures.clear();
+        self.shared.lock().path_failures.clear();
     }
 
     /// 直接塞一个文件（不走 trait：不计入调用流水、不消费注入失败）。给测试预置云端状态用。
@@ -57,7 +60,21 @@ impl MemoryStorage {
         self.shared.lock().files.insert(key, bytes.to_vec());
     }
 
-    /// 直接读一个文件（同样绕过 trait）。
+    /// 直接删除一个文件（不计调用流水）：构造中断发布 / 缺包等故障现场。
+    pub fn remove(&self, path: &str) {
+        let key = rel_segments(path).expect("合法路径").join("/");
+        self.shared.lock().files.remove(&key);
+    }
+
+    /// 让指定路径的读取失败，其它请求照常。用于快照中途断网而不是整轮都断。
+    pub fn fail_path(&self, path: &str, err: StorageError) {
+        let key = rel_segments(path).expect("合法路径").join("/");
+        self.shared
+            .lock()
+            .path_failures
+            .insert(key, std::collections::VecDeque::from([err]));
+    }
+
     pub fn peek(&self, path: &str) -> Option<Vec<u8>> {
         let key = rel_segments(path).expect("合法路径").join("/");
         self.shared.lock().files.get(&key).cloned()
@@ -133,6 +150,15 @@ impl SyncStorage for MemoryStorage {
     async fn get(&self, path: &str) -> Result<Option<Vec<u8>>, StorageError> {
         let key = rel_segments(path)?.join("/");
         self.enter(format!("get {key}"))?;
+        if let Some(err) = self
+            .shared
+            .lock()
+            .path_failures
+            .get_mut(&key)
+            .and_then(VecDeque::pop_front)
+        {
+            return Err(err);
+        }
         Ok(self.shared.lock().files.get(&key).cloned())
     }
 

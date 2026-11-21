@@ -20,6 +20,7 @@ use rusqlite::Connection;
 
 use super::shared::{quote_ident, quote_literal};
 use super::RowTable;
+use crate::data::DataSourceId;
 
 /// 触发器定义的版本。**表清单变了就 +1**（加表、删表、换主键）。
 ///
@@ -37,6 +38,29 @@ pub(super) const APPLYING_TABLE: &str = "sync_applying";
 /// 2. `temp` 库里建 `sync_applying`（每次打开都要建——临时表不随库文件保留）；
 /// 3. drop 掉这条连接上所有本模块的旧触发器，再按当前清单重建。
 pub fn install(conn: &Connection, tables: &'static [RowTable]) -> Result<(), rusqlite::Error> {
+    install_for_source(conn, tables, None)
+}
+
+pub fn install_for_source(
+    conn: &Connection,
+    tables: &'static [RowTable],
+    source: Option<DataSourceId>,
+) -> Result<(), rusqlite::Error> {
+    if let Some(source) = source.filter(|s| {
+        matches!(s, DataSourceId::Conversations | DataSourceId::Memory)
+    }) {
+        conn.create_scalar_function(
+            "sync_local_changed",
+            0,
+            rusqlite::functions::FunctionFlags::empty(),
+            move |_| {
+                if let Some(bus) = super::change_bus() {
+                    bus.publish(source);
+                }
+                Ok(0)
+            },
+        )?;
+    }
     conn.execute_batch(&format!(
         "
         -- 本机改动的队列：和业务写入在同一个事务里，崩溃也不会丢。
@@ -78,7 +102,7 @@ pub fn install(conn: &Connection, tables: &'static [RowTable]) -> Result<(), rus
         for (suffix, event) in [("ins", "INSERT"), ("upd", "UPDATE"), ("del", "DELETE")] {
             // 用 CREATE TRIGGER（不是 IF NOT EXISTS）：上面刚 drop 过，这里重复说明清单里有重名表，
             // 早点报错比默默只留一个触发器好。
-            conn.execute_batch(&trigger_sql(table, suffix, event))?;
+            conn.execute_batch(&trigger_sql(table, suffix, event, source))?;
         }
     }
     Ok(())
@@ -123,7 +147,18 @@ fn drop_stale_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
 ///   一次事务里改十次也只留十条很小的记录。
 /// - `WHEN NOT EXISTS (SELECT 1 FROM temp.sync_applying)`：落地期间不记录，否则每台设备都会
 ///   把别人的改动再捕获一遍，两边来回弹。
-fn trigger_sql(table: &RowTable, suffix: &str, event: &str) -> String {
+fn trigger_sql(
+    table: &RowTable,
+    suffix: &str,
+    event: &str,
+    source: Option<DataSourceId>,
+) -> String {
+    let notify = match source {
+        Some(DataSourceId::Conversations) => Some(DataSourceId::Conversations),
+        Some(DataSourceId::Memory) => Some(DataSourceId::Memory),
+        _ => None,
+    };
+
     let (row_id, op) = match event {
         "INSERT" => (format!("NEW.{}", quote_ident(table.pk)), "i"),
         "UPDATE" => (format!("NEW.{}", quote_ident(table.pk)), "u"),
@@ -137,6 +172,13 @@ fn trigger_sql(table: &RowTable, suffix: &str, event: &str) -> String {
         row_id = row_id
     );
 
+    let notify_sql = if notify.is_some() {
+        "
+            SELECT sync_local_changed();
+        "
+    } else {
+        ""
+    };
     format!(
         "
         CREATE TEMP TRIGGER {name} AFTER {event} ON {table}
@@ -144,6 +186,7 @@ fn trigger_sql(table: &RowTable, suffix: &str, event: &str) -> String {
         BEGIN
             INSERT INTO sync_changelog(tbl, row_id, op)
             VALUES ({table_lit}, {row_id}, '{op}');
+            {notify_sql}
         END;
         ",
         name = quote_ident(&format!(

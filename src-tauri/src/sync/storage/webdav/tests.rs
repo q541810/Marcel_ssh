@@ -344,6 +344,8 @@ struct Dav {
     // 怪癖
     forbid_top_level_mkcol: bool,
     redirect_collection_delete: bool,
+    /// 一律拒绝删除（模拟「能写能读、就是删不掉」的位置，比如 OpenList 在 MySQL 上的已知问题）。
+    forbid_delete: bool,
     html_for_propfind: bool,
     reject_after: Option<usize>,
 }
@@ -361,6 +363,7 @@ impl Dav {
             base_url: String::new(),
             forbid_top_level_mkcol: false,
             redirect_collection_delete: false,
+            forbid_delete: false,
             html_for_propfind: false,
             reject_after: None,
         }
@@ -565,6 +568,9 @@ async fn handle(State(dav): State<Arc<Mutex<Dav>>>, req: Request<Body>) -> Respo
             reply(201)
         }
         "DELETE" => {
+            if d.forbid_delete {
+                return reply(500);
+            }
             if d.files.remove(&rel).is_some() {
                 return reply(204);
             }
@@ -718,6 +724,23 @@ async fn missing_write_permission_surfaces_as_permission_error() {
     let (_state, url) = spawn(dav).await;
     let err = client_for(&url, "marcel-sync").probe().await.unwrap_err();
     assert!(matches!(err, StorageError::Permission(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn probe_tolerates_a_server_that_refuses_delete() {
+    // 「能写能读、偏偏删不掉」的位置（实测有：OpenList 在 MySQL 上删除接口回 500）不该挡住开启同步。
+    let mut dav = Dav::new(Flavor::Nextcloud);
+    dav.forbid_delete = true;
+    let (_state, url) = spawn(dav).await;
+    let s = client_for(&url, "marcel-sync");
+    s.probe().await.expect("删不掉不该让自检失败");
+    // 服务器不让删，探针文件就留在那儿；读写照常。
+    s.put("devices/dev1/seg-1.msync", b"1").await.unwrap();
+    assert_eq!(
+        s.get("devices/dev1/seg-1.msync").await.unwrap(),
+        Some(b"1".to_vec())
+    );
+    assert_eq!(s.list("devices").await.unwrap().len(), 1);
 }
 
 #[tokio::test]

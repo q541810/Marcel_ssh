@@ -108,6 +108,7 @@ pub fn valid_source_key(key: &str) -> bool {
 
 /// 对某台其它设备「读到哪了」。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "CursorParts")]
 pub struct Cursor {
     /// 已吸收的最新快照序号。
     #[serde(default)]
@@ -115,7 +116,44 @@ pub struct Cursor {
     /// 已吸收到的最大序号（快照与增量段共用一套编号，吸收了快照就至少到它的序号）。
     #[serde(default)]
     pub seg: u64,
+    /// 已在这台对端建立过同步检查点。必须落盘，不能靠进程内状态猜。
+    #[serde(default)]
+    pub initialized: bool,
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorParts {
+    #[serde(default)]
+    snap: u64,
+    #[serde(default)]
+    seg: u64,
+    #[serde(default)]
+    initialized: Option<bool>,
+}
+
+impl From<CursorParts> for Cursor {
+    fn from(parts: CursorParts) -> Self {
+        Self {
+            snap: parts.snap,
+            seg: parts.seg,
+            initialized: parts
+                .initialized
+                .unwrap_or(parts.snap > 0 || parts.seg > 0),
+        }
+    }
+}
+
+impl Cursor {
+    pub fn at(seq: u64) -> Self {
+        Self { snap: 0, seg: seq, initialized: true }
+    }
+
+    pub fn snapshot(seq: u64) -> Self {
+        Self { snap: seq, seg: seq, initialized: true }
+    }
+}
+
 
 /// 对一台设备的认知（从它写的文件头里来）。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,7 +515,7 @@ mod tests {
         };
         state
             .cursors
-            .insert("dev2".into(), Cursor { snap: 3, seg: 9 });
+            .insert("dev2".into(), Cursor { snap: 3, seg: 9, initialized: true });
         files.save_state(&state).unwrap();
 
         let mut mirror = Mirror::new();
@@ -565,7 +603,7 @@ mod tests {
         let st = &back.state;
         assert_eq!(st.device_id, "dev-a");
         assert_eq!(st.seq, 17);
-        assert_eq!(st.cursors["dev-b"], Cursor { snap: 5, seg: 9 });
+        assert_eq!(st.cursors["dev-b"], Cursor { snap: 5, seg: 9, initialized: true });
         assert_eq!(st.last_sync_at.as_deref(), Some("2026-10-01T00:00:00Z"));
         assert_eq!(st.segs_since_snapshot, 4);
         assert_eq!(
@@ -628,11 +666,11 @@ mod tests {
             segs_since_snapshot: 3,
             ..Default::default()
         };
-        st.cursors.insert("d".into(), Cursor { snap: 1, seg: 2 });
+        st.cursors.insert("d".into(), Cursor { snap: 1, seg: 2, initialized: true });
         let view = st.stream(StreamName::Config);
         assert_eq!(view.seq, 9);
         assert_eq!(view.segs_since_snapshot, 3);
-        assert_eq!(view.cursors["d"], Cursor { snap: 1, seg: 2 });
+        assert_eq!(view.cursors["d"], Cursor { snap: 1, seg: 2, initialized: true });
         assert!(view.applied);
 
         // 写回顶层

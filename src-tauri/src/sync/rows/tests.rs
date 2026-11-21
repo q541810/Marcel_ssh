@@ -1847,6 +1847,94 @@ fn export_all_carries_unknown_columns_and_db_header() {
     );
 }
 
+#[test]
+fn checkpoint_export_preserves_tombstones_unknown_tables_and_extra_columns() {
+    let c = installed();
+    apply_ops(
+        &c,
+        &[
+            row_op(
+                "conversations",
+                "gone",
+                100,
+                BTreeMap::from([
+                    ("connection_id".to_string(), json!("srv1")),
+                    ("title".to_string(), json!("removed")),
+                ]),
+            ),
+            RowOp {
+                table: "future_table".into(),
+                id: "future-row".into(),
+                hlc: Hlc { ms: 120, counter: 0, device: "B".into() },
+                cols: Some(BTreeMap::from([("new_field".into(), json!("kept"))])),
+                extra: None,
+                del: false,
+            },
+        ],
+        &no_aliases(),
+    );
+    apply_ops(
+        &c,
+        &[RowOp {
+            table: "conversations".into(),
+            id: "gone".into(),
+            hlc: Hlc { ms: 200, counter: 0, device: "B".into() },
+            cols: None,
+            extra: None,
+            del: true,
+        }],
+        &no_aliases(),
+    );
+    let mut ops = Vec::new();
+    for_each_checkpoint_op(&c, TABLES, "A", &no_aliases(), &mut |op| {
+        ops.push(op);
+        Ok(())
+    })
+    .unwrap();
+    let tombstone = ops
+        .iter()
+        .find(|op| op.table == "conversations" && op.id == "gone")
+        .expect("墓碑不能被丢弃");
+    assert!(tombstone.del);
+    assert_eq!(tombstone.hlc.ms, 200);
+    assert!(tombstone.cols.is_none());
+    let unknown = ops
+        .iter()
+        .find(|op| op.table == "future_table")
+        .expect("未知表的原始 op 必须随检查点保留");
+    assert_eq!(unknown.cols.as_ref().unwrap()["new_field"], json!("kept"));
+}
+
+#[test]
+fn local_row_writes_publish_identity_only_and_remote_apply_does_not_echo() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = crate::agent::conversation::ConversationDb::new(dir.path().join("c.db")).unwrap();
+    // 全局总线可能已由其他生产接线安装；没有订阅者时写库也保持静默成功。
+    let before = db.sync_pending_count().unwrap();
+    db.create_conversation("c1", "local-change").unwrap();
+    assert_eq!(db.sync_pending_count().unwrap(), before + 1);
+    let ops = [RowOp {
+        table: "conversations".into(),
+        id: "remote-only".into(),
+        hlc: Hlc { ms: 999, counter: 0, device: "B".into() },
+        cols: Some(BTreeMap::from([
+            ("id".into(), json!("remote-only")),
+            ("connection_id".into(), json!("c1")),
+            ("title".into(), json!("remote")),
+            ("created_at".into(), json!("2026-01-01T00:00:00Z")),
+            ("updated_at".into(), json!("2026-01-01T00:00:00Z")),
+        ])),
+        extra: None,
+        del: false,
+    }];
+    db.sync_apply_checkpoint(&ops, &no_aliases()).unwrap();
+    assert_eq!(
+        db.sync_pending_count().unwrap(),
+        before + 1,
+        "远端落地不能产生新的本机待上传通知"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 段格式
 // ---------------------------------------------------------------------------

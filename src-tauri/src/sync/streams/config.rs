@@ -38,7 +38,8 @@ use super::super::sources::{AdapterUpdate, GuardWarning, SourceAdapter};
 use super::super::store::{Cursor, LedgerFiles, StreamName, StreamState};
 use super::super::types::JoinStrategy;
 use super::{
-    StreamApplied, StreamDriver, StreamFileKind, StreamRemote, StreamSnapshot, StreamSnapshotLayout,
+    SnapshotApplied, StreamApplied, StreamDriver, StreamFileKind, StreamRemote, StreamSnapshot,
+    StreamSnapshotLayout,
 };
 use crate::config::keychain::SecretSlot;
 use crate::error::AppError;
@@ -294,10 +295,7 @@ impl<'a> ConfigStreamDriver<'a> {
                 let snap = format::decode_snapshot(dk, device, latest, &bytes)
                     .map_err(|e| self.classify(device, e))?;
                 self.ledger.ingest_snapshot(&snap, wall, rfc3339_from_ms);
-                cursor = Cursor {
-                    snap: latest,
-                    seg: latest,
-                };
+                cursor = Cursor::snapshot(latest);
                 self.ledger.set_cursor(device, cursor.clone());
             }
         }
@@ -775,22 +773,22 @@ impl<'a> StreamDriver for ConfigStreamDriver<'a> {
         &mut self,
         remote: &dyn StreamRemote,
         index_seq: u64,
-    ) -> Result<StreamApplied, AppError> {
+    ) -> Result<SnapshotApplied, AppError> {
         let path =
             format::stream_snapshot_path(remote.peer(), format::RemoteStream::Config, index_seq);
         let Some(bytes) = remote.get(&path).await? else {
-            // 列出来又读不到（对方正在压缩）：下一轮重新列
-            return Ok(StreamApplied::default());
+            // 列出来又读不到（对方正在压缩）：不算完成，绝不能推进游标。
+            return Ok(SnapshotApplied::Incomplete);
         };
         let plain = remote.open(StreamFileKind::Snapshot, index_seq, None, &bytes)?;
         let snap: SnapshotFile = decode_snapshot_plain(remote.peer(), index_seq, &plain)?;
         let changed = self
             .ledger
             .ingest_snapshot(&snap, self.now_ms(), rfc3339_from_ms);
-        Ok(StreamApplied {
+        Ok(SnapshotApplied::Complete(StreamApplied {
             changed: !changed.is_empty(),
             ..Default::default()
-        })
+        }))
     }
 
     async fn land(&mut self) -> Result<StreamApplied, AppError> {
@@ -819,6 +817,7 @@ impl<'a> StreamDriver for ConfigStreamDriver<'a> {
         Ok(Some(StreamSnapshot {
             files,
             total_items: mirrors.len(),
+            publication: super::SnapshotPublication::Legacy,
         }))
     }
 }

@@ -8,6 +8,8 @@
 //! 防抖窗口内的本机改动不被吞、大量删除闸（放行 / 撤销）、FormatTooNew、配置损坏恢复、版本升级、
 //! known_hosts 指纹冲突、同步记录与撤销、压缩、停止同步、机密不落盘、actor 触发。
 
+mod live;
+
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -18,7 +20,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use zeroize::Zeroizing;
 
-use super::backends::MemoryBackends;
+use super::backends::{BackendFactory, MemoryBackends};
 use super::core::crypto::{self, FileKind};
 use super::core::format::{self, DEVICES_DIR, META_FILE};
 use super::core::Platform;
@@ -79,7 +81,8 @@ struct Dev {
     known_hosts: Arc<KnownHostsStore>,
     secrets: Arc<MemorySecrets>,
     events: Arc<TestEvents>,
-    cloud: MemoryStorage,
+    cloud: Arc<dyn super::backends::Backend>,
+    backends: Option<Arc<dyn super::backends::BackendFactory>>,
     clock: Arc<AtomicU64>,
     platform: Platform,
     view: Arc<SharedView>,
@@ -108,6 +111,25 @@ impl Dev {
     async fn new(
         name: &'static str,
         cloud: &MemoryStorage,
+        clock: &Arc<AtomicU64>,
+        platform: Platform,
+    ) -> Dev {
+        Self::new_with_backend(name, Arc::new(cloud.clone()), clock, platform).await
+    }
+
+    async fn new_with_backend(
+        name: &'static str,
+        cloud: Arc<dyn super::backends::Backend>,
+        clock: &Arc<AtomicU64>,
+        platform: Platform,
+    ) -> Dev {
+        Self::new_with_backend_factory(name, cloud, None, clock, platform).await
+    }
+
+    async fn new_with_backend_factory(
+        name: &'static str,
+        cloud: Arc<dyn super::backends::Backend>,
+        backends: Option<Arc<dyn super::backends::BackendFactory>>,
         clock: &Arc<AtomicU64>,
         platform: Platform,
     ) -> Dev {
@@ -167,6 +189,7 @@ impl Dev {
             secrets: Arc::new(MemorySecrets::new()),
             events: Arc::new(TestEvents::default()),
             cloud: cloud.clone(),
+            backends,
             clock: clock.clone(),
             platform,
             view: Arc::new(SharedView::new(HistoryStore::empty(
@@ -221,8 +244,10 @@ impl Dev {
             connections: self.connections.clone(),
             known_hosts: self.known_hosts.clone(),
             secrets,
-            backends: Arc::new(MemoryBackends {
-                storage: self.cloud.clone(),
+            backends: self.backends.clone().unwrap_or_else(|| {
+                Arc::new(SharedBackends {
+                    storage: self.cloud.clone(),
+                })
             }),
             events: self.events.clone(),
             now_ms: Arc::new(move || clock.fetch_add(1000, Ordering::SeqCst)),
@@ -593,11 +618,26 @@ fn host_entry(fp: &str) -> KnownHostEntry {
     }
 }
 
+struct SharedBackends {
+    storage: Arc<dyn super::backends::Backend>,
+}
+
+impl BackendFactory for SharedBackends {
+    fn build(
+        &self,
+        _config: &StorageConfig,
+        _secret: Option<&str>,
+    ) -> Result<Arc<dyn super::backends::Backend>, super::storage::StorageError> {
+        Ok(self.storage.clone())
+    }
+}
+
 async fn pair() -> (Dev, Dev, MemoryStorage) {
     let cloud = MemoryStorage::new();
+    let shared = Arc::new(cloud.clone());
     let clock = new_clock();
-    let a = Dev::new("A", &cloud, &clock, Platform::Desktop).await;
-    let b = Dev::new("B", &cloud, &clock, Platform::Desktop).await;
+    let a = Dev::new("A", &shared, &clock, Platform::Desktop).await;
+    let b = Dev::new("B", &shared, &clock, Platform::Desktop).await;
     (a, b, cloud)
 }
 
@@ -2409,13 +2449,15 @@ async fn private_keys_sync_and_survive_a_restart() {
         .dir_key_store
         .import_text(&pem, "公司跳板机", None)
         .expect("导入私钥");
-    a.add_conn("key-server", "私钥服务器", "key-server.test", "deploy").await;
+    a.add_conn("key-server", "私钥服务器", "key-server.test", "deploy")
+        .await;
     a.edit_conn("key-server", |connection| {
         connection.auth_method = "PrivateKey".into();
         connection.key_id = Some(meta.id.clone());
         connection.jump_key_id = Some(meta.id.clone());
         connection.key_path = Some("/device-a/private-key".into());
-    }).await;
+    })
+    .await;
     a.sync().await;
     b.sync().await;
 
@@ -2749,17 +2791,8 @@ async fn a_new_device_pulls_snapshot_parts_newest_first_with_progress() {
     }
     a.enable_conv_tier().await;
 
-    // 制造一次快照：段数攒够 50（COMPACT_AFTER_SEGS）时引擎才会压缩。
-    // 用快照进度的形状验证「按 updatedAt 从新到旧」——这里直接构造 N 个快照段，
-    // 通过多次改标题 + 同步把 segs_since_snapshot 推过阈值。
-    for i in 0..(super::engine::COMPACT_AFTER_SEGS as usize) {
-        a.conv()
-            .update_conversation_title(&ids[0], &format!("第{i}次改名"))
-            .expect("改标题");
-        a.sync().await;
-    }
     let device_a = a.status().device_id.clone().unwrap();
-    let snap_prefix = format!("{}/conv/snap-", format::device_dir(&device_a));
+    let snap_prefix = format!("{}/conv/checkpoint-", format::device_dir(&device_a));
     let snapshot_files: Vec<String> = cloud
         .paths()
         .into_iter()
@@ -2767,16 +2800,32 @@ async fn a_new_device_pulls_snapshot_parts_newest_first_with_progress() {
         .collect();
     assert!(
         !snapshot_files.is_empty(),
-        "攒够 50 段后应该写出分包快照: {:?}",
+        "首次开启对话档后应该发布检查点: {:?}",
         cloud.paths()
     );
     assert!(
-        snapshot_files.iter().any(|p| p.ends_with("index.msync")),
-        "快照目录里必须有 index.msync: {snapshot_files:?}"
+        snapshot_files.iter().any(|p| p.ends_with("manifest.msync")),
+        "检查点必须有最终提交清单: {snapshot_files:?}"
     );
-    assert!(
-        snapshot_files.iter().any(|p| p.contains("part-")),
-        "快照目录里必须有分包: {snapshot_files:?}"
+    let committed_dirs = snapshot_files
+        .iter()
+        .filter(|p| p.ends_with("manifest.msync"))
+        .count();
+    // 普通轮次不再因为攒够 50 段而重新导出整库。
+    for i in 0..(super::engine::COMPACT_AFTER_SEGS as usize) {
+        a.conv()
+            .update_conversation_title(&ids[0], &format!("第{i}次改名"))
+            .expect("改标题");
+        a.sync().await;
+    }
+    assert_eq!(
+        cloud
+            .paths()
+            .iter()
+            .filter(|p| p.ends_with("/manifest.msync"))
+            .count(),
+        committed_dirs,
+        "日常增量不应周期生成检查点"
     );
 
     let mut c = Dev::new("C", &cloud, &new_clock(), Platform::Desktop).await;
@@ -2789,26 +2838,19 @@ async fn a_new_device_pulls_snapshot_parts_newest_first_with_progress() {
         assert_eq!(c.conv_message_count(id), 22, "会话{i} 的消息要完整");
     }
 
-    // 进度：落地过程中「已同步 N / 共 M 段对话」从 0 涨到 3（最后一次 = 全部落完）
-    let statuses = c.events.statuses.lock().clone();
-    let mut progresses: Vec<(usize, usize)> = Vec::new();
-    for status in &statuses {
-        for stream in &status.streams {
-            if stream.key == "conv" {
-                if let Some(p) = &stream.progress {
-                    progresses.push((p.done, p.total));
-                }
-            }
-        }
-    }
-    // 3 段小对话会全落在**同一个分包**里（分包粒度是 4 MB，不是按会话数），所以
-    // 这里只能看到一次进度。中间进度的那条路径由
-    // `snapshot_progress_is_reported_once_per_part`（真正多包）单独钉住。
+    // 新版按已校验分包计数，只有完整合并后才清理进度；这里的小库正好一个包。
+    let progresses = c
+        .events
+        .statuses
+        .lock()
+        .iter()
+        .filter_map(|s| s.streams.iter().find(|stream| stream.key == "conv"))
+        .filter_map(|stream| stream.progress.as_ref())
+        .map(|p| (p.done, p.total))
+        .collect::<Vec<_>>();
     assert!(
-        progresses
-            .iter()
-            .any(|(done, total)| *done == 3 && *total == 3),
-        "最终进度应该是 3 / 3: {progresses:?}"
+        progresses.iter().any(|(done, total)| *done == 1 && *total == 1),
+        "最终进度应该是 1 个已写入分包 / 1: {progresses:?}"
     );
 }
 
@@ -2849,7 +2891,261 @@ async fn deleting_more_than_twenty_conversations_is_held_until_confirmed() {
     assert!(a.status().held.is_none(), "放行后不再有扣留项");
 }
 
-/// 同一台设备重跑多轮不重复上传：没有改动时远端文件集合不变，改动一次只多一个段。
+#[tokio::test(flavor = "multi_thread")]
+async fn an_initialized_peer_only_reads_new_segments_when_a_snapshot_appears() {
+    let (mut a, mut b, cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("增量优先", 2);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    b.sync().await;
+    // 首次开启已发布过新检查点；再补 50 段也不会重新搬历史。
+    for i in 0..super::engine::COMPACT_AFTER_SEGS {
+        a.conv()
+            .update_conversation_title(&conv_id, &format!("第 {i} 次"))
+            .unwrap();
+        a.sync().await;
+    }
+    assert!(
+        cloud
+            .paths()
+            .iter()
+            .any(|p| p.contains("/conv/checkpoint-") && p.ends_with("manifest.msync")),
+        "首轮应生成真实已提交检查点"
+    );
+    b.sync().await;
+    a.conv()
+        .save_message(
+            &conv_id,
+            "user",
+            "只应该传这一句",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .unwrap();
+    a.sync().await;
+    cloud.clear_calls();
+    b.sync().await;
+    let calls = cloud.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("get ") && c.contains("/snap-")),
+        "已有检查点的设备不该整份搬快照：{calls:?}"
+    );
+    assert_eq!(b.conv_message_count(&conv_id), 5);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_snapshot_index_never_advances_the_cursor() {
+    let (mut a, _b, cloud) = pair().await;
+    let conv_id = a.new_chat("尚未发布的快照", 2);
+    let (_rk, code) = a.create().await;
+    a.enable_conv_tier().await;
+    let device = a.status().device_id.unwrap();
+    let seq = a
+        .engine
+        .ledger
+        .st
+        .stream(super::store::StreamName::Conv)
+        .seq;
+    let dir = format!("devices/{device}/conv/snap-{seq:012}");
+    let plain = serde_json::to_vec(&crate::sync::streams::conv::ConvSnapshotIndex {
+        format: 1,
+        kind: "conv-index".into(),
+        device: device.clone(),
+        seq,
+        conversations: vec![crate::sync::streams::conv::ConvIndexEntry {
+            id: conv_id,
+            updated_at: String::new(),
+            parts: vec![0],
+            bytes: 1,
+            db: "conversations".into(),
+        }],
+        parts: vec![crate::sync::streams::conv::ConvPartEntry {
+            index: 0,
+            bytes: 1,
+            db: "conversations".into(),
+        }],
+    })
+    .unwrap();
+    let dk = crate::sync::core::crypto::DataKey::from_b64(
+        &a.secrets.get(&SecretSlot::SyncDataKey).unwrap().unwrap(),
+    )
+    .unwrap();
+    cloud.insert(
+        &format!("{dir}/part-0000.msync"),
+        &crate::sync::streams::seal_stream_file(
+            &dk,
+            super::store::StreamName::Conv,
+            super::streams::StreamFileKind::SnapshotPart,
+            &device,
+            seq,
+            Some(0),
+            &plain,
+        )
+        .unwrap(),
+    );
+    let mut c = Dev::new("C", &cloud, &new_clock(), Platform::Android).await;
+    c.join_code(&code).await.unwrap();
+    let result = c
+        .engine
+        .enable_tier("conversation", true, JoinStrategy::Merge)
+        .await;
+    assert!(result.is_err(), "索引缺失不能让这一轮快照算成功");
+    assert!(
+        c.engine
+            .ledger
+            .st
+            .stream(super::store::StreamName::Conv)
+            .cursors
+            .is_empty(),
+        "没有读到快照就不能推进游标"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_checkpoint_without_a_manifest_is_never_applied() {
+    let (mut a, mut c, cloud) = pair().await;
+    let id = a.new_chat("未提交的整库", 4);
+    let (_rk, code) = a.create().await;
+    a.enable_conv_tier().await;
+    let device = a.status().device_id.unwrap();
+    let prefix = format!("devices/{device}/conv/checkpoint-");
+    let manifest = cloud
+        .paths()
+        .into_iter()
+        .find(|p| p.starts_with(&prefix) && p.ends_with("manifest.msync"))
+        .expect("发布过检查点");
+    let saved = cloud.peek(&manifest).unwrap();
+    cloud.remove(&manifest);
+    c.join_code(&code).await.unwrap();
+    let err = c
+        .engine
+        .enable_tier("conversation", true, JoinStrategy::Merge)
+        .await
+        .expect_err("半成品不能算同步完成");
+    assert!(super::engine::plain_error(&err).contains("尚未完整发布"));
+    assert!(!c.conv_exists(&id));
+    let cursor = c
+        .engine
+        .ledger
+        .st
+        .stream(super::store::StreamName::Conv)
+        .cursors
+        .get(&device)
+        .cloned();
+    assert_eq!(cursor, None, "半成品不能推进正式游标");
+    // 模拟对端完成最后一步上传；下轮才完整可见。
+    cloud.insert(&manifest, &saved);
+    c.sync().await;
+    assert!(c.conv_exists(&id));
+    assert_eq!(c.conv_message_count(&id), 8);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_checkpoint_is_never_reclaimed_without_peer_declarations() {
+    let (mut a, mut b, cloud) = pair().await;
+    a.new_chat("保留协议", 2);
+    let (_rk, code) = a.create().await;
+    a.enable_conv_tier().await;
+    let device = a.status().device_id.clone().unwrap();
+    let prefix = format!("devices/{device}/conv/checkpoint-");
+    let before = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    assert!(!before.is_empty(), "首轮应发布检查点");
+    b.join_code(&code).await.unwrap();
+    b.enable_conv_tier().await;
+    a.sync().await;
+    // B 已成功应用，但没有保留声明；A 再跑也不会把唯一检查点删掉。
+    let after = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    assert_eq!(after, before, "旧设备没有保留声明时不能回收检查点");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_multipart_checkpoint_resumes_only_missing_parts_after_a_restart() {
+    let (mut a, mut c, cloud) = pair().await;
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let id = a.new_chat(&format!("大包 {i}"), 24);
+        for _ in 0..4 {
+            a.conv()
+                .save_message(
+                    &id,
+                    "assistant",
+                    &"用于制造多个检查点分包的长消息".repeat(1600),
+                    "2026-01-01T00:00:00Z",
+                    None,
+                    None,
+                )
+                .unwrap();
+        }
+        ids.push(id);
+    }
+    let (_rk, code) = a.create().await;
+    a.enable_conv_tier().await;
+    let device = a.status().device_id.unwrap();
+    let prefix = format!("devices/{device}/conv/checkpoint-");
+    let mut parts = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.starts_with(&prefix) && p.contains("part-"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    assert!(parts.len() >= 3, "测试必须真实产生多包: {parts:?}");
+    cloud.fail_path(&parts[1], super::storage::StorageError::Network("下载中断".into()));
+    c.join_code(&code).await.unwrap();
+    let _ = c
+        .engine
+        .enable_tier("conversation", true, JoinStrategy::Merge)
+        .await
+        .expect_err("断网不能完成快照");
+    assert!(ids.iter().all(|id| !c.conv_exists(id)), "半份检查点不可见");
+    assert!(c
+        .engine
+        .ledger
+        .st
+        .stream(super::store::StreamName::Conv)
+        .cursors
+        .get(&device)
+        .is_none());
+
+    c.rebuild_engine("1.12.0", Vec::new());
+    cloud.clear_calls();
+    c.sync().await;
+    // enable_tier 已经成功开关过，失败重试由自动 Full 轮负责；重复 enable 不会强制跑一轮。
+    c.enable_conv_tier().await;
+    let calls = cloud.calls();
+    assert!(
+        !calls.contains(&format!("get {}", parts[0])),
+        "已校验并落盘的第 0 包不应重下: {calls:?}"
+    );
+    assert!(calls.contains(&format!("get {}", parts[1])), "中断包要续取");
+    for id in ids {
+        assert!(c.conv_exists(&id));
+        assert_eq!(c.conv_message_count(&id), 52);
+    }
+    let cache = crate::data::DataSourceId::SyncState
+        .path(c.dir.path())
+        .join("checkpoint-cache");
+    assert!(
+        !cache.exists()
+            || std::fs::read_dir(&cache)
+                .expect("读暂存目录")
+                .next()
+                .is_none(),
+        "游标持久化后应清理密文暂存"
+    );
+}
+
+
 #[tokio::test(flavor = "multi_thread")]
 async fn repeated_rounds_do_not_reupload_conversation_segments() {
     let (mut a, mut b, cloud) = paired_and_synced().await;
@@ -2897,13 +3193,10 @@ async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
         .enable_tier("conversation", false, JoinStrategy::Merge)
         .await
         .expect("关闭对话档");
-
-    // A 继续改对话：B 不应拉取，也不应写任何 conv 文件
     a.conv()
         .update_conversation_title(&conv_id, "关档后的改动")
         .expect("改标题");
     a.sync().await;
-    let b_device = b.status().device_id.clone().unwrap();
     let before_paths = cloud.paths();
     b.sync().await;
     assert_eq!(
@@ -2921,6 +3214,7 @@ async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
     b.conv()
         .update_conversation_title(&conv_id, "B 本机改的")
         .expect("改标题");
+    let before_b_local_sync = cloud.paths();
     b.sync().await;
     a.sync().await;
     assert_eq!(
@@ -2928,14 +3222,10 @@ async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
         Some("关档后的改动"),
         "关着对话档时本机改动不该传出去"
     );
-    let b_conv_files: Vec<String> = cloud
-        .paths()
-        .into_iter()
-        .filter(|p| p.contains(&format!("{b_device}/conv/")))
-        .collect();
-    assert!(
-        b_conv_files.is_empty(),
-        "关着对话档的设备不该有 conv 文件: {b_conv_files:?}"
+    assert_eq!(
+        cloud.paths(),
+        before_b_local_sync,
+        "关档后不应新增或修改 B 的远端文件"
     );
 }
 
