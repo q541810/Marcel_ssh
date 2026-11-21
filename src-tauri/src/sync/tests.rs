@@ -2849,7 +2849,9 @@ async fn a_new_device_pulls_snapshot_parts_newest_first_with_progress() {
         .map(|p| (p.done, p.total))
         .collect::<Vec<_>>();
     assert!(
-        progresses.iter().any(|(done, total)| *done == 1 && *total == 1),
+        progresses
+            .iter()
+            .any(|(done, total)| *done == 1 && *total == 1),
         "最终进度应该是 1 个已写入分包 / 1: {progresses:?}"
     );
 }
@@ -3100,7 +3102,10 @@ async fn a_multipart_checkpoint_resumes_only_missing_parts_after_a_restart() {
         .collect::<Vec<_>>();
     parts.sort();
     assert!(parts.len() >= 3, "测试必须真实产生多包: {parts:?}");
-    cloud.fail_path(&parts[1], super::storage::StorageError::Network("下载中断".into()));
+    cloud.fail_path(
+        &parts[1],
+        super::storage::StorageError::Network("下载中断".into()),
+    );
     c.join_code(&code).await.unwrap();
     let _ = c
         .engine
@@ -3144,7 +3149,6 @@ async fn a_multipart_checkpoint_resumes_only_missing_parts_after_a_restart() {
         "游标持久化后应清理密文暂存"
     );
 }
-
 
 #[tokio::test(flavor = "multi_thread")]
 async fn repeated_rounds_do_not_reupload_conversation_segments() {

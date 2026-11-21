@@ -28,10 +28,7 @@ fn test_root(prefix: &str) -> String {
 
 async fn remove_root(storage: &dyn SyncStorage, prefix: &str, root: &str) {
     let relative = root.strip_prefix(prefix).expect("测试根目录位于隔离前缀内");
-    storage
-        .delete(relative)
-        .await
-        .expect("删除本轮测试数据");
+    storage.delete(relative).await.expect("删除本轮测试数据");
     assert!(
         storage.list(relative).await.unwrap().is_empty(),
         "测试目录必须清空"
@@ -159,7 +156,8 @@ impl LiveStorage {
             Self::WebDav => (
                 StorageConfig::WebDav {
                     url: required("MARCEL_TEST_WEBDAV_URL").expect("缺少 WebDAV 测试地址"),
-                    username: required("MARCEL_TEST_WEBDAV_USERNAME").expect("缺少 WebDAV 测试账号"),
+                    username: required("MARCEL_TEST_WEBDAV_USERNAME")
+                        .expect("缺少 WebDAV 测试账号"),
                     root: root.to_string(),
                 },
                 Zeroizing::new(
@@ -202,13 +200,20 @@ impl BackendFactory for LiveBackends {
         secret: Option<&str>,
     ) -> Result<Arc<dyn Backend>, super::super::storage::StorageError> {
         let storage: Arc<dyn Backend> = match config {
-            StorageConfig::WebDav { url, username, root } => Arc::new(WebDavStorage::new(
+            StorageConfig::WebDav {
+                url,
+                username,
+                root,
+            } => Arc::new(WebDavStorage::new(
                 url,
                 username,
                 secret.unwrap_or(""),
                 root,
             )?),
-            StorageConfig::Sftp { connection_id, root } => {
+            StorageConfig::Sftp {
+                connection_id,
+                root,
+            } => {
                 let saved = futures::executor::block_on(self.connections.read())
                     .get_by_id(connection_id)
                     .cloned()
@@ -302,11 +307,17 @@ impl Backend for InterruptibleBackend {
 
 #[async_trait]
 impl SyncStorage for InterruptibleBackend {
-    async fn list(&self, dir: &str) -> Result<Vec<RemoteEntry>, super::super::storage::StorageError> {
+    async fn list(
+        &self,
+        dir: &str,
+    ) -> Result<Vec<RemoteEntry>, super::super::storage::StorageError> {
         self.storage.list(dir).await
     }
 
-    async fn get(&self, path: &str) -> Result<Option<Vec<u8>>, super::super::storage::StorageError> {
+    async fn get(
+        &self,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, super::super::storage::StorageError> {
         *self.fault.gets.lock().entry(path.to_string()).or_default() += 1;
         let fail = {
             let mut armed = self.fault.armed.lock();
@@ -318,7 +329,12 @@ impl SyncStorage for InterruptibleBackend {
             }
         };
         if fail {
-            *self.fault.failures.lock().entry(path.to_string()).or_default() += 1;
+            *self
+                .fault
+                .failures
+                .lock()
+                .entry(path.to_string())
+                .or_default() += 1;
             return Err(super::super::storage::StorageError::Network(
                 "验收：指定检查点包下载失败一次".into(),
             ));
@@ -326,7 +342,11 @@ impl SyncStorage for InterruptibleBackend {
         self.storage.get(path).await
     }
 
-    async fn put(&self, path: &str, bytes: &[u8]) -> Result<(), super::super::storage::StorageError> {
+    async fn put(
+        &self,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<(), super::super::storage::StorageError> {
         self.storage.put(path, bytes).await
     }
 
@@ -371,7 +391,8 @@ async fn production_pair(
     let (storage, password) = kind.config(root);
     if matches!(storage, StorageConfig::Sftp { .. }) {
         let (host, username, _) = sftp_config().expect("缺少 SFTP 测试配置");
-        a.add_conn("live-sftp", "同步测试机", &host, &username).await;
+        a.add_conn("live-sftp", "同步测试机", &host, &username)
+            .await;
         a.secrets
             .set(&SecretSlot::SshPassword("live-sftp".into()), &password)
             .unwrap();
@@ -412,9 +433,14 @@ async fn two_devices_on_a_real_server(kind: LiveStorage) {
     assert_eq!(b.conv_message_count(&id), 6, "首次检查点完整到达");
 
     let reader = LiveBackends::new(&b, Arc::new(DownloadFault::default()));
-    let backend = reader.build(&kind.config(&root).0, Some(&password)).unwrap();
+    let backend = reader
+        .build(&kind.config(&root).0, Some(&password))
+        .unwrap();
     let before_increment = remote_paths(backend.as_ref(), "devices/").await;
-    assert!(count_checkpoints(&before_increment) > 0, "必须发布已提交检查点");
+    assert!(
+        count_checkpoints(&before_increment) > 0,
+        "必须发布已提交检查点"
+    );
 
     a.conv()
         .save_message(
@@ -435,7 +461,10 @@ async fn two_devices_on_a_real_server(kind: LiveStorage) {
         count_checkpoints(&before_increment),
         "连续增量不能重新发布整份检查点"
     );
-    assert!(after_increment.len() > before_increment.len(), "真实服务器上应新增增量段");
+    assert!(
+        after_increment.len() > before_increment.len(),
+        "真实服务器上应新增增量段"
+    );
 
     a.conv().delete_conversation(&id).expect("删除测试对话");
     a.sync().await;
@@ -469,14 +498,18 @@ async fn checkpoint_resume_on_a_real_server(kind: LiveStorage) {
     let device = a.status().device_id.unwrap();
     let dir = format!("devices/{device}/conv/checkpoint-");
     let reader = LiveBackends::new(&b, Arc::new(DownloadFault::default()));
-    let backend = reader.build(&kind.config(&root).0, Some(&password)).unwrap();
+    let backend = reader
+        .build(&kind.config(&root).0, Some(&password))
+        .unwrap();
     let mut parts = remote_paths(backend.as_ref(), "devices").await;
     parts.retain(|path| path.starts_with(&dir) && path.contains("/part-"));
     parts.sort();
     assert!(parts.len() >= 3, "测试必须真实产生多个分包");
     fault.arm(&parts[1]);
 
-    b.join_code(&code).await.expect("重新加入以验收首次检查点下载");
+    b.join_code(&code)
+        .await
+        .expect("重新加入以验收首次检查点下载");
     b.engine
         .enable_tier("conversation", true, JoinStrategy::Merge)
         .await
