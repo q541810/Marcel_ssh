@@ -1271,13 +1271,18 @@ pub(crate) fn check_cancelled(
 
 /// 为远程路径生成隐藏 sidecar 临时路径（同目录，`.name.marcel-{label}-{uuid}`）。
 /// `pub(crate)`：Agent 传输工具复用（上传/下载走临时文件 + 原子提交）。
-pub(crate) fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
+fn remote_parent_path(path: &str) -> Result<&str, AppError> {
     let normalized = path.trim_end_matches('/');
     let Some(idx) = normalized.rfind('/') else {
         return Err(AppError::Ssh("远程路径无效".into()));
     };
-    let parent = if idx == 0 { "/" } else { &normalized[..idx] };
-    let name = &normalized[idx + 1..];
+    Ok(if idx == 0 { "/" } else { &normalized[..idx] })
+}
+
+pub(crate) fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
+    let normalized = path.trim_end_matches('/');
+    let parent = remote_parent_path(normalized)?;
+    let name = &normalized[normalized.rfind('/').unwrap() + 1..];
     if name.is_empty() {
         return Err(AppError::Ssh("远程文件名不能为空".into()));
     }
@@ -1287,6 +1292,26 @@ pub(crate) fn remote_sidecar_path(path: &str, label: &str) -> Result<String, App
     } else {
         format!("{}/{}", parent, sidecar)
     })
+}
+
+/// 创建上传 sidecar 失败时补查目标目录：部分服务器会把「目录存在但不可写」
+/// 也回成 No such file，只透传这一句无法判断下一步该怎么处理。
+async fn upload_open_error(
+    sftp: &russh_sftp::client::SftpSession,
+    remote_path: &str,
+    error: russh_sftp::client::error::Error,
+) -> AppError {
+    let parent = remote_parent_path(remote_path).unwrap_or("<未知目录>");
+    let detail = match sftp.metadata(parent).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            format!("目标路径的父级不是目录：{parent}")
+        }
+        Ok(_) => {
+            format!("目标目录 {parent} 存在，但无法在其中创建文件；请检查目录写权限和磁盘空间")
+        }
+        Err(stat_error) => format!("目标目录 {parent} 不存在或当前不可访问（{stat_error}）"),
+    };
+    AppError::Ssh(format!("打开远程文件失败：{error}；{detail}"))
 }
 
 /// 解析提交目标：目标是符号链接时返回链接指向的真实文件路径，
@@ -1484,13 +1509,17 @@ pub(crate) async fn stream_upload_single_file(
 ) -> Result<(), AppError> {
     let temp_remote_path = remote_sidecar_path(remote_path, "upload")?;
 
-    let mut remote_file = sftp
+    let remote_file = sftp
         .open_with_flags(
             &temp_remote_path,
             OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
         )
-        .await
-        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+        .await;
+
+    let mut remote_file = match remote_file {
+        Ok(file) => file,
+        Err(error) => return Err(upload_open_error(sftp, remote_path, error).await),
+    };
 
     let mut buf = vec![0u8; 131072];
     let mut written: u64 = 0;
@@ -2013,9 +2042,78 @@ pub async fn sftp_cancel_sysopen(
 mod tests {
     use super::{
         cleanup_stale_download_temp_files, encode_file_content, error_text,
-        extract_failure_message, has_utf8_bom, is_system_path, progress_due, AppError, Duration,
-        Path, MAX_PREVIEW_IMAGE_BYTES, PROGRESS_MIN_BYTES, PROGRESS_MIN_INTERVAL,
+        extract_failure_message, has_utf8_bom, is_system_path, progress_due, upload_open_error,
+        AppError, Duration, Path, MAX_PREVIEW_IMAGE_BYTES, PROGRESS_MIN_BYTES,
+        PROGRESS_MIN_INTERVAL,
     };
+    use russh_sftp::client::error::Error as SftpError;
+    use russh_sftp::client::SftpSession;
+    use russh_sftp::protocol::{Attrs, FileAttributes, StatusCode};
+    use russh_sftp::server;
+
+    struct DirectoryState {
+        exists: bool,
+    }
+
+    impl server::Handler for DirectoryState {
+        type Error = StatusCode;
+
+        fn unimplemented(&self) -> Self::Error {
+            StatusCode::OpUnsupported
+        }
+
+        fn stat(
+            &mut self,
+            id: u32,
+            _path: String,
+        ) -> impl std::future::Future<Output = Result<Attrs, Self::Error>> + Send {
+            let result = if self.exists {
+                Ok(Attrs {
+                    id,
+                    attrs: FileAttributes {
+                        permissions: Some(0o040755),
+                        ..FileAttributes::default()
+                    },
+                })
+            } else {
+                Err(StatusCode::NoSuchFile)
+            };
+            async move { result }
+        }
+    }
+
+    async fn directory_state_session(exists: bool) -> SftpSession {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        server::run(server_io, DirectoryState { exists }).await;
+        SftpSession::new(client_io).await.expect("SFTP 握手")
+    }
+
+    #[tokio::test]
+    async fn upload_open_error_distinguishes_missing_and_unwritable_directory() {
+        let open_error = SftpError::Status(russh_sftp::protocol::Status {
+            id: 1,
+            status_code: StatusCode::NoSuchFile,
+            error_message: "No such file".into(),
+            language_tag: String::new(),
+        });
+
+        let missing = directory_state_session(false).await;
+        let message = upload_open_error(&missing, "/gone/file.txt", open_error.clone())
+            .await
+            .to_string();
+        assert!(
+            message.contains("目标目录 /gone 不存在或当前不可访问"),
+            "{message}"
+        );
+        assert!(message.contains("No such file"), "{message}");
+
+        let unwritable = directory_state_session(true).await;
+        let message = upload_open_error(&unwritable, "/readonly/file.txt", open_error)
+            .await
+            .to_string();
+        assert!(message.contains("目标目录 /readonly 存在"), "{message}");
+        assert!(message.contains("请检查目录写权限和磁盘空间"), "{message}");
+    }
 
     #[test]
     fn throttles_progress_until_interval_or_bytes_are_reached() {
