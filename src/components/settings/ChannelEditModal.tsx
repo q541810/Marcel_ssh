@@ -173,7 +173,6 @@ export default function ChannelEditModal({
         ...modelEditor.initial,
         modelName: m.modelName,
         displayName: m.displayName,
-        temperature: m.temperature,
         vision: m.vision,
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,
@@ -187,7 +186,6 @@ export default function ChannelEditModal({
       const full: ModelEntry = {
         ...createModel(draftChannelId, m.modelName),
         displayName: m.displayName,
-        temperature: m.temperature,
         vision: m.vision,
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,

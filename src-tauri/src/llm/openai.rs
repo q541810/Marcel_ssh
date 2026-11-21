@@ -330,7 +330,10 @@ impl OpenAiProvider {
     }
 }
 
-fn apply_extra_headers(headers: &mut HeaderMap, extra: &std::collections::BTreeMap<String, String>) {
+fn apply_extra_headers(
+    headers: &mut HeaderMap,
+    extra: &std::collections::BTreeMap<String, String>,
+) {
     use reqwest::header::HeaderName;
 
     /// 不允许用户自定义覆盖的头（小写，HeaderName 已规范化）。
@@ -591,7 +594,6 @@ impl PartialToolCall {
 struct ChatCompletionRequest {
     model: String,
     messages: Vec<RequestMessage>,
-    temperature: f32,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<RequestTool>>,
@@ -718,7 +720,6 @@ fn build_request_body_with_max_tokens(
     let typed = ChatCompletionRequest {
         model: config.model.clone(),
         messages,
-        temperature: config.temperature,
         stream,
         tools,
         stream_options: if stream {
@@ -835,7 +836,6 @@ fn build_request_body_bytes_with_max_tokens(
     let typed = ChatCompletionRequest {
         model: config.model.clone(),
         messages: request_messages,
-        temperature: config.temperature,
         stream,
         tools: request_tools,
         stream_options: if stream {
@@ -1131,7 +1131,6 @@ mod build_request_body_tests {
             api_key: String::new(),
             model: "gpt-4".to_string(),
             base_url: None,
-            temperature: 0.1,
             max_retries: 0,
             retry_delay_secs: 0.0,
             retry_http_statuses: String::new(),
@@ -1256,33 +1255,49 @@ mod build_request_body_tests {
         assert_eq!(reasoning, "official");
     }
 
+    /// 默认请求体**不带** `temperature`：采样参数交给 provider / 模型自己的
+    /// 默认值（未知 provider 不注入采样参数）。
     #[test]
-    fn no_extra_body_emits_only_typed_fields() {
+    fn no_extra_body_omits_temperature() {
         let cfg = base_config();
         let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
-        // 0.1 f32 在 f64 下变成 0.10000000149011612，按 f32 精度比对
-        let temp = body
-            .get("temperature")
-            .and_then(|v| v.as_f64())
-            .expect("temperature");
         assert!(
-            (temp - 0.1f32 as f64).abs() < 1e-6,
-            "temperature drift: {temp}"
+            body.get("temperature").is_none(),
+            "默认不应发送 temperature：{body}"
         );
         assert!(body.get("extraBody").is_none());
     }
 
+    /// 字节版（真实发送路径）同样不带 `temperature`，且与 Value 版逐字节一致。
     #[test]
-    fn extra_body_overrides_typed_temperature() {
+    fn wire_bytes_omit_temperature_by_default() {
+        let cfg = base_config();
+        let msgs = [LlmMessage::user("hi")];
+        let bytes = build_request_body_bytes_with_max_tokens(&cfg, &msgs, &[], true, None).unwrap();
+        let wire = String::from_utf8(bytes).expect("utf8");
+        assert!(
+            !wire.contains("temperature"),
+            "真实发送字节里不应出现 temperature：{wire}"
+        );
+        let value = build_request_body(&cfg, &msgs, &[], true);
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            wire,
+            "Value 版与字节版必须逐字节一致"
+        );
+    }
+
+    /// 用户想要固定温度时写 `extra_body`，它会合并进请求体顶层。
+    #[test]
+    fn extra_body_can_set_temperature() {
         let mut cfg = base_config();
         cfg.extra_body = Some(serde_json::json!({ "temperature": 0.9 }));
         let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
-        // 用户 extra_body 应能覆盖类型化字段
         let temp = body
             .get("temperature")
             .and_then(|v| v.as_f64())
-            .expect("temperature");
+            .expect("extra_body 应能注入 temperature");
         assert!((temp - 0.9).abs() < 1e-6, "temperature drift: {temp}");
     }
 
@@ -1448,7 +1463,6 @@ mod vision_request_tests {
             api_key: String::new(),
             model: "gpt-4".to_string(),
             base_url: None,
-            temperature: 0.1,
             max_retries: 0,
             retry_delay_secs: 0.0,
             retry_http_statuses: String::new(),
@@ -1805,7 +1819,10 @@ mod extra_headers_tests {
     #[test]
     fn adds_custom_headers() {
         let mut h = base();
-        apply_extra_headers(&mut h, &map(&[("user-agent", "Marcel/1.0"), ("x-opencode-session", "abc")]));
+        apply_extra_headers(
+            &mut h,
+            &map(&[("user-agent", "Marcel/1.0"), ("x-opencode-session", "abc")]),
+        );
         assert_eq!(h.get("user-agent").unwrap(), "Marcel/1.0");
         assert_eq!(h.get("x-opencode-session").unwrap(), "abc");
         // 头名大小写不敏感
@@ -1895,7 +1912,6 @@ mod wire_bytes_tests {
             api_key: "test-key".to_string(),
             model: "test-model".to_string(),
             base_url: Some(base_url),
-            temperature: 0.1,
             max_retries: 0,
             retry_delay_secs: 0.0,
             retry_http_statuses: String::new(),
@@ -1989,12 +2005,11 @@ mod wire_bytes_tests {
                 // 合并路径与「Value 版构建产物再序列化」逐字节一致。
                 assert_wire_bytes(&raw, &expected_bytes);
             } else {
-                // 直发路径的已知形态（黄金快照）。与经 Value 的旧形态唯一差别是
-                // f32 字段的打印：旧路径 f32→f64 放大成 0.100000001490116…，
-                // 直发印最短 f32 形式 0.1——数值同一，provider 解析等价。
+                // 直发路径的已知形态（黄金快照）。请求体默认不含 temperature
+                // （采样参数交给 provider 默认），所以两条路径现在逐字节同形。
                 assert_wire_bytes(
                     &raw,
-                    br#"{"model":"test-model","messages":[{"role":"user","content":"hi"}],"temperature":0.1,"stream":true,"tools":[{"type":"function","function":{"name":"bash","description":"d","parameters":{"type":"object"}}}],"stream_options":{"include_usage":true}}"#,
+                    br#"{"model":"test-model","messages":[{"role":"user","content":"hi"}],"stream":true,"tools":[{"type":"function","function":{"name":"bash","description":"d","parameters":{"type":"object"}}}],"stream_options":{"include_usage":true}}"#,
                 );
             }
         }
@@ -2119,7 +2134,10 @@ mod wire_bytes_tests {
 
         let ua = lines("user-agent");
         assert_eq!(ua.len(), 1, "user-agent 必须只有一条: {head}");
-        assert!(ua[0].contains("marcel-test/9.9"), "user-agent 值不对: {ua:?}");
+        assert!(
+            ua[0].contains("marcel-test/9.9"),
+            "user-agent 值不对: {ua:?}"
+        );
 
         let sess = lines("x-opencode-session");
         assert_eq!(sess.len(), 1, "x-opencode-session 必须只有一条: {head}");
@@ -2148,7 +2166,6 @@ mod header_wait_timeout_tests {
             api_key: "test-key".to_string(),
             model: "test-model".to_string(),
             base_url: Some(base_url),
-            temperature: 0.1,
             max_retries: 0,
             retry_delay_secs: 0.0,
             retry_http_statuses: String::new(),

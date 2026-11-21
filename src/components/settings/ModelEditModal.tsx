@@ -28,7 +28,6 @@ interface Props {
 export interface ModelDraft {
   modelName: string;
   displayName: string;
-  temperature: number;
   vision: boolean;
   contextWindow: number;
   extraBody: Record<string, unknown> | null;
@@ -38,10 +37,12 @@ export interface ModelDraft {
   demoteNonLeadingSystem: boolean;
 }
 
+/** 高级参数占位示例：采样参数（temperature/top_p 等）默认不发送，
+ *  要固定就写在这里——它们会合并进请求体顶层。 */
 const EXTRA_BODY_PLACEHOLDER = `{
+  "temperature": 0.7,
   "thinking": { "type": "enabled" },
-  "top_p": 0.9,
-  "max_tokens": 4096
+  "top_p": 0.9
 }`;
 
 export default function ModelEditModal({
@@ -54,7 +55,6 @@ export default function ModelEditModal({
 }: Props) {
   const [modelName, setModelName] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [temperature, setTemperature] = useState(0.1);
   const [vision, setVision] = useState(false);
   const [contextWindow, setContextWindow] = useState(0);
   const [extraBodyText, setExtraBodyText] = useState('');
@@ -70,7 +70,6 @@ export default function ModelEditModal({
     if (open) {
       setModelName(initial?.modelName ?? presetModelName ?? '');
       setDisplayName(initial?.displayName ?? '');
-      setTemperature(initial?.temperature ?? 0.1);
       setVision(initial?.vision ?? false);
       setContextWindow(initial?.contextWindow ?? 0);
       const body = extraBodyToText(initial?.extraBody);
@@ -104,7 +103,6 @@ export default function ModelEditModal({
     const draft: ModelDraft = {
       modelName: trimmed,
       displayName: displayName.trim(),
-      temperature,
       vision,
       contextWindow: Math.max(0, Math.trunc(contextWindow)),
       extraBody: textToExtraBody(extraBodyText),
@@ -160,24 +158,6 @@ export default function ModelEditModal({
           <p className="text-caption text-fg-tertiary mt-1">
             不填则用 API 模型名展示。
           </p>
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-body text-fg">Temperature</div>
-            <div className="text-caption text-fg-tertiary">采样温度（0-2）</div>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <input
-              type="number"
-              min={0}
-              max={2}
-              step={0.1}
-              value={temperature}
-              onChange={(e) => setTemperature(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
-              className="w-20 rounded-lg field px-2 py-2 text-body font-mono text-fg"
-            />
-          </div>
         </div>
 
         <div className="flex items-center justify-between gap-4">

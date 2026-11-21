@@ -6,7 +6,8 @@
 //!   硅基流动 / Ollama / OpenAI 官方等）。渠道持有 Base URL（必填）与 API Key
 //!   （密钥链 per-channel 存储）。
 //! - **模型 (ModelEntry)**：渠道下的一个具体模型。持有模型名、展示名、
-//!   temperature、vision、上下文窗口（0 = 回落全局）、extra_body。
+//!   vision、上下文窗口（0 = 回落全局）、extra_body。采样参数（如
+//!   temperature）不由模型持有：请求体默认不带，需要时写进 extra_body。
 //! - **场景槽位 (ModelSlots)**：路由绑定——默认（主对话）、命令审核、
 //!   上下文压缩摘要。槽位为空/失效时回落主模型。
 //! - **网络与重试策略 (NetPolicy)**：全局共享，所有渠道与模型统一生效
@@ -31,10 +32,6 @@ use crate::llm::provider::{LlmConfig, ProviderType};
 
 fn default_true() -> bool {
     true
-}
-
-fn default_temperature() -> f32 {
-    0.1
 }
 
 fn default_max_retries() -> u32 {
@@ -129,8 +126,6 @@ pub struct ModelEntry {
     /// 展示别名（可选）。空时 UI 用 `model_name` 展示。
     #[serde(default)]
     pub display_name: String,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
     /// 是否支持图片输入（多模态）。
     #[serde(default)]
     pub vision: bool,
@@ -164,7 +159,6 @@ impl Default for ModelEntry {
             channel_id: String::new(),
             model_name: String::new(),
             display_name: String::new(),
-            temperature: default_temperature(),
             vision: false,
             context_window: 0,
             extra_body: None,
@@ -385,36 +379,34 @@ impl LlmRegistry {
         // 自定义请求头：读密钥链（account = llm_channel_headers_{id}）。
         // 读失败不阻断请求——头是可选的增强，缺了照常能聊；解析失败也只是记一条
         // warn 后按「没有自定义头」走，不能让一段坏 JSON 把整个渠道锁死。
-        let extra_headers = match keychain::get(&keychain::SecretSlot::LlmChannelHeaders(
-            channel.id.clone(),
-        )) {
-            Ok(Some(json)) => match serde_json::from_str(&json) {
-                Ok(map) => map,
+        let extra_headers =
+            match keychain::get(&keychain::SecretSlot::LlmChannelHeaders(channel.id.clone())) {
+                Ok(Some(json)) => match serde_json::from_str(&json) {
+                    Ok(map) => map,
+                    Err(e) => {
+                        log::warn!(
+                            "渠道 \"{}\" 的自定义请求头无法解析，按无自定义头处理: {}",
+                            channel.name,
+                            e
+                        );
+                        Default::default()
+                    }
+                },
+                Ok(None) => Default::default(),
                 Err(e) => {
                     log::warn!(
-                        "渠道 \"{}\" 的自定义请求头无法解析，按无自定义头处理: {}",
+                        "读取渠道 \"{}\" 的自定义请求头失败，按无自定义头处理: {}",
                         channel.name,
                         e
                     );
                     Default::default()
                 }
-            },
-            Ok(None) => Default::default(),
-            Err(e) => {
-                log::warn!(
-                    "读取渠道 \"{}\" 的自定义请求头失败，按无自定义头处理: {}",
-                    channel.name,
-                    e
-                );
-                Default::default()
-            }
-        };
+            };
         let config = LlmConfig {
             provider_type: ProviderType::OpenAI,
             api_key,
             model: model.model_name.clone(),
             base_url: Some(channel.base_url.trim().to_string()),
-            temperature: model.temperature,
             // 网络与重试策略：全局共享（NetPolicy），所有渠道/模型统一生效
             max_retries: self.net_policy.max_retries,
             retry_delay_secs: self.net_policy.retry_delay_secs,
@@ -752,7 +744,8 @@ pub fn migrate_legacy_settings(settings: &mut AppSettings) -> bool {
                 channel_id: channel_id.clone(),
                 model_name: legacy.model.clone(),
                 display_name: String::new(),
-                temperature: legacy.temperature,
+                // legacy.temperature 不再迁移：采样温度默认不发（见
+                // `provider::LlmConfig` 的说明），旧值直接作废。
                 vision: legacy.vision,
                 context_window: 0,
                 extra_body: legacy.extra_body.clone(),
@@ -1152,7 +1145,6 @@ mod tests {
             channel_id,
             model_name: "deepseek-chat".into(),
             display_name: "".into(),
-            temperature: 0.1,
             vision: false,
             context_window: 0,
             extra_body: None,

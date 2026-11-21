@@ -53,8 +53,8 @@ function modelRegistry(): LlmRegistry {
     ...emptyRegistry(),
     channels: [{ id: 'channel', name: '测试渠道', baseUrl: 'https://example.invalid/v1', enabled: true }],
     models: [
-      { id: 'vision-model', channelId: 'channel', modelName: 'vision', temperature: 0.1, vision: true },
-      { id: 'text-model', channelId: 'channel', modelName: 'text', temperature: 0.1, vision: false },
+      { id: 'vision-model', channelId: 'channel', modelName: 'vision', vision: true },
+      { id: 'text-model', channelId: 'channel', modelName: 'text', vision: false },
     ],
     lastUsedModelId: 'vision-model',
   };

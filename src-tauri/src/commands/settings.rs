@@ -335,14 +335,13 @@ pub async fn llm_list_models(
         },
     };
 
-    // Minimal config: model/temperature/retry fields are unused by list_models,
+    // Minimal config: model/retry fields are unused by list_models,
     // but LlmConfig requires them. Empty/zero values are harmless here.
     let config = LlmConfig {
         provider_type: crate::llm::provider::ProviderType::OpenAI,
         api_key: resolved_key,
         model: String::new(),
         base_url: Some(base_url),
-        temperature: 0.0,
         max_retries: 0,
         retry_delay_secs: 0.0,
         retry_http_statuses: String::new(),

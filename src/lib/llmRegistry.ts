@@ -190,14 +190,15 @@ export function createChannel(name: string, baseUrl: string): ChannelConfig {
   };
 }
 
-/** 新建一个模型条目（归属指定渠道）。 */
+/** 新建一个模型条目（归属指定渠道）。
+ *  采样温度不在这里：请求体默认不发送 temperature，需要固定就用
+ *  `extraBody` 写 `{"temperature": 0.7}`。 */
 export function createModel(channelId: string, modelName: string): ModelEntry {
   return {
     id: newId(),
     channelId,
     modelName,
     displayName: '',
-    temperature: 0.1,
     vision: false,
     contextWindow: 0,
     extraBody: null,

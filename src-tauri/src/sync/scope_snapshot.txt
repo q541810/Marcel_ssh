@@ -91,7 +91,6 @@ settings	llmConfig / providerType	local
 settings	llmConfig / retryDelaySecs	local
 settings	llmConfig / retryHttpStatuses	local
 settings	llmConfig / retryOnTimeout	local
-settings	llmConfig / temperature	local
 settings	llmConfig / vision	local
 settings	llmRegistry / channels / (顺序)	shared
 settings	llmRegistry / channels / * / baseUrl	shared

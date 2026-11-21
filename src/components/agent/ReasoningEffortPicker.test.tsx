@@ -349,7 +349,7 @@ describe('ReasoningEffortPicker', () => {
       registry: {
         channels: [{ id: 'local', name: '本地', baseUrl: '', enabled: true }],
         models: [{
-          id: 'astra', channelId: 'local', modelName: '6 Astra', temperature: 0,
+          id: 'astra', channelId: 'local', modelName: '6 Astra',
           reasoningEfforts: [],
         }],
         slots: { modelApprovalModelId: '', summarizerModelId: '' },

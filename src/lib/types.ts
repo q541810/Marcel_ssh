@@ -791,12 +791,12 @@ export interface ModelEntry {
   modelName: string;
   /** 展示别名（可选）。空时 UI 用 modelName 展示。 */
   displayName?: string;
-  temperature: number;
   /** 是否支持图片输入（多模态）。 */
   vision?: boolean;
   /** 模型上下文窗口（tokens）。0 = 未设置，回落全局 agentModeSettings.contextWindow。 */
   contextWindow?: number;
-  /** 该模型特有的请求体参数覆写（如 thinking、top_p）。 */
+  /** 该模型特有的请求体参数覆写（如 thinking、top_p、temperature）。
+   *  采样参数默认不发送，要固定温度就写在这里。 */
   extraBody?: Record<string, unknown> | null;
   /**
    * 该模型支持的「思考强度」档位（自填字符串列表，如 `['low','medium','high']`）。
@@ -859,7 +859,6 @@ export interface LlmConfig {
   apiKey?: string;  // Optional - loaded from keychain, not persisted to JSON
   model: string;
   baseUrl?: string | null;
-  temperature: number;
   maxRetries: number;
   retryDelaySecs: number;
   retryHttpStatuses: string;

@@ -289,6 +289,11 @@ fn append_image_placeholders(content: &mut String, count: usize) {
 ///
 /// Note: `api_key` is excluded from serialization to prevent it from being
 /// written to disk. It should be stored securely in the system keychain.
+///
+/// **采样温度刻意不在这里**：请求体默认不带 `temperature`，交给 provider /
+/// 模型自己的默认值（未知 provider 不注入采样参数，与 ZCode 的做法一致）。
+/// 需要固定温度时写在 `extra_body` 里（`{"temperature": 0.7}`），它合并进
+/// 请求体顶层。旧配置残留的 `temperature` 键反序列化时被静默忽略。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfig {
@@ -298,8 +303,6 @@ pub struct LlmConfig {
     pub api_key: String,
     pub model: String,
     pub base_url: Option<String>,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
     /// Maximum number of automatic retries on transient LLM errors (0 = no retry).
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -349,10 +352,6 @@ fn default_provider() -> ProviderType {
     ProviderType::OpenAI
 }
 
-fn default_temperature() -> f32 {
-    0.1
-}
-
 fn default_max_retries() -> u32 {
     1
 }
@@ -384,7 +383,6 @@ impl Default for LlmConfig {
             model: std::env::var("MARCEL_SSH_LLM_MODEL").unwrap_or_else(|_| "gpt-4".to_string()),
             // No default base URL - users must configure their own endpoint
             base_url: std::env::var("MARCEL_SSH_LLM_BASE_URL").ok(),
-            temperature: 0.1,
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -526,7 +524,6 @@ mod tests {
             api_key: "super-secret-key-12345".to_string(),
             model: "gpt-4".to_string(),
             base_url: Some("https://api.openai.com".to_string()),
-            temperature: 0.7,
             max_retries: 3,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -665,7 +662,6 @@ mod tests {
             api_key: String::new(),
             model: "gpt-4".to_string(),
             base_url: None,
-            temperature: 0.1,
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -698,7 +694,6 @@ mod tests {
             api_key: String::new(),
             model: "gpt-4".to_string(),
             base_url: None,
-            temperature: 0.1,
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -729,6 +724,27 @@ mod tests {
         assert!(
             config.extra_body.is_none(),
             "missing extraBody should default to None"
+        );
+    }
+
+    /// 旧的 `temperature` 键残留在 settings.json 里时不报错、也不复活：
+    /// 字段已从结构体移除，反序列化静默忽略未知键，写盘后自然消失。
+    #[test]
+    fn legacy_temperature_key_is_ignored_not_resurrected() {
+        let json = r#"{
+            "providerType": "openai",
+            "model": "gpt-4",
+            "temperature": 0.7
+        }"#;
+        let config: LlmConfig = serde_json::from_str(json).expect("deserialize 旧配置不能失败");
+        let re = serde_json::to_value(&config).expect("serialize");
+        assert!(
+            re.get("temperature").is_none(),
+            "temperature 不应被重新序列化出来：{re}"
+        );
+        assert!(
+            config.extra_body.is_none(),
+            "旧 temperature 键不能被误当成 extra_body"
         );
     }
 }

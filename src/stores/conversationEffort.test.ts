@@ -27,7 +27,6 @@ function setupRegistryWithModel() {
     channelId: 'ch-1',
     modelName: 'deepseek-reasoner',
     displayName: 'Reasoner',
-    temperature: 0.1,
     vision: false,
     contextWindow: 0,
     extraBody: null,
