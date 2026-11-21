@@ -212,7 +212,12 @@ impl BackendFactory for LiveBackends {
                 let saved = futures::executor::block_on(self.connections.read())
                     .get_by_id(connection_id)
                     .cloned()
-                    .expect("测试连接已保存");
+                    .unwrap_or_else(|| {
+                        // 创建同步时，界面的连接安装尚未发生；测试连接器用临时配置完成首次探测。
+                        // 后续加入和日常同步仍然从同步码安装的连接与主机指纹读取。
+                        let (host, username, _) = sftp_config().expect("缺少 SFTP 测试配置");
+                        conn("live-sftp", "同步测试机", &host, &username)
+                    });
                 assert!(!saved.use_jump && saved.auth_method == "Password");
                 Arc::new(SftpStorage::new(
                     self.ssh.clone(),
@@ -384,6 +389,14 @@ async fn production_pair(
         b.join_code(&created.sync_code)
             .await
             .expect("第二台设备通过真实后端加入");
+    }
+    if matches!(kind, LiveStorage::Sftp) {
+        a.secrets
+            .set(&SecretSlot::SshPassword("live-sftp".into()), &password)
+            .unwrap();
+        b.secrets
+            .set(&SecretSlot::SshPassword("live-sftp".into()), &password)
+            .unwrap();
     }
     let code = Zeroizing::new(created.sync_code.clone());
     (a, b, password, code)
