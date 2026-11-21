@@ -5,40 +5,45 @@ import type { AuxKeyId } from './terminalInput';
 interface AuxKeyDef {
   id: AuxKeyId;
   label: ReactNode;
-  /** Wider key (col-span-2 of the 10-col grid). */
-  wide?: boolean;
-  /** Smaller label so a 4-letter word fits a single column. */
+  /** Width in grid columns (default 1). */
+  span?: number;
+  /** Smaller label — keeps 4-letter words off the key's border. */
   compact?: boolean;
 }
 
 /**
- * Two fixed rows, exactly 10 columns each — every key always visible, nothing
- * scrolls or wraps. Laid out like a physical keyboard: Esc top-left, Ctrl
- * bottom-left, and an inverted-T arrow cluster on the right (↑ sits directly
- * above ↓). Row 1 keeps only Esc double-width so Home/End fit without a third row;
- * ↑ stays in column 9, above ↓.
+ * Two fixed rows, 12 columns each — every key always visible, nothing scrolls
+ * or wraps. Laid out like a physical keyboard: Esc top-left, Ctrl bottom-left,
+ * and an inverted-T arrow cluster on the right.
+ *
+ * Why 12 columns and not 10: at 1/10 of the row, Home was left with ~28px of
+ * content box while the four letters need ~30px at 12px, so the label spilled
+ * past the key's border (visible on the reviewer's screenshot). Home/End now
+ * take two columns each. Row 2 has fewer keys, so Ctrl and Enter take three;
+ * both rows total 12 columns and the right-hand cluster (copy/←, ↑/↓, paste/→)
+ * still occupies columns 9-11, so the pairs stay vertically aligned.
  */
 const ROW1: AuxKeyDef[] = [
-  { id: 'esc', label: 'Esc', wide: true },
+  { id: 'esc', label: 'Esc', span: 2 },
   { id: 'tab', label: 'Tab' },
   { id: 'ctrl-c', label: '^C' },
   { id: 'ctrl-d', label: '^D' },
-  { id: 'home', label: 'Home', compact: true },
-  { id: 'end', label: 'End', compact: true },
+  { id: 'home', label: 'Home', span: 2, compact: true },
+  { id: 'end', label: 'End', span: 2, compact: true },
   { id: 'copy', label: <Copy className="mx-auto h-4 w-4" /> },
   { id: 'up', label: '↑' },
   { id: 'paste', label: <ClipboardPaste className="mx-auto h-4 w-4" /> },
 ];
 
 const ROW2: AuxKeyDef[] = [
-  { id: 'ctrl', label: 'Ctrl', wide: true },
+  { id: 'ctrl', label: 'Ctrl', span: 3 },
   { id: 'slash', label: '/' },
   { id: 'dash', label: '-' },
   { id: 'pipe', label: '|' },
   {
     id: 'enter',
     label: <CornerDownLeft className="mx-auto h-4 w-4" />,
-    wide: true,
+    span: 3,
   },
   { id: 'left', label: '←' },
   { id: 'down', label: '↓' },
@@ -61,7 +66,7 @@ export default function MobileAuxKeyBar({
   onKey,
 }: MobileAuxKeyBarProps) {
   const renderRow = (row: AuxKeyDef[]) => (
-    <div className="grid grid-cols-10 gap-1">
+    <div className="grid grid-cols-12 gap-1">
       {row.map((key) => {
         const active = key.id === 'ctrl' && ctrlActive;
         const isCopy = key.id === 'copy';
@@ -83,7 +88,11 @@ export default function MobileAuxKeyBar({
             onClick={() => onKey(key.id)}
             aria-label={isCopy ? (copied ? '已复制' : '复制选中内容') : undefined}
             className={`rounded-md border py-2 text-center font-medium ${key.compact ? 'text-caption' : 'text-meta'} pressable disabled:opacity-40 ${
-              key.wide ? 'col-span-2' : 'col-span-1'
+              key.span === 3
+                ? 'col-span-3'
+                : key.span === 2
+                  ? 'col-span-2'
+                  : 'col-span-1'
             } ${colorClass}`}
           >
             {label}
