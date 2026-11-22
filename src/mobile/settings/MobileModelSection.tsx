@@ -23,6 +23,8 @@ import {
   modelOptionsByChannel,
   candidateRowModelLabel,
   shiftChannel,
+  findModel,
+  modelReasoningEfforts,
 } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -874,6 +876,16 @@ export function MobileModelSection() {
                   placeholder="选型提示，如：小模型，适合搜索等简单任务"
                   className={descriptionInputClass}
                 />
+                {(() => {
+                  // 该候选模型声明的思考档位（与桌面同一口径）：主 agent 派发时
+                  // 能从中选一个；不选就不发 reasoning_effort。
+                  const efforts = modelReasoningEfforts(findModel(registry, choice.modelId));
+                  return efforts.length > 0 ? (
+                    <p className="text-caption text-fg-tertiary">
+                      思考 {efforts.join('/')} · 派发时可从中选一个，不选则不发
+                    </p>
+                  ) : null;
+                })()}
               </div>
               );
             })

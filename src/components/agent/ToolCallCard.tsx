@@ -200,6 +200,20 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         ? asArgString((tr.arguments as Record<string, unknown> | undefined)?.model) ?? ''
         : '';
     const subModel = subMetaModel || argModel;
+    // 子agent 思考强度：发起时读参数 `reasoning_effort`；结束后由
+    // metadata.reasoningEffort 接管 —— 那是后端按**真实落地模型**的声明判过、
+    // 确实发进请求体的档位。主 agent 传了但被拒的档位不会出现在 metadata 里，
+    // 只在结果正文里附一句说明（避免卡片上显示一个没生效的值）。
+    const subMetaEffort =
+      isSubagentTool(tr.toolName) && tr.metadata &&
+      typeof (tr.metadata as Record<string, unknown>).reasoningEffort === 'string'
+        ? ((tr.metadata as Record<string, unknown>).reasoningEffort as string)
+        : '';
+    const argEffort =
+      isSubagentTool(tr.toolName)
+        ? asArgString((tr.arguments as Record<string, unknown> | undefined)?.reasoning_effort) ?? ''
+        : '';
+    const subEffort = subMetaEffort || argEffort;
     // 联网工具（web_search / http_get）：本次用的是哪个后端、有没有降级、页面
     // 是否被网站的人机验证拦下。旧会话没有这些字段 → status 为 null，界面不变。
     const webStatus = readWebToolStatus(
@@ -243,6 +257,11 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" />
                 </svg>
                 <span className="truncate">{subModel}</span>
+              </ToolChip>
+            )}
+            {subEffort && (
+              <ToolChip title={`子agent 思考强度：${subEffort}`}>
+                思考 {subEffort}
               </ToolChip>
             )}
             {webChips.map((chip) => (
@@ -436,6 +455,11 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       isSubagentTool(tc.name)
         ? asArgString((tc.arguments as Record<string, unknown> | undefined)?.model) ?? ''
         : '';
+    // 子agent 思考强度：发起瞬间先按参数显示，完成后由 metadata 的权威值接管。
+    const tcEffort =
+      isSubagentTool(tc.name)
+        ? asArgString((tc.arguments as Record<string, unknown> | undefined)?.reasoning_effort) ?? ''
+        : '';
     // 按码点截断（机器名可能含中文/emoji）；tooltip 给全名。
     const tcHostChars = Array.from(tcHost);
     const tcDisplayHost =
@@ -470,6 +494,11 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" />
                 </svg>
                 <span className="truncate">{tcModel}</span>
+              </ToolChip>
+            )}
+            {tcEffort && (
+              <ToolChip title={`子agent 思考强度：${tcEffort}`}>
+                思考 {tcEffort}
               </ToolChip>
             )}
           </>

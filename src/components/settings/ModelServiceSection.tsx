@@ -19,6 +19,8 @@ import {
   candidateRowModelLabel,
   emptyRegistry,
   shiftChannel,
+  findModel,
+  modelReasoningEfforts,
 } from '@/lib/llmRegistry';
 
 /** 从注册表生成槽位选择器的选项（按渠道分组）。 */
@@ -171,7 +173,11 @@ export function ModelServiceSection() {
               清单为空：子agent 跟随当前会话的模型。添加候选后，主 agent 会按描述自行选型。
             </p>
           ) : (
-            subagentChoices.map((choice, i) => (
+            subagentChoices.map((choice, i) => {
+              // 该候选模型声明的思考档位：主 agent 派发时能给它选强度，
+              // 这里直接标出来（档位配在模型上，不在这里重复配置）。
+              const efforts = modelReasoningEfforts(findModel(registry, choice.modelId));
+              return (
               <div key={i} className="flex items-center gap-2">
                 <Select
                   value={choice.modelId}
@@ -187,6 +193,14 @@ export function ModelServiceSection() {
                   placeholder="选型提示，如：小模型，适合搜索等简单任务"
                   className="flex-1 min-w-0 rounded-lg field px-3 py-2 text-body text-fg"
                 />
+                {efforts.length > 0 && (
+                  <span
+                    className="flex-shrink-0 rounded-md bg-fill px-2 py-1 text-meta text-fg-tertiary"
+                    title="该模型声明的思考强度档位：派发时可让主 agent 从中选一个；不选就不发 reasoning_effort"
+                  >
+                    思考 {efforts.join('/')}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => removeSubagentChoice(i)}
@@ -196,7 +210,8 @@ export function ModelServiceSection() {
                   移除
                 </button>
               </div>
-            ))
+              );
+            })
           )}
           {hasEnabledChannelModels ? (
             availableForNew.length > 0 ? (
