@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useModelRecommendation } from '@/lib/useModelRecommendation';
+import { RECOMMENDED_FIELD_LABELS, type RecommendedField } from '@/lib/modelCatalog';
 import { ChevronRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -62,6 +64,27 @@ export default function ModelEditModal({
   const [effortsText, setEffortsText] = useState('');
   const [demoteNonLeadingSystem, setDemoteNonLeadingSystem] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [recommendationFilled, setRecommendationFilled] = useState<RecommendedField[]>([]);
+  const [recommendationReady, setRecommendationReady] = useState(false);
+  const recommendation = useModelRecommendation({
+    open,
+    enabled: !initial && recommendationReady,
+    immediate: Boolean(presetModelName),
+    modelName,
+    current: {
+      vision,
+      contextWindow,
+      reasoningEfforts: textToEfforts(effortsText),
+    },
+    onApply: ({ draft, filled }) => {
+      setVision(draft.vision);
+      setContextWindow(draft.contextWindow);
+      setEffortsText(effortsToText(draft.reasoningEfforts));
+      setRecommendationFilled(filled);
+      // 思考档位在「更多」里；不展开的话用户只看得到窗口/视觉，以为没填。
+      if (filled.includes('reasoningEfforts')) setMoreOpen(true);
+    },
+  });
   // 「更多」折叠区：高级参数默认收起；编辑已有模型且已有自定义参数时默认展开
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -85,10 +108,13 @@ export default function ModelEditModal({
       );
       setExtraBodyError(null);
       setLocalError(null);
+      setRecommendationFilled([]);
+      setRecommendationReady(true);
     }
   }, [open, initial, presetModelName]);
 
   const handleSave = () => {
+    const recommended = recommendation.flush();
     const trimmed = modelName.trim();
     if (!trimmed) {
       setLocalError('模型名称（API 模型名）不能为空');
@@ -103,10 +129,10 @@ export default function ModelEditModal({
     const draft: ModelDraft = {
       modelName: trimmed,
       displayName: displayName.trim(),
-      vision,
-      contextWindow: Math.max(0, Math.trunc(contextWindow)),
+      vision: recommended.vision,
+      contextWindow: Math.max(0, Math.trunc(recommended.contextWindow)),
       extraBody: textToExtraBody(extraBodyText),
-      reasoningEfforts: textToEfforts(effortsText),
+      reasoningEfforts: recommended.reasoningEfforts,
       demoteNonLeadingSystem,
     };
     const checkErr = validate?.(draft);
@@ -136,7 +162,15 @@ export default function ModelEditModal({
             autoCorrect="off"
             spellCheck={false}
             className={`${inputClass} w-full`}
+            onBlur={recommendation.flush}
           />
+          {recommendationFilled.length > 0 && !initial && (
+            <p className="text-caption text-fg-tertiary mt-1">
+              已自动填充：
+              {recommendationFilled.map((f) => RECOMMENDED_FIELD_LABELS[f]).join('、')}
+              （可在保存前修改）
+            </p>
+          )}
           <datalist id="model-name-suggestions">
             <option value="deepseek-ai/DeepSeek-V3" />
             <option value="deepseek-chat" />
@@ -165,7 +199,10 @@ export default function ModelEditModal({
             <div className="text-body text-fg">视觉 / 支持图片</div>
             <div className="text-caption text-fg-tertiary">模型支持多模态图片输入时开启</div>
           </div>
-          <Toggle checked={vision} onChange={setVision} label="" />
+          <Toggle checked={vision} onChange={(value) => {
+            recommendation.markEdited('vision');
+            setVision(value);
+          }} label="" />
         </div>
 
         <div>
@@ -177,7 +214,10 @@ export default function ModelEditModal({
             min={0}
             step={1000}
             value={contextWindow}
-            onChange={(e) => setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+            onChange={(e) => {
+              recommendation.markEdited('contextWindow');
+              setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)));
+            }}
             placeholder="0 = 仅超限后压缩"
             className={`${inputClass} w-full`}
           />
@@ -209,7 +249,10 @@ export default function ModelEditModal({
                 </label>
                 <textarea
                   value={effortsText}
-                  onChange={(e) => setEffortsText(e.target.value)}
+                  onChange={(e) => {
+                    recommendation.markEdited('reasoningEfforts');
+                    setEffortsText(e.target.value);
+                  }}
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}

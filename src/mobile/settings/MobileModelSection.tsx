@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useModelRecommendation } from '@/lib/useModelRecommendation';
+import { RECOMMENDED_FIELD_LABELS, type RecommendedField } from '@/lib/modelCatalog';
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelInfo, NetPolicy, SubagentModelChoice } from '@/lib/types';
@@ -182,8 +184,25 @@ function MobileModelEditorSheet({
       (initial?.demoteNonLeadingSystem ?? false),
   );
   const [error, setError] = useState<string | null>(null);
+  const [recommendationFilled, setRecommendationFilled] = useState<RecommendedField[]>([]);
+  const recommendation = useModelRecommendation({
+    open,
+    enabled: !initial,
+    immediate: Boolean(presetModelName),
+    modelName,
+    current: { vision, contextWindow, reasoningEfforts: textToEfforts(effortsText) },
+    onApply: ({ draft, filled }) => {
+      setVision(draft.vision);
+      setContextWindow(draft.contextWindow);
+      setEffortsText(draft.reasoningEfforts.join('\n'));
+      setRecommendationFilled(filled);
+      // 思考档位在「更多」里；不展开的话用户只看得到窗口/视觉，以为没填。
+      if (filled.includes('reasoningEfforts')) setMoreOpen(true);
+    },
+  });
 
   const handleSave = () => {
+    const recommended = recommendation.flush();
     const trimmed = modelName.trim();
     if (!trimmed) {
       setError('模型名称不能为空');
@@ -204,19 +223,19 @@ function MobileModelEditorSheet({
           ...initial,
           modelName: trimmed,
           displayName: displayName.trim(),
-          vision,
-          contextWindow: Math.max(0, Math.trunc(contextWindow)),
+          vision: recommended.vision,
+          contextWindow: Math.max(0, Math.trunc(recommended.contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
-          reasoningEfforts: textToEfforts(effortsText),
+          reasoningEfforts: recommended.reasoningEfforts,
           demoteNonLeadingSystem,
         }
       : {
           ...createModel(channelId, trimmed),
           displayName: displayName.trim(),
-          vision,
-          contextWindow: Math.max(0, Math.trunc(contextWindow)),
+          vision: recommended.vision,
+          contextWindow: Math.max(0, Math.trunc(recommended.contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
-          reasoningEfforts: textToEfforts(effortsText),
+          reasoningEfforts: recommended.reasoningEfforts,
           demoteNonLeadingSystem,
         };
     onSaved(model);
@@ -240,7 +259,15 @@ function MobileModelEditorSheet({
             autoCorrect="off"
             spellCheck={false}
             className={inputClass}
+            onBlur={recommendation.flush}
           />
+          {recommendationFilled.length > 0 && !initial && (
+            <p className="mt-1 text-caption text-fg-tertiary">
+              已自动填充：
+              {recommendationFilled.map((f) => RECOMMENDED_FIELD_LABELS[f]).join('、')}
+              （可在保存前修改）
+            </p>
+          )}
         </div>
         <div>
           <label className="mb-1 block text-meta text-fg-secondary">展示名（可选）</label>
@@ -257,7 +284,10 @@ function MobileModelEditorSheet({
             <div className="text-body text-fg">视觉 / 支持图片</div>
             <div className="text-caption text-fg-tertiary">模型支持多模态时开启</div>
           </div>
-          <Toggle checked={vision} onChange={setVision} />
+          <Toggle checked={vision} onChange={(value) => {
+            recommendation.markEdited('vision');
+            setVision(value);
+          }} />
         </div>
         <div>
           <label className="mb-1 block text-meta text-fg-secondary">
@@ -269,9 +299,10 @@ function MobileModelEditorSheet({
             min={0}
             step={1000}
             value={contextWindow}
-            onChange={(e) =>
-              setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)))
-            }
+            onChange={(e) => {
+              recommendation.markEdited('contextWindow');
+              setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)));
+            }}
             placeholder="0 = 仅超限后压缩"
             className={inputClass}
           />
@@ -312,7 +343,10 @@ function MobileModelEditorSheet({
                 </label>
                 <textarea
                   value={effortsText}
-                  onChange={(e) => setEffortsText(e.target.value)}
+                  onChange={(e) => {
+                    recommendation.markEdited('reasoningEfforts');
+                    setEffortsText(e.target.value);
+                  }}
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
