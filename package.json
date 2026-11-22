@@ -7,11 +7,12 @@
   "scripts": {
     "dev": "vite",
     "dev:mobile": "vite --mode mobile",
-    "build": "tsc && vite build",
+    "build": "node scripts/sync-zcode-model-catalog.mjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev:mobile": "node scripts/tauri-dev-mobile.mjs",
     "test": "vitest run",
+    "test:model-catalog": "node scripts/sync-zcode-model-catalog.test.mjs",
     "test:markdown-worker": "node scripts/test-markdown-worker.mjs",
     "verify:update-gate": "node scripts/update-gate-inject.mjs",
     "eval": "node evals/server.mjs"

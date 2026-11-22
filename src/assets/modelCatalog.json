@@ -1,0 +1,1332 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "revision": 44,
+    "repository": "zai-org/ZCode",
+    "release": "v3.18.2",
+    "commit": "fec975905a2abd4c07e35c40d51fa097a2258ec9",
+    "sha256": "2af7b0cac658e9507413f5b1f5f9754e17c18fd29745522592d8b6ae699030ab",
+    "license": "Apache-2.0",
+    "upstreamUrl": "https://github.com/zai-org/ZCode/blob/fec975905a2abd4c07e35c40d51fa097a2258ec9/config/provider/zcode-builtin.json"
+  },
+  "recommendations": [
+    {
+      "modelMatch": ".*glm-5.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*GLM-5\\.2.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*GLM-5-Turbo.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-5\\.3.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-5\\.3-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-5\\.1.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-5\\.1-highspeed.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-5v-turbo.*",
+      "contextWindow": 200000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.7.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.7-flash.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.7-flashx.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.6.*",
+      "contextWindow": 200000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.5.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.5-air.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.6v.*",
+      "contextWindow": 131072,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.6v-flash.*",
+      "contextWindow": 131072,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.6v-flashx.*",
+      "contextWindow": 131072,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.1v-thinking-flash.*",
+      "contextWindow": 65536,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4\\.1v-thinking-flashx.*",
+      "contextWindow": 65536,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4-flashx-250414.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4-flash-250414.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*glm-4v-flash.*",
+      "contextWindow": 16384,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*codegeex-4.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*charglm-4.*",
+      "contextWindow": 8192,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*emohaa.*",
+      "contextWindow": 8192,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.6.*",
+      "contextWindow": 1050000,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.3-codex.*",
+      "contextWindow": 400000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-6-astra.*",
+      "contextWindow": 1050000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.4.*",
+      "contextWindow": 1050000,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.4-pro.*",
+      "contextWindow": 1050000,
+      "vision": true,
+      "reasoningEfforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.4-mini.*",
+      "contextWindow": 400000,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.4-nano.*",
+      "contextWindow": 400000,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*claude-(?:fable|opus|sonnet)-5.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*claude-haiku-4[.-]5.*",
+      "contextWindow": 200000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*claude-(?:fable|mythos)-5[.-]1.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*grok-4\\.6.*",
+      "contextWindow": 500000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*grok-build-0\\.1.*",
+      "contextWindow": 256000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*grok-4\\.3.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k3.*",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*k3.*",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*k3-256k.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.7-code.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.6.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.5.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-8k.*",
+      "contextWindow": 8192,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-32k.*",
+      "contextWindow": 32768,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-128k.*",
+      "contextWindow": 131072,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-8k-vision-preview.*",
+      "contextWindow": 8192,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-32k-vision-preview.*",
+      "contextWindow": 32768,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*moonshot-v1-128k-vision-preview.*",
+      "contextWindow": 131072,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M3.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.7.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.7-highspeed.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.5.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.5-highspeed.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.1.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*MiniMax-M2\\.1-highspeed.*",
+      "contextWindow": 204800,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4-flash.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4-pro.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4[.-]1-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.8-(?:max|flash).*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.5-plus.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.5-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3-max.*",
+      "contextWindow": 262144,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen-plus.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen-flash.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3-vl-plus.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.7-max.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.7-plus.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.7-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.6-plus.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.6-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.7-max-2026-06-08.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.8-omni-flash.*",
+      "contextWindow": 65536,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2\\.6-(?:pro|flash).*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2\\.5.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2\\.5-pro.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2-pro.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2-omni.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2-flash.*",
+      "contextWindow": 262144,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*(?:ox-alpha|glm-x-preview-f|x-preview-f-free).*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k3.*",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*k3.*",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*k3-256k.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.7-code.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.6.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*kimi-k2\\.5.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4-flash.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4-pro.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.8-(?:max|flash).*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.5-plus.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.5-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen-plus.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen-flash.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3-vl-plus.*",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2\\.5.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2\\.5-pro.*",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*mimo-v2-flash.*",
+      "contextWindow": 262144,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*gpt-5\\.4.*",
+      "contextWindow": 1050000,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": ".*deepseek-v4[.-]1-flash.*",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": ".*qwen3\\.8-omni-flash.*",
+      "contextWindow": 65536,
+      "vision": true,
+      "reasoningEfforts": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "glm-5\\.3",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "glm-5\\.3-flash",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "glm-5\\.3-flashx",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "k3\\.1-pro",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "k3\\.1-pro-highspeed",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "k3",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "k3-256k",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "kimi-for-coding",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "kimi-for-coding-highspeed",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "qwen3\\.8-max",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": "qwen3\\.8-flash",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "modelMatch": "qwen3\\.7-plus",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "hy3",
+      "contextWindow": 256000,
+      "vision": false,
+      "reasoningEfforts": [
+        "none",
+        "high"
+      ]
+    },
+    {
+      "modelMatch": "hy4-preview",
+      "contextWindow": 1024000,
+      "vision": false,
+      "reasoningEfforts": [
+        "none",
+        "high"
+      ]
+    },
+    {
+      "modelMatch": "zai-org/GLM-5\\.3",
+      "contextWindow": 1048576,
+      "vision": false,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "deepseek-ai/DeepSeek-V4-Flash",
+      "contextWindow": 1048576,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "moonshotai/Kimi-K2\\.7-Code",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "minimax-m3\\.1-flash",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "kimi-k3\\.1-pro",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "kimi-k3",
+      "contextWindow": 1048576,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "kimi-k2\\.7-code",
+      "contextWindow": 262144,
+      "vision": true,
+      "reasoningEfforts": [
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "deepseek-v4\\.1-flash",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "deepseek-v4-pro",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "mimo-v2\\.6-pro",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "mimo-v2\\.6-flash",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "minimax-m3",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "glm-5\\.2",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "modelMatch": "big-pickle",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "mimo-v2\\.5-free",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "hy3-free",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "ling-3\\.0-flash-fin-free",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "nemotron-3-ultra-free",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "muse-spark-1\\.2-contributor-free",
+      "contextWindow": 1000000,
+      "vision": false,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    },
+    {
+      "modelMatch": "mimo-v2\\.6-flash-free",
+      "contextWindow": 1000000,
+      "vision": true,
+      "reasoningEfforts": [
+        "disabled",
+        "enabled"
+      ]
+    }
+  ]
+}

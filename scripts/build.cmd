@@ -5,6 +5,8 @@ REM  构建发布包 (桌面 NSIS / Android APK)
 REM ============================================
 
 title Marcel SSH - Build
+REM 发布包必须完成上游模型表检查；断网不能静默用旧表出包。
+set "MARCEL_ZCODE_SYNC_REQUIRED=1"
 
 set "PATH=C:\Program Files\nodejs;%APPDATA%\npm;%PATH%"
 cd /d "%~dp0.."

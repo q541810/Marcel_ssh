@@ -172,6 +172,7 @@ gh release list
 ### 4. 构建 Windows 安装包（仅本版发布桌面时执行）
 
 ```bash
+$env:MARCEL_ZCODE_SYNC_REQUIRED = "1"
 pnpm tauri build
 ```
 
@@ -205,6 +206,7 @@ pnpm tauri signer sign --password= "src-tauri\target\release\bundle\nsis\Marcel 
 ```powershell
 $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 $env:NDK_HOME="$env:LOCALAPPDATA\Android\Sdk\ndk\27.0.12077973"
+$env:MARCEL_ZCODE_SYNC_REQUIRED = "1"
 pnpm tauri android build --apk --target aarch64
 ```
 

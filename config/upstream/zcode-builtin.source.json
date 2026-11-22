@@ -1,0 +1,9 @@
+{
+  "repository": "zai-org/ZCode",
+  "release": "v3.18.2",
+  "commit": "fec975905a2abd4c07e35c40d51fa097a2258ec9",
+  "revision": 44,
+  "sha256": "2af7b0cac658e9507413f5b1f5f9754e17c18fd29745522592d8b6ae699030ab",
+  "license": "Apache-2.0",
+  "upstreamUrl": "https://github.com/zai-org/ZCode/blob/fec975905a2abd4c07e35c40d51fa097a2258ec9/config/provider/zcode-builtin.json"
+}

@@ -6,6 +6,8 @@ dist/
 
 # 日志（构建与调试产物，不入仓库）
 *.log
+# 构建前模型表同步的临时锁（崩溃后按过期时间回收）
+config/upstream/.sync.lock
 
 # Rust
 src-tauri/target/
