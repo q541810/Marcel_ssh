@@ -108,6 +108,14 @@ pub struct AgentSpec {
     pub history: Vec<LlmMessage>,
     /// 覆盖主模型的 model 名（子任务可选）。
     pub model_override: Option<String>,
+    /// 子任务显式请求的思考强度档位（`subagent` / `local_subagent` 的
+    /// `reasoning_effort` 参数，trim 后非空）。`None` = 不发送该参数，跟随模型
+    /// 自身默认（旧行为）。
+    ///
+    /// **主任务恒为 `None`**：主任务的档位来自会话级选择（`session_efforts`），
+    /// 见 `spawn` 的 2.5 段。子 agent 不继承父会话的档位，只认自己这次派发
+    /// 显式请求的那一档；档位须在**实际落地模型**的声明内才会注入。
+    pub reasoning_effort: Option<String>,
     /// 追加到 system prompt 的角色约束段（子任务的调研约束）。
     /// 作为拼装组件传入，与基础段一样由模板拼装器统一拼接。
     pub prompt_extra: Vec<String>,
@@ -607,39 +615,44 @@ impl AgentManager {
         // **该会话当前生效模型**的记忆（实时生效语义：正在运行的任务不受
         // 后续切换影响，只影响之后发起/继续的任务；切到别的模型用那个
         // 模型自己的记忆，切回原模型原档位仍在）。
-        // - 主任务：查 (会话, 生效模型) 记忆；子任务**不继承**（调研子
-        //   agent 只跟随自身模型默认，语义干净）。档位须在模型声明内才注入。
+        // - 主任务：查 (会话, 生效模型) 记忆。
+        // - 子任务：**不继承**父会话的档位（调研子 agent 只跟随自身模型默认），
+        //   但认自己这次派发显式请求的 `spec.reasoning_effort`——那是主 agent
+        //   按任务难度主动选的，语义与「继承父会话设置」不同。
+        // 两条路径都要求档位在**实际落地模型**的声明内，否则不注入（见
+        // `apply_reasoning_effort`）。
         let mut llm_config = resolved.config.clone();
-        if spec.role == AgentRole::Main {
-            let effort = self
-                .state
+        let requested_effort = if spec.role == AgentRole::Main {
+            self.state
                 .session_efforts
                 .read()
                 .get(&spec.conversation_id)
                 .and_then(|m| m.get(&resolved.model_id))
                 .filter(|s| !s.is_empty())
-                .cloned();
-            if let Some(e) = effort {
-                llm_config = apply_reasoning_effort(
-                    llm_config,
-                    &resolved.display_label,
-                    &resolved.reasoning_efforts,
-                    &e,
+                .cloned()
+        } else {
+            spec.reasoning_effort.clone()
+        };
+        if let Some(e) = requested_effort {
+            llm_config = apply_reasoning_effort(
+                llm_config,
+                &resolved.display_label,
+                &resolved.reasoning_efforts,
+                &e,
+            );
+            if let Some(v) = llm_config
+                .extra_body
+                .as_ref()
+                .and_then(|b| b.get("reasoning_effort"))
+                .and_then(|v| v.as_str())
+            {
+                log::info!(
+                    "Agent task {} 会话 {} 模型 {} 思考强度: {}",
+                    spec.task_id,
+                    spec.conversation_id,
+                    resolved.model_id,
+                    v
                 );
-                if let Some(v) = llm_config
-                    .extra_body
-                    .as_ref()
-                    .and_then(|b| b.get("reasoning_effort"))
-                    .and_then(|v| v.as_str())
-                {
-                    log::info!(
-                        "Agent task {} 会话 {} 模型 {} 思考强度: {}",
-                        spec.task_id,
-                        spec.conversation_id,
-                        resolved.model_id,
-                        v
-                    );
-                }
             }
         }
         let llm_manager = LlmManager::new(llm_config)?;
@@ -2218,6 +2231,7 @@ mod tests {
             model_id: "m1".into(),
             label: "小杯".into(),
             description: "小模型".into(),
+            reasoning_efforts: Vec::new(),
         }];
 
         for mode in [AgentMode::Plan, AgentMode::Agent] {

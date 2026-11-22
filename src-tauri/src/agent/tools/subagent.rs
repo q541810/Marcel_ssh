@@ -100,6 +100,10 @@ pub(crate) struct SubagentModelCandidate {
     pub label: String,
     /// 用户写的选型提示，可空。
     pub description: String,
+    /// 该模型在设置里声明的思考强度档位（`ModelEntry.reasoning_efforts`
+    /// 原样带过来）。空 = 这个模型不接受 `reasoning_effort` 选择：主 agent
+    /// 派发时不会看到该参数能选什么，spawn 侧也不会注入。
+    pub reasoning_efforts: Vec<String>,
 }
 
 /// 把设置里的候选解析成派发侧清单（纯函数便于单测）：
@@ -122,6 +126,7 @@ pub(crate) fn resolve_subagent_candidates(registry: &LlmRegistry) -> Vec<Subagen
         label: String,
         description: String,
         channel_name: String,
+        reasoning_efforts: Vec<String>,
     }
     let mut pending: Vec<Pending> = Vec::new();
     for choice in &registry.subagent_models {
@@ -166,6 +171,11 @@ pub(crate) fn resolve_subagent_candidates(registry: &LlmRegistry) -> Vec<Subagen
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" "),
+            // 声明档位原样带过去：注入比较在 spawn 侧按**原始值全等**做，
+            // 与 `apply_reasoning_effort` 同口径（保存侧已由
+            // `normalize_reasoning_efforts` 归一，这里不再二次 trim，免得
+            // 两处口径分叉）。
+            reasoning_efforts: model.reasoning_efforts.clone(),
         });
     }
     let mut out: Vec<SubagentModelCandidate> = Vec::new();
@@ -200,6 +210,7 @@ pub(crate) fn resolve_subagent_candidates(registry: &LlmRegistry) -> Vec<Subagen
             model_id: item.model_id.clone(),
             label,
             description: item.description.clone(),
+            reasoning_efforts: item.reasoning_efforts.clone(),
         });
     }
     out
@@ -249,6 +260,101 @@ pub(crate) enum ModelChoiceLookup {
     Chosen(String),
     /// 提供了但不在候选清单：回落继承，并把提示带回给主 agent。
     Unknown(String),
+}
+
+/// `reasoning_effort` 参数的 schema 片段；所有候选都没声明档位 = 不暴露该参数。
+///
+/// 与 `model` 参数同一道门：用户没给任何候选填档位时，工具定义与引入本机制前
+/// 保持一致（多一个永远无效的参数只会让模型犹豫）。
+///
+/// **刻意不用 `enum`**：并集只覆盖候选模型的声明。主 agent 不传 `model` 时
+/// 子agent 继承会话模型，而会话模型的档位不在并集里——用 enum 会把这种合法
+/// 选择挡在外面。档位是否被采纳由 spawn 按**真实落地模型**的声明判，判不过
+/// 会明确回一句说明（`reasoning_effort_note`），不靠 schema 兜。
+pub(crate) fn reasoning_effort_param_schema(
+    choices: &[SubagentModelCandidate],
+) -> Option<serde_json::Value> {
+    let with_levels: Vec<&SubagentModelCandidate> = choices
+        .iter()
+        .filter(|c| !c.reasoning_efforts.is_empty())
+        .collect();
+    if with_levels.is_empty() {
+        return None;
+    }
+    let levels = with_levels
+        .iter()
+        .map(|c| format!("{}: {}", c.label, c.reasoning_efforts.join(" / ")))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(json!({
+        "type": "string",
+        "description": format!(
+            "Optional. How hard the subagent's model should think, for models that declare reasoning levels. Declared levels — {levels}. Use a level declared by the model the subagent will ACTUALLY run on: the one you pick via `model`, or the current session's model when you omit `model` (its own levels are not listed here — use one it declares, or omit this). When omitted, no reasoning_effort is sent at all and the model uses its own default. A level the model doesn't declare is not sent, and the result tells you so."
+        )
+    }))
+}
+
+/// 候选清单段里「思考强度」那一段（没有候选声明档位时返回空串）。
+pub(crate) fn render_reasoning_effort_section(choices: &[SubagentModelCandidate]) -> String {
+    let with_levels: Vec<&SubagentModelCandidate> = choices
+        .iter()
+        .filter(|c| !c.reasoning_efforts.is_empty())
+        .collect();
+    if with_levels.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from(
+        "\n\nREASONING EFFORT: these candidates declare selectable reasoning levels — \
+         pass `reasoning_effort` to choose how hard the subagent thinks:\n",
+    );
+    for choice in with_levels {
+        section.push_str(&format!(
+            "- \"{}\": {}\n",
+            choice.label,
+            choice.reasoning_efforts.join(" / ")
+        ));
+    }
+    section.push_str(
+        "Omit `reasoning_effort` to send no reasoning parameter at all (the model's own \
+         default). Use a level declared by the model the subagent will ACTUALLY run on — \
+         the one you pick via `model`, or the session's own model when you omit `model` \
+         (its levels aren't listed here). A level the model doesn't declare is not sent, \
+         and the result tells you so.",
+    );
+    section
+}
+
+/// `reasoning_effort` 参数的解析结果（trim 后非空才算传了）。
+pub(crate) fn lookup_reasoning_effort(params: &serde_json::Value) -> Option<String> {
+    params
+        .get("reasoning_effort")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// 请求的思考强度没被真正注入时带回给主 agent 的提示（纯函数便于单测）。
+///
+/// `declared` 是**真实落地模型**的声明档位。返回 `None` = 请求为空、或确实能用
+/// （此时调用方不该多说一句）。
+pub(crate) fn reasoning_effort_note(
+    requested: &str,
+    model_label: &str,
+    declared: &[String],
+) -> Option<String> {
+    if declared.iter().any(|x| x == requested) {
+        return None;
+    }
+    if declared.is_empty() {
+        return Some(format!(
+            "（模型 \"{model_label}\" 未声明思考强度档位，\"{requested}\" 未发送）"
+        ));
+    }
+    Some(format!(
+        "（思考强度 \"{requested}\" 不在模型 \"{model_label}\" 的声明档位（{}）内，未发送）",
+        declared.join(" / ")
+    ))
 }
 
 /// 从工具入参解析 `model` 参数（两个 subagent 工具共用）。
@@ -515,6 +621,51 @@ pub(crate) fn resolved_sub_model_label(
         .map(|m| registry.model_label(m))
 }
 
+/// 子任务实际落地模型的「展示名 + 声明档位」（spawn 解析后的真实模型）。
+pub(crate) fn resolved_sub_model_efforts(
+    state: &AppState,
+    registry: &LlmRegistry,
+    sub_task_id: &str,
+) -> Option<(String, Vec<String>)> {
+    let model_id = state
+        .agent_tasks
+        .read()
+        .get(sub_task_id)
+        .and_then(|t| t.model_id.clone())?;
+    registry
+        .find_model(&model_id)
+        .map(|m| (registry.model_label(m), m.reasoning_efforts.clone()))
+}
+
+/// 派发结果里「思考强度」相关的元信息：`effortNote`（没被采纳时给主 agent 的
+/// 说明）+ `reasoningEffort`（真正生效的档位）。返回 `(note, applied)`。
+///
+/// 「真正生效」的判据与 `spawn` 完全一致：落地模型声明里含这个档位。这样卡片
+/// 上显示的就是请求体里实际发出的那个值，而不是主 agent 一厢情愿填的那个。
+pub(crate) fn resolve_effort_outcome(
+    state: &AppState,
+    registry: &LlmRegistry,
+    sub_task_id: &str,
+    requested: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let Some(requested) = requested else {
+        return (None, None);
+    };
+    let Some((label, declared)) = resolved_sub_model_efforts(state, registry, sub_task_id) else {
+        // 连模型都查不到（任务未登记？）：不猜，按「未采纳」如实说明。
+        return (
+            Some(format!(
+                "（思考强度 \"{requested}\" 未能确认是否生效：找不到子agent实际使用的模型）"
+            )),
+            None,
+        );
+    };
+    match reasoning_effort_note(requested, &label, &declared) {
+        None => (None, Some(requested.to_string())),
+        Some(note) => (Some(note), None),
+    }
+}
+
 pub struct SubagentTool {
     /// 非空：向 LLM 暴露 model 参数并在描述里列出候选（来自设置
     /// `llm_registry.subagentModels`，经 [`resolve_subagent_candidates`] 过滤）。
@@ -535,9 +686,10 @@ impl SubagentTool {
     /// 带候选构建。注入点唯一：`manager::build_role_registry`（仅主任务、候选非空）。
     pub(crate) fn with_choices(model_choices: Vec<SubagentModelCandidate>) -> Self {
         let rendered_description = format!(
-            "{}{}",
+            "{}{}{}",
             BASE_DESCRIPTION,
-            render_model_selection_section(&model_choices)
+            render_model_selection_section(&model_choices),
+            render_reasoning_effort_section(&model_choices)
         );
         Self {
             model_choices,
@@ -705,6 +857,13 @@ impl AgentTool for SubagentTool {
                 .expect("parameters properties is an object")
                 .insert("model".to_string(), model);
         }
+        // 思考强度：只有候选里至少一个模型声明了档位才暴露（与 model 同一道门）。
+        if let Some(effort) = reasoning_effort_param_schema(&self.model_choices) {
+            schema["properties"]
+                .as_object_mut()
+                .expect("parameters properties is an object")
+                .insert("reasoning_effort".to_string(), effort);
+        }
         schema
     }
 
@@ -783,6 +942,12 @@ impl AgentTool for SubagentTool {
                 }
             }
         };
+
+        // ── 子 agent 思考强度：主 agent 显式传了才用，不传就一个参数都不发 ──
+        // 这里只做「传没传」的搬运；能不能用要等 spawn 解析出**真实落地模型**
+        // 之后按它的声明判（见 `apply_reasoning_effort`），判失败的说明在结果
+        // 收尾时按实际模型补一句（`reasoning_effort_note`）。
+        let requested_effort = lookup_reasoning_effort(&params);
 
         // ── 嵌套防御：子agent不能再派发子agent ──
         // parent_task_id = 当前任务 id（也是新子 agent 的父任务 id）。
@@ -1071,6 +1236,7 @@ impl AgentTool for SubagentTool {
             prompt,
             history,
             model_override,
+            reasoning_effort: requested_effort.clone(),
             prompt_extra: vec![sub_instruction],
             // 子 agent 的 prompt 是父 agent 写的派发任务，但它在自己的子会话里
             // 就是「这一轮用户说的话」——按用户输入落库（子会话没有唤醒轮）。
@@ -1106,13 +1272,29 @@ impl AgentTool for SubagentTool {
 
         // 主 agent 显式选过模型（含选错回落）才带 modelLabel —— 展示的是 spawn
         // 解析后**真实落地**的模型（渠道失效回落时不说谎）；未传参时保持既有
-        // metadata 形状不变。
+        // metadata 形状不变（没有 model chip = 继承会话模型，语义本身已经清楚）。
         let model_label = if model_param_used {
             let settings = state.settings.read().await;
             resolved_sub_model_label(&state, &settings.llm_registry, &sub_task_id)
         } else {
             None
         };
+        // 思考强度：只有主 agent 传了才回写。真正生效的档位（`applied_effort`）
+        // 与落地模型声明一致才写 metadata；没被采纳就把原因拼进结果标题，让主
+        // agent 知道「这一发没按你要的档位跑」，而不是以为它生效了。
+        let (effort_note, applied_effort) = {
+            let settings = state.settings.read().await;
+            resolve_effort_outcome(
+                &state,
+                &settings.llm_registry,
+                &sub_task_id,
+                requested_effort.as_deref(),
+            )
+        };
+        if let Some(note) = &effort_note {
+            log::warn!("Subtask {} 思考强度未采纳: {}", sub_task_id, note);
+            model_note.push_str(note);
+        }
 
         // 结果归属元数据（多机 badge / 子 agent 模式）——三处共用。
         let result_meta = |mut base: serde_json::Value| -> serde_json::Value {
@@ -1122,6 +1304,9 @@ impl AgentTool for SubagentTool {
             }
             if let Some(label) = &model_label {
                 obj.insert("modelLabel".to_string(), json!(label));
+            }
+            if let Some(effort) = &applied_effort {
+                obj.insert("reasoningEffort".to_string(), json!(effort));
             }
             obj.insert(
                 "mode".to_string(),
@@ -1472,6 +1657,8 @@ mod tests {
             channel_id: "c1".into(),
             model_name: "qwen3.8-32b-a3b".into(),
             display_name: "小杯".into(),
+            // 声明了档位：候选解析要把它原样带到派发侧（供描述段与参数说明用）。
+            reasoning_efforts: vec!["low".into(), "high".into()],
             ..Default::default()
         });
         registry.models.push(ModelEntry {
@@ -1520,6 +1707,15 @@ mod tests {
         assert_eq!(candidates[0].model_id, "m1");
         assert_eq!(candidates[0].label, "小杯", "display_name 优先");
         assert_eq!(candidates[0].description, "小模型， 适合搜索等简单任务");
+        assert_eq!(
+            candidates[0].reasoning_efforts,
+            vec!["low".to_string(), "high".to_string()],
+            "模型声明的档位要原样带到派发侧"
+        );
+        assert!(
+            candidates[1].reasoning_efforts.is_empty(),
+            "没声明档位的模型带空清单"
+        );
         assert_eq!(
             candidates[1].label, "claude-fable-5",
             "display_name 为空时回落 model_name"
@@ -1673,11 +1869,13 @@ mod tests {
                 model_id: "m1".into(),
                 label: "小杯".into(),
                 description: "小模型".into(),
+                reasoning_efforts: Vec::new(),
             },
             SubagentModelCandidate {
                 model_id: "m2".into(),
                 label: "大杯".into(),
                 description: String::new(),
+                reasoning_efforts: Vec::new(),
             },
         ];
         let tool = SubagentTool::with_choices(choices);
@@ -1691,6 +1889,87 @@ mod tests {
         assert_eq!(model["enum"][0], "小杯");
         assert_eq!(model["enum"][1], "大杯");
         assert_eq!(model["enum"].as_array().unwrap().len(), 2);
+        // 没有任何候选声明档位 → 不暴露 reasoning_effort（与未配置时的形状一致）
+        assert!(def.parameters["properties"]
+            .get("reasoning_effort")
+            .is_none());
+        assert!(!def.description.contains("REASONING EFFORT"));
+    }
+
+    /// 思考强度参数：enum = 各候选声明档位的并集（去重、保首次顺序）；描述段只列
+    /// 声明了档位的候选。混合清单（部分候选没档位）也要能正确表达。
+    #[test]
+    fn reasoning_effort_param_and_section_cover_declaring_candidates_only() {
+        let choices = vec![
+            SubagentModelCandidate {
+                model_id: "m1".into(),
+                label: "小杯".into(),
+                description: "快".into(),
+                reasoning_efforts: vec!["low".into(), "high".into()],
+            },
+            SubagentModelCandidate {
+                model_id: "m2".into(),
+                label: "中杯".into(),
+                description: String::new(),
+                reasoning_efforts: Vec::new(),
+            },
+            SubagentModelCandidate {
+                model_id: "m3".into(),
+                label: "大杯".into(),
+                description: "慢但准".into(),
+                reasoning_efforts: vec!["high".into(), "max".into()],
+            },
+        ];
+        let tool = SubagentTool::with_choices(choices.clone());
+        let def = tool.definition();
+        let effort = &def.parameters["properties"]["reasoning_effort"];
+        assert_eq!(effort["type"], "string");
+        assert!(
+            effort.get("enum").is_none(),
+            "刻意不用 enum：继承会话模型时它的档位不在候选并集里"
+        );
+        // 声明档位要在参数说明里写全，主 agent 才知道每个候选能选什么。
+        let desc = effort["description"].as_str().expect("description is string");
+        assert!(desc.contains("小杯: low / high"), "实际: {desc}");
+        assert!(desc.contains("大杯: high / max"), "实际: {desc}");
+        assert!(!desc.contains("中杯"), "没声明档位的候选不列");
+        // 描述段：只列有档位的候选，没档位的「中杯」不出现。
+        assert!(def.description.contains("- \"小杯\": low / high"));
+        assert!(def.description.contains("- \"大杯\": high / max"));
+        assert!(!def.description.contains("\"中杯\": "));
+        assert!(
+            def.description
+                .contains("Omit `reasoning_effort` to send no reasoning parameter")
+        );
+    }
+
+    #[test]
+    fn effort_lookup_trims_and_rejects_blank() {
+        assert_eq!(lookup_reasoning_effort(&json!({})), None);
+        assert_eq!(
+            lookup_reasoning_effort(&json!({ "reasoning_effort": "  " })),
+            None
+        );
+        assert_eq!(
+            lookup_reasoning_effort(&json!({ "reasoning_effort": " high " })),
+            Some("high".to_string())
+        );
+    }
+
+    /// 「档位没被采纳」的说明：能用就一句不说（None）；不能用必须说清是模型
+    /// 没声明档位、还是档位不在该模型的声明里。
+    #[test]
+    fn effort_note_explains_only_when_not_applied() {
+        let declared = vec!["low".to_string(), "high".to_string()];
+        assert_eq!(reasoning_effort_note("high", "小杯", &declared), None);
+        assert_eq!(
+            reasoning_effort_note("max", "小杯", &declared),
+            Some("（思考强度 \"max\" 不在模型 \"小杯\" 的声明档位（low / high）内，未发送）".into())
+        );
+        assert_eq!(
+            reasoning_effort_note("high", "大杯", &[]),
+            Some("（模型 \"大杯\" 未声明思考强度档位，\"high\" 未发送）".into())
+        );
     }
 
     #[test]
@@ -1699,6 +1978,7 @@ mod tests {
             model_id: "m1".into(),
             label: "小杯".into(),
             description: String::new(),
+            reasoning_efforts: Vec::new(),
         }];
         assert_eq!(
             lookup_model_choice(&json!({}), &choices),

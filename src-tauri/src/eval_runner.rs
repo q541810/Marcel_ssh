@@ -772,6 +772,7 @@ fn run_job() {
             prompt: job.prompt.clone(),
             history: Vec::new(),
             model_override: Some(MODEL_ID.into()),
+            reasoning_effort: None,
             prompt_extra: Vec::new(),
             prompt_origin: PromptOrigin::User,
             user_input: None,

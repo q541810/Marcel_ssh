@@ -60,6 +60,8 @@ pub async fn agent_start_task(
         prompt,
         history,
         model_override,
+        // 主任务的思考强度走会话级选择（`session_efforts`），不经 spec 传。
+        reasoning_effort: None,
         prompt_extra: Vec::new(),
         prompt_origin: PromptOrigin::from_ipc(origin.as_deref()),
         user_input,

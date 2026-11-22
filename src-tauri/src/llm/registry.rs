@@ -174,6 +174,12 @@ impl Default for ModelEntry {
 /// 清单为空 = 不向 LLM 暴露 model 参数（子agent 恒继承会话模型，旧行为）。
 /// `model_id` 指向 [`LlmRegistry::models`] 的条目 id；引用已删除/渠道禁用的
 /// 模型时该候选在派发侧被过滤（不在清单里出现），设置里保留原样。
+///
+/// **思考强度不在这里配**：候选能选哪些档位完全取决于被引用模型自己的
+/// [`ModelEntry::reasoning_efforts`]。派发侧把它带到工具描述与
+/// `reasoning_effort` 参数说明里；主 agent 选不选、选哪一档，由 spawn 按
+/// 真实落地模型的声明判定（见 `apply_reasoning_effort`）。这里加字段会让
+/// 「档位」有两个权威来源，所以刻意没有。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentModelChoice {

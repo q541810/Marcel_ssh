@@ -49,10 +49,12 @@ use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::subagent::{
     apply_parent_answer, ask_handback, classify_subagent_result, continue_hint, continue_id_schema,
-    conversation_has_running_task, failure_detail, lookup_model_choice, model_param_schema,
-    optional_continue_id, render_model_selection_section, resolved_sub_model_label, truncate_chars,
-    unknown_model_note, validate_continue_target, AppliedAnswer, ContinueClaim, ContinueTarget,
-    ModelChoiceLookup, SubTaskStartEvent, SubagentModelCandidate, SubagentOutcome,
+    conversation_has_running_task, failure_detail, lookup_model_choice, lookup_reasoning_effort,
+    model_param_schema, optional_continue_id, reasoning_effort_param_schema,
+    render_model_selection_section, render_reasoning_effort_section, resolve_effort_outcome,
+    resolved_sub_model_label, truncate_chars, unknown_model_note, validate_continue_target,
+    AppliedAnswer, ContinueClaim, ContinueTarget, ModelChoiceLookup, SubTaskStartEvent,
+    SubagentModelCandidate, SubagentOutcome,
 };
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::AgentModeSettings;
@@ -168,9 +170,10 @@ impl LocalSubagentTool {
     /// 带候选构建。注入点唯一：`manager::build_role_registry`（仅主任务、候选非空）。
     pub(crate) fn with_choices(model_choices: Vec<SubagentModelCandidate>) -> Self {
         let rendered_description = format!(
-            "{}{}",
+            "{}{}{}",
             BASE_DESCRIPTION,
-            render_model_selection_section(&model_choices)
+            render_model_selection_section(&model_choices),
+            render_reasoning_effort_section(&model_choices)
         );
         Self {
             model_choices,
@@ -271,6 +274,13 @@ impl AgentTool for LocalSubagentTool {
                 .as_object_mut()
                 .expect("parameters properties is an object")
                 .insert("model".to_string(), model);
+        }
+        // 思考强度：候选里至少一个模型声明了档位才暴露（与 `subagent` 同口径）。
+        if let Some(effort) = reasoning_effort_param_schema(&self.model_choices) {
+            schema["properties"]
+                .as_object_mut()
+                .expect("parameters properties is an object")
+                .insert("reasoning_effort".to_string(), effort);
         }
         schema
     }
@@ -657,6 +667,9 @@ impl AgentTool for LocalSubagentTool {
             }
         };
 
+        // ── 思考强度：主 agent 显式传了才用，不传就一个参数都不发（与远端同口径）──
+        let requested_effort = lookup_reasoning_effort(&params);
+
         // ── 组装 + spawn ──
         // 约束段复用远端子 agent 那两份（`子agent_只读` / `子agent_执行`），再追加
         // 本机环境段：它把约束段里「服务器 / 远端 / SSH 通道」的措辞按这台电脑重新
@@ -687,6 +700,7 @@ impl AgentTool for LocalSubagentTool {
             history,
             // 默认继承父任务模型；候选清单配置后可被 model 参数覆盖（见上）。
             model_override,
+            reasoning_effort: requested_effort.clone(),
             prompt_extra: vec![sub_instruction, local_instruction],
             prompt_origin: if applied_answer.is_some() {
                 PromptOrigin::ParentAnswer
@@ -725,10 +739,28 @@ impl AgentTool for LocalSubagentTool {
         } else {
             None
         };
+        // 思考强度：与 `subagent` 同一套——只有主 agent 传了才回写；真正生效的
+        // 档位写 metadata，没被采纳的说明拼进结果标题。
+        let (effort_note, applied_effort) = {
+            let settings = state.settings.read().await;
+            resolve_effort_outcome(
+                &state,
+                &settings.llm_registry,
+                &sub_task_id,
+                requested_effort.as_deref(),
+            )
+        };
+        if let Some(note) = &effort_note {
+            log::warn!("Local subtask {} 思考强度未采纳: {}", sub_task_id, note);
+            model_note.push_str(note);
+        }
         let result_meta = |mut base: serde_json::Value| -> serde_json::Value {
             let obj = base.as_object_mut().expect("metadata is object");
             if let Some(label) = &model_label {
                 obj.insert("modelLabel".to_string(), json!(label));
+            }
+            if let Some(effort) = &applied_effort {
+                obj.insert("reasoningEffort".to_string(), json!(effort));
             }
             obj.insert(
                 "mode".to_string(),
@@ -1030,11 +1062,39 @@ mod tests {
             model_id: "m1".into(),
             label: "小杯".into(),
             description: String::new(),
+            reasoning_efforts: Vec::new(),
         }]);
         let def = configured.definition();
         assert!(def.description.starts_with(BASE_DESCRIPTION));
         assert!(def.description.contains("MODEL SELECTION"));
         assert!(def.description.contains("- \"小杯\"\n"));
         assert_eq!(def.parameters["properties"]["model"]["enum"][0], "小杯");
+        // 没声明档位的候选不暴露 reasoning_effort 参数（与 model 同一道门）。
+        assert!(def.parameters["properties"]
+            .get("reasoning_effort")
+            .is_none());
+    }
+
+    /// 候选声明了档位时本机工具也要暴露 `reasoning_effort`，并把它列进描述段
+    /// （共享机制由 `subagent.rs` 的测试钉住，这里只钉本工具的接线）。
+    #[test]
+    fn with_choices_exposes_reasoning_effort_when_declared() {
+        let configured = LocalSubagentTool::with_choices(vec![SubagentModelCandidate {
+            model_id: "m1".into(),
+            label: "大杯".into(),
+            description: String::new(),
+            reasoning_efforts: vec!["low".into(), "high".into()],
+        }]);
+        let def = configured.definition();
+        assert!(def.description.contains("REASONING EFFORT"));
+        assert!(def.description.contains("- \"大杯\": low / high"));
+        let effort = &def.parameters["properties"]["reasoning_effort"];
+        assert_eq!(effort["type"], "string");
+        assert!(
+            effort["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("大杯: low / high")),
+            "声明档位要写进参数说明"
+        );
     }
 }

@@ -440,6 +440,7 @@ fn local_spec(task_id: &str, conversation_id: &str, prompt: &str, mode: AgentMod
         prompt: prompt.into(),
         history: Vec::new(),
         model_override: Some(MODEL_ID.into()),
+        reasoning_effort: None,
         prompt_extra: Vec::new(),
         prompt_origin: PromptOrigin::User,
         user_input: None,
@@ -3443,6 +3444,7 @@ fn hanging_mcp_server_does_not_delay_task_start() {
             prompt: "你好".into(),
             history: Vec::new(),
             model_override: Some(MODEL_ID.into()),
+            reasoning_effort: None,
             prompt_extra: Vec::new(),
             prompt_origin: PromptOrigin::User,
             user_input: None,
@@ -3732,6 +3734,140 @@ fn scripted_production_loop_subagent_ask_parent_pause_and_resume() {
 // 审批请求都到了才一起回应 —— 旧的「审 1 → 跑 1 → 审 2 → 跑 2」里第一个审批会
 // 一直等不到第二个，闸门超时记错。验收：两条审批同时在路上、命令仍按调用顺序
 // 执行、结果按序回灌。
+
+const EFFORT_PROMPT: &str = "按指定的思考强度跑一轮";
+const EFFORT_FINAL: &str = "档位已按声明发出。";
+
+/// 子agent 的思考强度：**只有档位真的发进了请求体**才算做到。
+///
+/// 覆盖三件事：
+/// 1. spec 带了 `reasoning_effort`、落地模型声明了该档位 → 请求体顶层确实有
+///    `reasoning_effort`（不是塞在 extra_body 里没合并进去，也不是被悄悄丢弃）；
+/// 2. spec 没带 → 请求体里根本没有这个键（「不填就不发」是可观测事实）；
+/// 3. 带了但模型没声明 → 不注入（`apply_reasoning_effort` 的既有语义），
+///    这条路径不能因为新增子agent 入口而漏判。
+///
+/// 判据读的是**模型服务端实际收到的 JSON**，不是我们内部的 config —— 前者才是
+/// 用户关心的那件事。
+#[test]
+fn scripted_production_loop_subagent_reasoning_effort_reaches_the_request_body() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(vec![
+            ModelStep {
+                label: "effort declared and applied",
+                check: Box::new(|request| {
+                    require(
+                        request["reasoning_effort"] == "high",
+                        "声明的档位没有出现在请求体顶层",
+                    )
+                }),
+                frames: text_frames(EFFORT_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+            ModelStep {
+                label: "effort omitted sends nothing",
+                check: Box::new(|request| {
+                    require(
+                        request.get("reasoning_effort").is_none(),
+                        "没请求档位时不该出现 reasoning_effort",
+                    )
+                }),
+                frames: text_frames(EFFORT_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+            ModelStep {
+                label: "effort undeclared is not injected",
+                check: Box::new(|request| {
+                    require(
+                        request.get("reasoning_effort").is_none(),
+                        "模型没声明的档位不得注入",
+                    )
+                }),
+                frames: text_frames(EFFORT_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+        ])
+        .await;
+        let exec = Arc::new(ScriptedExec::default());
+        let state = isolated_state(dir.path(), &model.base_url, exec);
+        app.manage(state.clone());
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "effort-parent")
+            .unwrap();
+        state.agent_tasks.write().insert(
+            "scripted-parent".into(),
+            parent_task_fixture("scripted-parent", &parent.id),
+        );
+        let manager = AgentManager::new(state.clone());
+
+        // 给落地模型声明 low/high —— 与设置页给模型填档位等价。
+        state
+            .settings
+            .mutate(|settings| {
+                if let Some(m) = settings.llm_registry.models.iter_mut().find(|m| m.id == MODEL_ID) {
+                    m.reasoning_efforts = vec!["low".into(), "high".into()];
+                }
+                Ok(())
+            })
+            .await
+            .expect("declare reasoning efforts");
+
+        // 三发都用这一份 spec 工厂；`app` / `state` 不跨 await 持有，
+        // 由每个 future 自建自己的 manager，避免闭包借用冲突。
+        let app_handle = app.handle().clone();
+        let state_for_run = state.clone();
+        let run = move |task_id: &'static str, conversation_id: String, effort: Option<&str>| {
+            let mut spec = local_spec(task_id, &conversation_id, EFFORT_PROMPT, AgentMode::Auto);
+            spec.reasoning_effort = effort.map(String::from);
+            let manager = AgentManager::new(state_for_run.clone());
+            let app_handle = app_handle.clone();
+            async move {
+                let handle = manager.spawn(&app_handle, spec).await.unwrap();
+                tokio::time::timeout(DEADLINE, handle.join())
+                    .await
+                    .expect("effort round completed")
+            }
+        };
+
+        // a. 声明过的高档位：必须真的发出去。
+        let conv_a = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "effort-high", &parent.id)
+            .unwrap();
+        let result = run("scripted-effort-a", conv_a.id, Some("high")).await;
+        assert_eq!(result.as_deref(), Some(EFFORT_FINAL));
+
+        // b. 不填：请求体里一个键都不多。
+        let conv_b = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "effort-none", &parent.id)
+            .unwrap();
+        let result = run("scripted-effort-b", conv_b.id, None).await;
+        assert_eq!(result.as_deref(), Some(EFFORT_FINAL));
+
+        // c. 填了模型没声明的档位：不注入（原样回落模型默认）。
+        let conv_c = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "effort-undeclared", &parent.id)
+            .unwrap();
+        let result = run("scripted-effort-c", conv_c.id, Some("ultra")).await;
+        assert_eq!(result.as_deref(), Some(EFFORT_FINAL));
+
+        model.assert_consumed();
+        assert_eq!(model.requests().len(), 3);
+
+        #[allow(deprecated)]
+        let managed_state = app.unmanage::<AppState>().expect("unmanage isolated AppState");
+        drop(managed_state);
+        drop(app);
+    });
+    dir.close().expect("remove the isolated scenario directory");
+}
 
 const PAR_CMD_A: &str = "Write-Output approve-first";
 const PAR_OUT_A: &str = "approve-first\n";
