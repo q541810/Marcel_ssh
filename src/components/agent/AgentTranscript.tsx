@@ -13,7 +13,8 @@ import { resolveJumpRequest } from '@/lib/jumpResolve';
 import SubagentAwaitingNotice from './SubagentAwaitingNotice';
 import { MessageJumpContext, type MessageJumpScope } from './messageJumpContext';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { MascotPerch, PERCH_RESERVE_PX } from '@/components/mascot/MascotPerch';
+import { PERCH_RESERVE_PX } from '@/components/mascot/MascotPerch';
+import MascotPlayground from '@/components/mascot/MascotPlayground';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
@@ -178,11 +179,7 @@ export default memo(function AgentTranscript({
         </div>
       </div>
       {mobile && perched && conversationId && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
-          <div className="agent-content-column flex justify-end">
-            <MascotPerch conversationId={conversationId} />
-          </div>
-        </div>
+        <MascotPlayground conversationId={conversationId} visible={visible} />
       )}
       {mobile && shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
         <button
@@ -196,25 +193,22 @@ export default memo(function AgentTranscript({
         </button>
       )}
       {!mobile && (perched || shouldShowScrollToBottomFab(nearBottom, messages.length > 0)) && (
-        // 桌面端贴内容列右缘而不是面板右缘：限宽布局下面板右缘在两侧留白里，会压在宽度把手上。
-        // 整层 pointer-events-none，只有按钮和玛瑟尔的身子接事件，不挡下面的消息。
-        // 玛瑟尔坐在消息区下沿（= 计划条 / 输入框上沿），「回到底部」排在它左边，两者不重叠。
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
-          <div className="agent-content-column flex items-end justify-end gap-2">
-            {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
-              <button
-                type="button"
-                onClick={() => scrollToBottom('smooth')}
-                title="回到底部"
-                aria-label="回到底部"
-                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-surface-raised/95 text-fg shadow-raised backdrop-blur-sm transition-colors hover:bg-fill-strong"
-              >
-                <ArrowDown className="h-4 w-4" />
-              </button>
-            )}
-            {perched && conversationId && <MascotPerch conversationId={conversationId} />}
-          </div>
-        </div>
+        // 贴内容列而非面板右缘；玛瑟尔的活动区与「回到底部」共用一行，按钮出现时自动让位。
+        <MascotPlayground
+          conversationId={conversationId ?? ''}
+          visible={visible}
+          accessory={shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom('smooth')}
+              title="回到底部"
+              aria-label="回到底部"
+              className="pointer-events-auto mb-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-edge-strong bg-surface-raised/95 text-fg shadow-raised backdrop-blur-sm transition-colors hover:bg-fill-strong"
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          )}
+        />
       )}
     </div>
   );

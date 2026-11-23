@@ -1,6 +1,5 @@
 import { memo, useCallback } from 'react';
 import MarcelSprite from './MarcelSprite';
-import { useMascotMood } from './useMascotMood';
 import type { MascotState } from '@/lib/mascot/frames';
 
 /** 坐姿玛瑟尔的目标尺寸（CSS px，整张 64 格画布）。实际按整数倍像素落在附近。 */
@@ -15,9 +14,24 @@ export const PERCH_RESERVE_PX = 44;
  * 坐在消息区右下角、跟着这个对话的任务状态做动作的玛瑟尔。
  * 动作由 `useMascotMood`（导演）定，这里只负责把它摆上去。
  */
-export const MascotPerch = memo(function MascotPerch({ conversationId }: { conversationId: string }) {
-  const { state, poke } = useMascotMood(conversationId);
-  return <MarcelSprite state={state} size={PERCH_SIZE} perch onPoke={poke} />;
+export const MascotPerch = memo(function MascotPerch({
+  state,
+  size = PERCH_SIZE,
+  onPoke,
+  externalMotion = false,
+  onReady,
+  facing = 1,
+  reaction = null,
+}: {
+  state: MascotState;
+  size?: number;
+  onPoke: () => void;
+  externalMotion?: boolean;
+  onReady?: () => void;
+  facing?: 1 | -1;
+  reaction?: 'drag' | null;
+}) {
+  return <MarcelSprite state={state} size={size} perch onPoke={onPoke} externalMotion={externalMotion} onReady={onReady} facing={facing} reaction={reaction} />;
 });
 
 /** 空白页中间的大图：动作由调用方按连接状态给（`mascotForEmptyState`）。 */

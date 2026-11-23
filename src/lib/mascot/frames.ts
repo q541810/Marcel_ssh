@@ -38,6 +38,8 @@ export interface MascotFrameData {
   frames: string[][];
   /** 每个状态一串 [帧序号, 停留毫秒]。 */
   states: Record<MascotState, [number, number][]>;
+  /** 手势反应独立于任务状态；拖拽时切走，松手后回到当时的任务表情。 */
+  reactions: { drag: [number, number][] };
 }
 
 interface RawFrameData extends Omit<MascotFrameData, 'frames'> {

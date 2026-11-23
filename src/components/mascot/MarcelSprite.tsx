@@ -34,6 +34,17 @@ export interface MarcelSpriteProps {
   style?: CSSProperties;
   /** 被戳了一下（松手时）。不传 = 纯展示，不接任何指针事件。 */
   onPoke?: () => void;
+  /** 外层活动区负责位移/形变时关掉本地按压弹簧，只保留点击热区。 */
+  externalMotion?: boolean;
+  /** 热区依赖帧数据的 anchor；资源准备好时通知活动区接入手势。 */
+  onReady?: () => void;
+  /**
+   * 朝向：-1 时把像素画布左右镜像。镜像只发生在绘制阶段，DOM 尺寸和热区都不变，
+   * 所以不会像 scaleX 那样把身体挪走半个身位。
+   */
+  facing?: 1 | -1;
+  /** 手势反应覆盖播放轨道，不改任务状态本身。 */
+  reaction?: 'drag' | null;
 }
 
 let drawFailureLogged = false;
@@ -75,7 +86,7 @@ function useThemeVersion(): number {
   return v;
 }
 
-export default memo(function MarcelSprite({ state, size, perch = false, className, style, onPoke }: MarcelSpriteProps) {
+export default memo(function MarcelSprite({ state, size, perch = false, className, style, onPoke, externalMotion = false, onReady, facing = 1, reaction = null }: MarcelSpriteProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const bounceRef = useRef<LogoBounce | null>(null);
@@ -112,9 +123,10 @@ export default memo(function MarcelSprite({ state, size, perch = false, classNam
   }, []);
 
   // 换状态从头播
-  useEffect(() => { setFrame(0); }, [state]);
+  useEffect(() => { setFrame(0); }, [state, size, reaction]);
 
-  const seq = data?.states[state];
+  const seq = reaction ? data?.reactions[reaction] : data?.states[state];
+  useEffect(() => { if (data) onReady?.(); }, [data, onReady]);
   const playing = !!seq && seq.length > 1 && !reduced && onScreen && pageVisible;
   const shownIndex = seq ? (reduced ? keyFrameIndex(state, seq.length) : Math.min(frame, seq.length - 1)) : 0;
 
@@ -140,22 +152,31 @@ export default memo(function MarcelSprite({ state, size, perch = false, classNam
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      if (facing < 0) {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
       ctx.drawImage(bakeMascotFrame(data, seq[shownIndex][0], readMascotRim()), 0, 0, canvas.width, canvas.height);
+      ctx.restore();
     } catch (err) {
       if (!drawFailureLogged) {
         drawFailureLogged = true;
         console.warn('Mascot canvas unavailable, skipping drawing:', err);
       }
     }
-  }, [data, seq, shownIndex, scale, cw, ch, themeVersion]);
+  }, [data, seq, shownIndex, scale, cw, ch, themeVersion, facing]);
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el || !onPoke) return;
+    // 可拖拽时按压/起跳由活动区统一驱动：两套弹簧写同一个元素会互相盖、
+    // 而且拖动结束后没有 click，按压态会永远停在缩小那一帧。
+    if (externalMotion) return;
     const bounce = createLogoBounce(el, prefersReducedMotion);
     bounceRef.current = bounce;
     return () => { bounce.dispose(); bounceRef.current = null; };
-  }, [onPoke]);
+  }, [onPoke, externalMotion]);
 
   const perchStyle: CSSProperties = perch && data
     ? {
@@ -185,10 +206,11 @@ export default memo(function MarcelSprite({ state, size, perch = false, classNam
       className={`relative ${className ?? ''}`}
       style={{ pointerEvents: 'none', transformOrigin: '50% 100%', ...style }}
     >
-      {canvas}
+      {externalMotion ? <div data-mascot-pose style={{ transformOrigin: '50% 100%' }}>{canvas}</div> : canvas}
       {a && (
         <div
           aria-hidden="true"
+          data-mascot-hit="body"
           className="absolute cursor-pointer select-none touch-manipulation [-webkit-tap-highlight-color:transparent]"
           style={{
             pointerEvents: 'auto',

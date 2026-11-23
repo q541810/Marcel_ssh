@@ -33,6 +33,14 @@ describe('marcelFrames.json（由 scripts/mascot/marcel_frames.py 生成）', ()
     }
   });
 
+  it('拖拽反应与任务状态分开，不能丢回任务表情', () => {
+    expect(data.reactions.drag.length).toBeGreaterThan(0);
+    for (const [idx, ms] of data.reactions.drag) {
+      expect(idx).toBeLessThan(data.frames.length);
+      expect(ms).toBeGreaterThan(0);
+    }
+  });
+
   it('每帧都是 W×H，且只用调色板里的字符（外加透明 . 和主题外缘 O）', () => {
     const allowed = new Set([...Object.keys(data.palette), '.', 'O']);
     for (const rows of data.frames) {

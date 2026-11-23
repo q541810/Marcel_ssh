@@ -1,4 +1,4 @@
-"""玛瑟尔（吉祥物）像素动画的源头：零件化绘制 + 9 个状态的帧编排。
+"""玛瑟尔（吉祥物）像素动画的源头：零件化绘制 + 9 个任务状态 + 被拎起的反应动作。
 
 前端只读本脚本生成的 `src/lib/mascot/marcelFrames.json`，**别手改那份 JSON**——改造型 / 改动作都改这里，
 然后重跑：
@@ -523,7 +523,7 @@ def fx_sweat(dy):
 
 
 # ====================================================================
-# 9 个状态的编排：[(姿势, 毫秒)]
+# 任务状态的编排：[(姿势, 毫秒)]；被拎起单独作为手势反应，不覆盖任务状态
 # ====================================================================
 
 def build_states():
@@ -632,11 +632,22 @@ def build_states():
     return S
 
 
+def build_reactions():
+    # 被抓住只收起遥控器，两只耳朵同步后倒；保留原本的脸和正常耳尖颜色。
+    # 不再眯眼、歪耳、发黄：被拎着玩不是痛苦面具。
+    return {
+        'drag': [
+            (frame(fy=-2, earL=-16, earR=54, arm=-8), 110),
+            (frame(fy=-3, earL=-13, earR=51, arm=-8), 110),
+        ],
+    }
+
+
 # ====================================================================
 # 导出
 # ====================================================================
 
-ORDER = ['idle', 'thinking', 'running', 'approval', 'asking', 'done', 'error', 'offline', 'sleeping']
+ORDER = ['idle', 'thinking', 'running', 'approval', 'asking', 'done', 'error', 'offline', 'sleeping', 'drag']
 NAMES = {'idle': '闲着', 'thinking': '思考', 'running': '执行命令', 'approval': '等你确认',
          'asking': '提问', 'done': '完成', 'error': '失败', 'offline': '断线', 'sleeping': '睡觉'}
 
@@ -695,7 +706,7 @@ def main():
     ap.add_argument("--preview", default=None, help="导出帧表 PNG / GIF 的目录（需要 Pillow）")
     args = ap.parse_args()
 
-    states = build_states()
+    states = {**build_states(), **build_reactions()}
     # 帧去重：相同的格子只存一份
     pool, index, out = [], {}, {}
     for sid in ORDER:
@@ -714,7 +725,8 @@ def main():
         "anchor": {"bottom": OY + 47, "right": OX + 47, "left": OX, "top": OY},
         "palette": {k: "#%02x%02x%02x" % v for k, v in PAL.items()},
         "frames": [[rle(r) for r in rows] for rows in pool],
-        "states": {sid: out[sid] for sid in ORDER},
+        "states": {sid: out[sid] for sid in ORDER if sid != 'drag'},
+        "reactions": {sid: out[sid] for sid in ORDER if sid == 'drag'},
     }
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf8", newline="") as f:

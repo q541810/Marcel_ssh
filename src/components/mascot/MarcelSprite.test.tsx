@@ -32,8 +32,20 @@ describe('MarcelSprite', () => {
     expect(warn.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
-  it('「坐」模式按人物外框把透明边挪出去，戳一下的热区只盖住身体', async () => {
+  it('可拖拽时不叠第二套按压弹簧：形变由活动区统一驱动', async () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    await act(async () => root.render(<MarcelSprite state="idle" size={64} perch externalMotion onPoke={() => {}} />));
+    const hit = host.querySelector('[data-mascot-hit="body"]') as HTMLDivElement;
+    const pose = host.querySelector('[data-mascot-pose]') as HTMLDivElement;
+    const canvas = host.querySelector('canvas')!;
+    await act(async () => hit.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })));
+    // 两套缩放写同一个元素会一戳就矮一截；这里必须什么都不写。
+    expect(pose.style.transform).toBe('');
+    expect(canvas.style.transform).toBe('');
+    expect(pose.hasAttribute('style') ? pose.getAttribute('style') : '').not.toContain('scale');
+  });
+
+  it('「坐」模式按人物外框把透明边挪出去，戳一下的热区只盖住身体', async () => {
     const onPoke = vi.fn();
     await act(async () => root.render(<MarcelSprite state="idle" size={64} perch onPoke={onPoke} />));
     const canvas = host.querySelector('canvas')!;
