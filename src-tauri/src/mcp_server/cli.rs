@@ -135,7 +135,7 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // 注入 command_exec（用于工具调用）
     server.command_exec = Some(command_exec);
-    // 注入配置目录：无头 agent 任务要读它来解析模型与 API Key（`agent_task` 工具）
+    // 注入配置目录：无头 agent 任务要读它来解析模型与 API Key（`remote_subagent` 工具）
     server.config_dir = Some(config_dir.clone());
 
     eprintln!(
@@ -153,7 +153,7 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!(
         "[Marcel SSH] Tools: 10 (list_connections, ssh_execute, get_working_directory, \
          create_connection, test_connection, sftp_upload, sftp_download, sftp_list, \
-         sftp_delete, agent_task)"
+         sftp_delete, remote_subagent)"
     );
     eprintln!("[Marcel SSH] Listening on stdio...");
 
@@ -205,7 +205,7 @@ async fn run_http(server: &McpServer) -> Result<(), Box<dyn std::error::Error>> 
     eprintln!(
         "[Marcel SSH] Tools: 10 (list_connections, ssh_execute, get_working_directory, \
          create_connection, test_connection, sftp_upload, sftp_download, sftp_list, \
-         sftp_delete, agent_task)"
+         sftp_delete, remote_subagent)"
     );
 
     let result = server.run_http(cfg).await;

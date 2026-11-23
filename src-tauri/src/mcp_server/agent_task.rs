@@ -152,7 +152,7 @@ impl AgentTaskRunner {
         Ok(built)
     }
 
-    /// 执行一次委派任务（MCP 工具 `agent_task` 的入口）。
+    /// 执行一次委派任务（MCP 工具 `remote_subagent` 的入口）。
     pub async fn run(&self, arguments: Value) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -267,7 +267,7 @@ impl AgentTaskRunner {
             .upgrade()
             .ok_or_else(|| AppError::Agent("工具注册表已释放".into()))?;
 
-        // 给模型的工具清单**不含 agent_task**：不让它自己再派一个 agent 任务
+        // 给模型的工具清单**不含 remote_subagent**：不让它自己再派一个 agent 任务
         // （递归委派会让步数上限形同虚设，两边的超时也互相叠加）。
         let tools = base_tool_definitions(&registry);
 
@@ -391,7 +391,7 @@ pub async fn build_headless_llm(config_dir: &Path) -> Result<LlmManager, AppErro
     LlmManager::new(resolved.config)
 }
 
-/// 基础工具（9 个）转成给 LLM 的工具声明，**剔除 `agent_task`**。
+/// 基础工具（9 个）转成给 LLM 的工具声明，**剔除 `remote_subagent`**。
 fn base_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
     registry
         .list_tools()
@@ -598,7 +598,7 @@ mod tests {
             }
         }
 
-        /// 每次调用时下发给模型的工具名（用于断言 agent_task 被剔除）。
+        /// 每次调用时下发给模型的工具名（用于断言 remote_subagent 被剔除）。
         fn tools_seen(&self) -> Vec<Vec<String>> {
             self.seen_tools.lock().unwrap().clone()
         }
@@ -754,7 +754,7 @@ mod tests {
         for names in &seen {
             assert!(
                 !names.iter().any(|n| n == tools::AGENT_TASK_TOOL),
-                "不得把 agent_task 给模型：递归委派会让步数上限形同虚设"
+                "不得把 remote_subagent 给模型：递归委派会让步数上限形同虚设"
             );
             assert!(names.iter().any(|n| n == "ssh_execute"), "基础工具应当都在");
         }

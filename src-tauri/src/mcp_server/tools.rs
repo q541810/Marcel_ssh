@@ -12,9 +12,9 @@ use super::external_executor::{ExternalExecutor, CONNECTION_NOT_FOUND_PREFIX};
 use super::protocol::{McpError, ToolCallResult};
 use crate::error::AppError;
 
-/// `agent_task` 工具名。Agent 任务循环给模型的工具清单里会**剔除**它
+/// 无头子 agent 工具名。Agent 任务循环给模型的工具清单里会**剔除**它
 /// （见 `agent_task::base_tool_definitions`），不让模型自己再派一层 agent。
-pub const AGENT_TASK_TOOL: &str = "agent_task";
+pub const AGENT_TASK_TOOL: &str = "remote_subagent";
 
 /// 是否提供读写本机文件的工具（`sftp_upload` / `sftp_download`）。
 ///
@@ -29,14 +29,14 @@ pub struct ToolRegistry {
     executor: Arc<ExternalExecutor>,
     /// 无头 agent 任务执行器。
     ///
-    /// 有它才会对外暴露 `agent_task`：`ToolRegistry::new` 建的注册表
-    /// （单测、以及不接 LLM 的场景）没有这个能力，此时列出 `agent_task`
+    /// 有它才会对外暴露 `remote_subagent`：`ToolRegistry::new` 建的注册表
+    /// （单测、以及不接 LLM 的场景）没有这个能力，此时列出 `remote_subagent`
     /// 等于给客户端一个必然失败的入口，所以列出的清单与是否具备保持一致。
     agent_task: Option<Arc<AgentTaskRunner>>,
 }
 
 impl ToolRegistry {
-    /// 只有 SSH/SFTP 工具（无 `agent_task`）。
+    /// 只有 SSH/SFTP 工具（无 `remote_subagent`）。
     pub fn new(executor: Arc<ExternalExecutor>) -> Self {
         Self {
             executor,
@@ -378,7 +378,7 @@ impl ToolRegistry {
     fn agent_task_schema() -> serde_json::Value {
         json!({
             "name": AGENT_TASK_TOOL,
-            "description": "把一个复杂的多步骤 SSH 任务委派给 Marcel SSH 的无头 agent 执行。\
+            "description": "在远程服务器上运行一个子 agent，把一个复杂的多步骤 SSH 任务交给它执行。\
         它会自己规划步骤、调用 ssh_execute / sftp_* 等工具把活干完，最后返回一段汇报。\
         适合：需要多步探查再动手的任务（部署、排障、批量操作）；单条命令请直接用 ssh_execute。\
         注意：任务执行期间无法向用户提问，所以任务描述要把目标和约束说清楚。\
@@ -1057,7 +1057,7 @@ mod tests {
         assert!(!text.to_lowercase().contains("key"));
     }
 
-    /// 构造一个**带 agent_task** 的注册表（config_dir 指向临时目录）。
+    /// 构造一个**带 remote_subagent** 的注册表（config_dir 指向临时目录）。
     async fn test_registry_with_agent_tasks() -> Arc<ToolRegistry> {
         let ssh = SshManager::new();
         let dir = std::env::temp_dir().join(format!("marcel-mcp-agent-{}", uuid::Uuid::new_v4()));
@@ -1084,7 +1084,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_task_listed_only_when_runner_exists() {
-        // 无 runner：不列 agent_task——列了就是给客户端一个必然失败的入口
+        // 无 runner：不列 remote_subagent——列了就是给客户端一个必然失败的入口
         let base = test_registry().await.0.list_tools();
         assert_eq!(base.len(), 9);
         assert!(!tool_names(&base).contains(&AGENT_TASK_TOOL.to_string()));
@@ -1097,7 +1097,7 @@ mod tests {
         let schema = with_agent
             .iter()
             .find(|t| t["name"] == AGENT_TASK_TOOL)
-            .expect("agent_task 必须出现在清单里");
+            .expect("remote_subagent 必须出现在清单里");
         let required = schema["inputSchema"]["required"].as_array().unwrap();
         assert!(required.contains(&json!("connection_id")));
         assert!(required.contains(&json!("task")));
@@ -1105,13 +1105,13 @@ mod tests {
 
     #[tokio::test]
     async fn agent_task_call_without_runner_is_method_not_found() {
-        // 没接 LLM 时调用 agent_task：如实报「没这个方法」，
+        // 没接 LLM 时调用 remote_subagent：如实报「没这个方法」，
         // 而不是内部错误——调用方据此知道换 tools/list 看看有什么
         let (registry, _, _) = test_registry().await;
         let err = registry
             .call_tool(AGENT_TASK_TOOL, json!({"connection_id": "x", "task": "y"}))
             .await
-            .expect_err("未接 LLM 时 agent_task 应不可用");
+            .expect_err("未接 LLM 时 remote_subagent 应不可用");
         assert_eq!(err.code, -32601);
     }
 

@@ -112,7 +112,7 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
         //
         // 这里曾经打整条 `line`，于是 `create_connection` 的明文 password /
         // passphrase 直接落进 stderr——而文档还推荐排查时开 `RUST_LOG=debug`，
-        // 等于教用户把密码写进日志。`agent_task` 的 task 正文同理。
+        // 等于教用户把密码写进日志。`remote_subagent` 的 task 正文同理。
         // 「外部调用」这条审计线索靠方法名就够，参数里的凭据一律不入日志。
         let message: McpServerMessage = match serde_json::from_str(line) {
             Ok(msg) => msg,
