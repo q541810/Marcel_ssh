@@ -35,6 +35,9 @@ pub struct SshConnection {
     /// is created for the same session_id (reconnect). Used by cleanup to
     /// prevent a stale driver task from removing a newer connection.
     pub generation: u64,
+    /// 当前目标连接认证成功后保留的登录密码。只从目标主机的密码认证取得，
+    /// 不取跳板机或私钥口令；供无头 sudo 回退使用，断线后随连接一起清零。
+    pub(crate) login_password: Option<zeroize::Zeroizing<String>>,
     /// 仅当前连接有效；按 sudo 实际索取密码的账户分开，断线后随连接一起清零。
     pub(crate) sudo_passwords:
         parking_lot::Mutex<std::collections::HashMap<String, zeroize::Zeroizing<String>>>,

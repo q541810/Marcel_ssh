@@ -161,7 +161,7 @@ impl ToolRegistry {
     fn ssh_execute_schema() -> serde_json::Value {
         json!({
             "name": "ssh_execute",
-            "description": "在远程服务器上执行 SSH 命令。返回标准输出、标准错误和退出码。注意：此工具绕过 Marcel SSH 的命令风险评估，调用方需自行确保命令安全。",
+            "description": "在远程服务器上执行 SSH 命令。返回标准输出、标准错误和退出码。sudo 可自动使用已保存的 sudo 密码或当前连接的 SSH 登录密码，但不会弹密码框；没有可用凭据时会报错。注意：此工具绕过 Marcel SSH 的命令风险评估，调用方需自行确保命令安全。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -382,6 +382,8 @@ impl ToolRegistry {
         它会自己规划步骤、调用 ssh_execute / sftp_* 等工具把活干完，最后返回一段汇报。\
         适合：需要多步探查再动手的任务（部署、排障、批量操作）；单条命令请直接用 ssh_execute。\
         注意：任务执行期间无法向用户提问，所以任务描述要把目标和约束说清楚。\
+        sudo 同样不会弹密码框：只能用已保存的 sudo 密码或当前连接的 SSH 登录密码，\
+        没有可用凭据或被拒时会失败，不要指望在任务里临时问密码。\
         安全提示：此工具执行的命令不经过 Marcel SSH 的风险评估，也不会弹审批。",
             "inputSchema": {
                 "type": "object",
@@ -754,7 +756,7 @@ mod tests {
 
     /// 构造一个不连真实服务器的注册表：执行器指向临时目录的 manager，
     /// 连接表为空。只用于校验 schema 与分发，不触发真实 SSH。
-    async fn test_registry() -> ToolRegistry {
+    async fn test_registry() -> (ToolRegistry, Arc<ExternalExecutor>, SshManager) {
         let ssh = SshManager::new();
         let dir = std::env::temp_dir().join(format!("marcel-mcp-test-{}", uuid::Uuid::new_v4()));
         let exec = Arc::new(
@@ -766,8 +768,59 @@ mod tests {
             .await,
         );
         let store = crate::data::JsonStore::new(&dir, ConnectionStore::new(), None);
-        let executor = Arc::new(ExternalExecutor::new(store, exec, Arc::new(ssh)));
-        ToolRegistry::new(executor)
+        let executor = Arc::new(ExternalExecutor::new(store, exec, Arc::new(ssh.clone())));
+        (ToolRegistry::new(executor.clone()), executor, ssh)
+    }
+
+    #[tokio::test]
+    async fn ssh_execute_auto_fills_sudo_through_the_public_tool_route() {
+        let (registry, executor, ssh) = test_registry().await;
+        let (_connection, mut channels, mut commands) = ssh
+            .register_exec_loopback_session("mcp-loopback", Some("login-secret"))
+            .await;
+        let connection_id = executor
+            .create_connection(
+                "回环测试",
+                "127.0.0.1",
+                22,
+                "tester",
+                "password",
+                Some("login-secret"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        executor
+            .register_test_session(&connection_id, "mcp-loopback")
+            .await;
+        let server = tokio::spawn(async move {
+            assert_eq!(
+                crate::ssh::sudo_test_support::auto_fill_once(
+                    &mut channels,
+                    &mut commands,
+                    "tester",
+                    "sudo id",
+                )
+                .await,
+                "login-secret\n"
+            );
+        });
+
+        let result = registry
+            .call_tool(
+                "ssh_execute",
+                json!({ "connection_id": connection_id, "command": "sudo id" }),
+            )
+            .await
+            .expect("公共 MCP 入口应完成 sudo 自动填充");
+        server.await.unwrap();
+        let text = match &result.content[0] {
+            crate::mcp_server::protocol::ContentItem::Text { text } => text,
+        };
+        assert!(text.contains("sudo ok"));
+        assert!(text.contains("\"exit_code\":0"));
+        assert!(!text.contains("login-secret"));
     }
 
     #[test]
@@ -793,7 +846,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_returns_nine() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let tools = registry.list_tools();
         assert_eq!(tools.len(), 9, "工具数量变化时同步更新 skill 文档");
 
@@ -818,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_tool_has_valid_schema() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         for tool in registry.list_tools() {
             let name = tool["name"].as_str().expect("工具必须有 name");
             assert!(
@@ -851,7 +904,6 @@ mod tests {
 
     #[tokio::test]
     async fn ssh_execute_schema_has_required_fields() {
-        let registry = test_registry().await;
         let schema = ToolRegistry::ssh_execute_schema();
         assert_eq!(schema["name"], "ssh_execute");
         let required = schema["inputSchema"]["required"].as_array().unwrap();
@@ -861,7 +913,6 @@ mod tests {
 
     #[tokio::test]
     async fn sftp_delete_has_recursive_default() {
-        let registry = test_registry().await;
         let schema = ToolRegistry::sftp_delete_schema();
         assert_eq!(
             schema["inputSchema"]["properties"]["recursive"]["default"],
@@ -871,7 +922,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_tool_is_method_not_found() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let err = registry
             .call_tool("no_such_tool", json!({}))
             .await
@@ -881,7 +932,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_required_param_is_invalid_params() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let err = registry
             .call_tool("ssh_execute", json!({ "connection_id": "x" }))
             .await
@@ -891,7 +942,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_connection_rejects_incomplete_auth() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
 
         // Password 档缺 password
         let err = registry
@@ -935,7 +986,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_connection_registers_temp_connection() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
 
         let created = registry
             .call_tool(
@@ -976,7 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_connections_hides_credentials() {
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let created = registry
             .call_tool(
                 "create_connection",
@@ -1034,7 +1085,7 @@ mod tests {
     #[tokio::test]
     async fn agent_task_listed_only_when_runner_exists() {
         // 无 runner：不列 agent_task——列了就是给客户端一个必然失败的入口
-        let base = test_registry().await.list_tools();
+        let base = test_registry().await.0.list_tools();
         assert_eq!(base.len(), 9);
         assert!(!tool_names(&base).contains(&AGENT_TASK_TOOL.to_string()));
 
@@ -1056,7 +1107,7 @@ mod tests {
     async fn agent_task_call_without_runner_is_method_not_found() {
         // 没接 LLM 时调用 agent_task：如实报「没这个方法」，
         // 而不是内部错误——调用方据此知道换 tools/list 看看有什么
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let err = registry
             .call_tool(AGENT_TASK_TOOL, json!({"connection_id": "x", "task": "y"}))
             .await
@@ -1068,7 +1119,7 @@ mod tests {
     async fn connection_not_found_message_is_not_double_prefixed() {
         // 回归测试：这里曾经产出
         // "Connection not found: Connection not found: <id>"（冒烟测试抓到）
-        let registry = test_registry().await;
+        let (registry, _, _) = test_registry().await;
         let err = registry
             .call_tool(
                 "ssh_execute",

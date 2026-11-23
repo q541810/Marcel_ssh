@@ -443,6 +443,8 @@ fn system_prompt(connection_id: &str) -> String {
 - 错误：先 `cd /opt/app`，再下一条 `ls`
 - 正确：`cd /opt/app && ls`，或者直接 `ls /opt/app`
 
+**sudo 不会弹密码框。** 工具会自动使用已保存的 sudo 密码，或当前连接的 SSH 登录密码；没有可用凭据或密码被服务器拒绝时会报错，如实汇报，不要把密码写进命令、stdin 或日志。
+
 **没有人能回答你的问题。** 你无法向用户提问。遇到需要决策的地方，自己基于现状做最合理的选择，并在最终汇报里说明你做了什么假设。如果任务根本做不了，如实说明原因，不要编造成功。
 
 **没有审批闸门。** 你执行的命令不会有人复核。所以破坏性操作（删除、覆盖、重启服务、改配置）你必须自己先确认：目标对不对？有没有备份？失败了能不能回退？拿不准就选更保守的做法，并在汇报里说明。
@@ -511,6 +513,8 @@ mod tests {
         // 两条最容易踩的坑必须写明
         assert!(prompt.contains("全新的 shell"));
         assert!(prompt.contains("没有人能回答你的问题"));
+        assert!(prompt.contains("sudo 不会弹密码框"));
+        assert!(prompt.contains("不要把密码写进命令"));
     }
 
     #[test]
@@ -630,7 +634,12 @@ mod tests {
     }
 
     /// 造一个 runner（registry 必须活着，runner 里拿的是它的 Weak）。
-    async fn test_runner() -> (Arc<ToolRegistry>, Arc<AgentTaskRunner>) {
+    async fn test_runner() -> (
+        Arc<ToolRegistry>,
+        Arc<AgentTaskRunner>,
+        Arc<ExternalExecutor>,
+        crate::SshManager,
+    ) {
         let ssh = crate::SshManager::new();
         let dir = std::env::temp_dir().join(format!("marcel-agent-test-{}", uuid::Uuid::new_v4()));
         let exec_mgr = Arc::new(
@@ -646,18 +655,22 @@ mod tests {
             crate::config::connections::ConnectionStore::new(),
             None,
         );
-        let executor = Arc::new(ExternalExecutor::new(store, exec_mgr, Arc::new(ssh)));
-        let registry = ToolRegistry::new_with_agent_tasks(executor, dir);
+        let executor = Arc::new(ExternalExecutor::new(
+            store,
+            exec_mgr,
+            Arc::new(ssh.clone()),
+        ));
+        let registry = ToolRegistry::new_with_agent_tasks(executor.clone(), dir);
         let runner = registry
             .agent_task_runner()
             .expect("new_with_agent_tasks 应带 runner")
             .clone();
-        (registry, runner)
+        (registry, runner, executor, ssh)
     }
 
     #[tokio::test]
     async fn loop_completes_when_model_stops_calling_tools() {
-        let (_registry, runner) = test_runner().await;
+        let (_registry, runner, _, _) = test_runner().await;
         let llm = ScriptedLlm::new(vec![
             calls_tool("c1", "list_connections", serde_json::json!({})),
             LlmMessage::assistant("干完了"),
@@ -679,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_stops_at_max_steps_and_says_so() {
-        let (_registry, runner) = test_runner().await;
+        let (_registry, runner, _, _) = test_runner().await;
         // 模型一直要工具，永不收手
         let llm = ScriptedLlm::new(vec![
             calls_tool("c1", "list_connections", serde_json::json!({})),
@@ -701,7 +714,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_records_failed_tool_call_without_aborting() {
-        let (_registry, runner) = test_runner().await;
+        let (_registry, runner, _, _) = test_runner().await;
         let llm = ScriptedLlm::new(vec![
             // 连接不存在 → dispatch 会返回错误
             calls_tool(
@@ -731,7 +744,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_hides_agent_task_from_the_model() {
-        let (_registry, runner) = test_runner().await;
+        let (_registry, runner, _, _) = test_runner().await;
         let llm = ScriptedLlm::new(vec![LlmMessage::assistant("不用工具")]);
 
         runner.run_loop(&llm, "conn-x", "随便", 5).await.unwrap();
@@ -748,8 +761,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delegated_ssh_execute_uses_headless_sudo_autofill() {
+        let (_registry, runner, executor, ssh) = test_runner().await;
+        let (_connection, mut channels, mut commands) = ssh
+            .register_exec_loopback_session("agent-loopback", Some("login-secret"))
+            .await;
+        let connection_id = executor
+            .create_connection(
+                "委派回环",
+                "127.0.0.1",
+                22,
+                "tester",
+                "password",
+                Some("login-secret"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        executor
+            .register_test_session(&connection_id, "agent-loopback")
+            .await;
+        let server = tokio::spawn(async move {
+            assert_eq!(
+                crate::ssh::sudo_test_support::auto_fill_once(
+                    &mut channels,
+                    &mut commands,
+                    "tester",
+                    "sudo id",
+                )
+                .await,
+                "login-secret\n"
+            );
+        });
+        let llm = ScriptedLlm::new(vec![
+            calls_tool(
+                "c1",
+                "ssh_execute",
+                serde_json::json!({ "connection_id": connection_id, "command": "sudo id" }),
+            ),
+            LlmMessage::assistant("sudo 已执行成功"),
+        ]);
+
+        let result = runner
+            .run_loop(&llm, &connection_id, "执行只读 sudo 命令", 5)
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(result.status, "completed");
+        assert_eq!(result.tool_calls, 1);
+        assert!(result.steps[0].ok);
+        assert!(result.steps[0].output_summary.contains("sudo ok"));
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("login-secret"));
+    }
+
+    #[tokio::test]
     async fn loop_propagates_llm_error() {
-        let (_registry, runner) = test_runner().await;
+        let (_registry, runner, _, _) = test_runner().await;
         // 空脚本 → 假模型立刻报错
         let llm = ScriptedLlm::new(vec![]);
 

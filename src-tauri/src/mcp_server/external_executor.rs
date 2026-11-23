@@ -158,6 +158,14 @@ impl ExternalExecutor {
             .ok_or_else(|| connection_not_found_err(connection_id))
     }
 
+    #[cfg(test)]
+    pub(crate) async fn register_test_session(&self, connection_id: &str, session_id: &str) {
+        self.sessions
+            .lock()
+            .await
+            .insert(connection_id.to_string(), session_id.to_string());
+    }
+
     /// 取得（必要时建立）该连接的无头会话，返回 `session_id`。
     ///
     /// 复用规则：缓存里有、且 `SshManager` 里那一代会话仍在 → 直接用；
@@ -547,6 +555,7 @@ mod tests {
         assert!(!is_dead_session_error(&AppError::Ssh(
             "读取文件失败".into()
         )));
+        assert!(!is_dead_session_error(&AppError::SudoAuthRequired));
     }
 
     #[test]

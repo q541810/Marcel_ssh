@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 
 use super::{
     executor::{self, ExecOutcome, OutputSink},
-    ticket::{CancelReason, CommandTicket},
+    ticket::{CancelReason, CommandSource, CommandTicket},
 };
 use crate::{
     agent::interaction::CredentialDetail,
@@ -66,9 +66,31 @@ fn sudo_slot(conn: &SshConnection) -> Option<SecretSlot> {
 
 /// 取这条连接、这个账户已保存的 sudo 密码；目标或账户对不上就当没有。
 fn stored_password(conn: &SshConnection, username: &str) -> Option<Zeroizing<String>> {
-    let raw = keychain::get(&sudo_slot(conn)?).ok().flatten()?;
+    stored_password_with(conn, username, |slot| keychain::get(slot).ok().flatten())
+}
+
+fn stored_password_with(
+    conn: &SshConnection,
+    username: &str,
+    read: impl FnOnce(&SecretSlot) -> Option<String>,
+) -> Option<Zeroizing<String>> {
+    let raw = read(&sudo_slot(conn)?)?;
     let saved: StoredSudo = serde_json::from_str(&raw).ok()?;
     matches_target(&saved, &conn.host, conn.port, username).then(|| Zeroizing::new(saved.password))
+}
+
+/// 已经拿到的密码优先保留；只有缓存和专用 sudo 密码都没有时才借登录密码。
+/// 借来的密码仍只在当前连接内存中，不复制进 sudo 密钥链。
+fn with_login_fallback(
+    password: Option<Zeroizing<String>>,
+    conn: &SshConnection,
+    username: &str,
+) -> Option<Zeroizing<String>> {
+    password.or_else(|| {
+        (username == conn.username)
+            .then(|| conn.login_password.clone())
+            .flatten()
+    })
 }
 
 /// 存下来的这份是不是「这台机器、这个账户」的密码。
@@ -397,10 +419,7 @@ async fn answer(
     ));
     let reply = closing.0.as_mut().expect("reply channel is open");
     let outcome = async {
-        if !ticket.interactive_sudo || app.is_none() {
-            return Err(AppError::SudoAuthRequired);
-        }
-        let app = app.unwrap();
+        let headless_mcp = ticket.source == CommandSource::ExternalMcp && app.is_none();
         if rejected {
             // 这一份已经被服务器拒了：内存和密钥链里都别留着，否则下次会重放同一个错密码。
             forget_password(conn, &request.username);
@@ -416,7 +435,11 @@ async fn answer(
             password = stored_password(conn, &request.username);
         }
         if password.is_none() && !rejected && request.username == conn.username {
-            if let Some(id) = &conn.connection_id {
+            if headless_mcp {
+                // 密码来自已经连上的目标会话，天然属于当前 host/account；临时 MCP
+                // 连接也能用，且不依赖 GUI 配置快照。私钥口令不进入这个字段。
+                password = with_login_fallback(password, conn, &request.username);
+            } else if let (Some(app), Some(id)) = (app, &conn.connection_id) {
                 // A saved connection can be edited while its old session is still open.
                 let state = app.state::<crate::AppState>();
                 let same_target = state
@@ -435,8 +458,15 @@ async fn answer(
                 }
             }
         }
+        if password.is_none() && (app.is_none() || !ticket.interactive_sudo) {
+            // 无界面时不会弹窗；密码被拒后也不重放。GUI 的交互 Agent 仍可重新输入。
+            return Err(AppError::SudoAuthRequired);
+        }
         let mut typed = false;
         if password.is_none() {
+            let Some(app) = app else {
+                return Err(AppError::SudoAuthRequired);
+            };
             let state = app.state::<crate::AppState>();
             password = tokio::select! {
                 biased;
@@ -501,6 +531,166 @@ async fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::time::Duration;
+
+    use crate::ssh::connection::{SshConnection, SshManager};
+    use crate::ssh::sudo_test_support::{auto_fill_once, expect_no_credential, Channels, Commands};
+
+    async fn headless_connection(
+        login_password: Option<&str>,
+    ) -> (SshManager, Arc<SshConnection>, Channels, Commands) {
+        let manager = SshManager::new();
+        let (connection, channels, commands) = manager
+            .register_exec_loopback_session("s1", login_password)
+            .await;
+        (manager, connection, channels, commands)
+    }
+
+    async fn next_exec(
+        channels: &mut Channels,
+        commands: &mut Commands,
+    ) -> (russh::Channel<russh::server::Msg>, String) {
+        let channel = channels.recv().await.expect("server channel");
+        let (id, command) = commands.recv().await.expect("exec request");
+        assert_eq!(channel.id(), id);
+        (channel, String::from_utf8(command).expect("UTF-8 command"))
+    }
+
+    fn external_ticket() -> CommandTicket {
+        CommandTicket::new("s1", "sudo id", CommandSource::ExternalMcp)
+            .timeout(Duration::from_secs(10))
+    }
+
+    #[tokio::test]
+    async fn external_mcp_uses_current_login_password_without_an_app() {
+        let (manager, _connection, mut channels, mut commands) =
+            headless_connection(Some("login-secret")).await;
+        let server = tokio::spawn(async move {
+            assert_eq!(
+                auto_fill_once(&mut channels, &mut commands, "tester", "sudo id").await,
+                "login-secret\n"
+            );
+        });
+
+        let outcome = run(&manager, &external_ticket(), None, String::new(), None)
+            .await
+            .expect("无 AppHandle 也应自动填登录密码");
+        match outcome {
+            ExecOutcome::Completed { output, exit } => {
+                assert_eq!(output, "sudo ok\n");
+                assert_eq!(exit.code, Some(0));
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_mcp_rejected_password_is_not_sent_twice() {
+        let (manager, connection, mut channels, mut commands) =
+            headless_connection(Some("wrong-secret")).await;
+        let server = tokio::spawn(async move {
+            let hex = |value: &str| {
+                value
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            };
+            let (control, _) = next_exec(&mut channels, &mut commands).await;
+            control
+                .data(format!("READY {}\n", hex("/tmp/sudo-test")).as_bytes())
+                .await
+                .unwrap();
+            let (_command, _) = next_exec(&mut channels, &mut commands).await;
+            let request = format!("41 7 {}\n", hex("tester"));
+            control.data(request.as_bytes()).await.unwrap();
+            let (mut reply, _) = next_exec(&mut channels, &mut commands).await;
+            let mut password = Vec::new();
+            while let Some(message) = reply.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => password.extend_from_slice(&data),
+                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            assert_eq!(password, b"wrong-secret\n");
+            reply.eof().await.unwrap();
+            reply.close().await.unwrap();
+            control.data(request.as_bytes()).await.unwrap();
+            let (mut second, _) = next_exec(&mut channels, &mut commands).await;
+            while let Some(message) = second.wait().await {
+                assert!(!matches!(message, ChannelMsg::Data { .. }), "密码不得重放");
+                if matches!(message, ChannelMsg::Eof | ChannelMsg::Close) {
+                    break;
+                }
+            }
+            second.eof().await.unwrap();
+            second.close().await.unwrap();
+            control.eof().await.unwrap();
+            control.close().await.unwrap();
+        });
+
+        let error = run(&manager, &external_ticket(), None, String::new(), None)
+            .await
+            .expect_err("密码被拒后必须停止，而不是重试");
+        assert!(matches!(error, AppError::SudoAuthRequired));
+        assert!(!error.to_string().contains("wrong-secret"));
+        assert!(connection.sudo_passwords.lock().is_empty());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_mcp_private_key_only_connection_has_no_password_fallback() {
+        let (manager, _connection, mut channels, mut commands) = headless_connection(None).await;
+        let server = tokio::spawn(async move {
+            expect_no_credential(&mut channels, &mut commands, "tester").await;
+        });
+
+        let error = run(&manager, &external_ticket(), None, String::new(), None)
+            .await
+            .expect_err("没有密码时应明确报告需要凭据");
+        assert!(matches!(error, AppError::SudoAuthRequired));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_mcp_uses_sudo_cache_before_login_password() {
+        let (manager, connection, mut channels, mut commands) =
+            headless_connection(Some("login-secret")).await;
+        connection.sudo_passwords.lock().insert(
+            "tester".into(),
+            Zeroizing::new("dedicated-sudo-secret".into()),
+        );
+        let server = tokio::spawn(async move {
+            assert_eq!(
+                auto_fill_once(&mut channels, &mut commands, "tester", "sudo id").await,
+                "dedicated-sudo-secret\n"
+            );
+        });
+
+        let outcome = run(&manager, &external_ticket(), None, String::new(), None)
+            .await
+            .expect("专用 sudo 密码应优先于登录密码");
+        assert!(matches!(outcome, ExecOutcome::Completed { .. }));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_mcp_never_borrows_login_password_for_another_sudo_account() {
+        let (manager, _connection, mut channels, mut commands) =
+            headless_connection(Some("login-secret")).await;
+        let server = tokio::spawn(async move {
+            expect_no_credential(&mut channels, &mut commands, "root").await;
+        });
+
+        let error = run(&manager, &external_ticket(), None, String::new(), None)
+            .await
+            .expect_err("targetpw 账户不匹配时不能借登录密码");
+        assert!(matches!(error, AppError::SudoAuthRequired));
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn cancelled_password_future_closes_its_reply_channel() {
@@ -589,6 +779,36 @@ mod tests {
         let parsed: StoredSudo = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed.password, "secret");
         assert!(serde_json::from_str::<StoredSudo>(r#"{"host":"h"}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn saved_sudo_password_is_decoded_without_touching_the_real_keychain() {
+        let (_manager, connection, _channels, _commands) = headless_connection(None).await;
+        let raw = serde_json::to_string(&StoredSudo {
+            host: "127.0.0.1".into(),
+            port: 22,
+            username: "tester".into(),
+            password: "saved-sudo-secret".into(),
+        })
+        .unwrap();
+        let resolved = stored_password_with(&connection, "tester", |_| Some(raw))
+            .expect("匹配的已保存 sudo 密码应可用");
+        assert_eq!(resolved.as_str(), "saved-sudo-secret");
+
+        for (host, port, username) in [
+            ("10.0.0.2", 22, "tester"),
+            ("127.0.0.1", 2222, "tester"),
+            ("127.0.0.1", 22, "root"),
+        ] {
+            let raw = serde_json::to_string(&StoredSudo {
+                host: host.into(),
+                port,
+                username: username.into(),
+                password: "must-not-be-used".into(),
+            })
+            .unwrap();
+            assert!(stored_password_with(&connection, "tester", |_| Some(raw)).is_none());
+        }
     }
 
     #[test]

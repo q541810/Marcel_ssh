@@ -7,10 +7,15 @@
 
 use std::sync::Arc;
 
-use russh::Channel;
+use russh::{Channel, ChannelId};
+use tokio::sync::Mutex as TokioMutex;
+
+use super::client::Client;
+use super::known_hosts::KnownHostsStore;
 
 pub(crate) struct TestPeer {
     channels: tokio::sync::mpsc::UnboundedSender<Channel<russh::server::Msg>>,
+    exec_commands: Option<tokio::sync::mpsc::UnboundedSender<(ChannelId, Vec<u8>)>>,
 }
 
 impl russh::server::Handler for TestPeer {
@@ -28,6 +33,21 @@ impl russh::server::Handler for TestPeer {
         self.channels.send(channel).unwrap();
         Ok(true)
     }
+
+    async fn exec_request(
+        &mut self,
+        channel: russh::ChannelId,
+        data: &[u8],
+        session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(commands) = &self.exec_commands {
+            commands
+                .send((channel, data.to_vec()))
+                .expect("exec test receiver must stay alive");
+        }
+        session.channel_success(channel)?;
+        Ok(())
+    }
 }
 
 pub(crate) struct TestClient;
@@ -38,6 +58,56 @@ impl russh::client::Handler for TestClient {
     async fn check_server_key(&mut self, _: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
         Ok(true)
     }
+}
+
+/// 建立已认证的回环客户端；服务端每次打开通道、收到 exec 请求都会送进队列。
+pub(crate) async fn test_connection() -> (
+    russh::client::Handle<Client>,
+    tokio::sync::mpsc::UnboundedReceiver<Channel<russh::server::Msg>>,
+    tokio::sync::mpsc::UnboundedReceiver<(ChannelId, Vec<u8>)>,
+) {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (channel_tx, channel_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
+    let key = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7; 32]);
+    let config = russh::server::Config {
+        keys: vec![key.into()],
+        ..Default::default()
+    };
+    #[allow(clippy::async_yields_async)]
+    let server = tokio::spawn(async move {
+        russh::server::run_stream(
+            Arc::new(config),
+            server_io,
+            TestPeer {
+                channels: channel_tx,
+                exec_commands: Some(exec_tx),
+            },
+        )
+        .await
+        .unwrap()
+    });
+    let mut client = russh::client::connect_stream(
+        Arc::new(russh::client::Config::default()),
+        client_io,
+        Client {
+            host: "127.0.0.1".into(),
+            port: 22,
+            store: KnownHostsStore::in_memory(),
+            trust_new: true,
+            verdict: Arc::new(TokioMutex::new(None)),
+            tofu_record_error: Arc::new(TokioMutex::new(None)),
+        },
+    )
+    .await
+    .unwrap();
+    let _session = server.await.unwrap();
+    assert!(client
+        .authenticate_none("synthetic-test")
+        .await
+        .unwrap()
+        .success());
+    (client, channel_rx, exec_rx)
 }
 
 /// 建立一条回环连接并开一条 session 通道，返回 `(客户端句柄, 客户端通道, 服务端通道)`。
@@ -57,9 +127,16 @@ pub(crate) async fn test_channels() -> (
     // 任务把它原样交出来，由下面的 `_session` 持有到函数结束，所以不是漏了一次 `.await`。
     #[allow(clippy::async_yields_async)]
     let server = tokio::spawn(async move {
-        russh::server::run_stream(Arc::new(config), server_io, TestPeer { channels: tx })
-            .await
-            .unwrap()
+        russh::server::run_stream(
+            Arc::new(config),
+            server_io,
+            TestPeer {
+                channels: tx,
+                exec_commands: None,
+            },
+        )
+        .await
+        .unwrap()
     });
     let mut client = russh::client::connect_stream(
         Arc::new(russh::client::Config::default()),

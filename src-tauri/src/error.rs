@@ -72,7 +72,7 @@ pub enum AppError {
     KeyAuth { code: KeyAuthCode, message: String },
     #[error("跳板机认证失败：{message}")]
     JumpAuth { code: KeyAuthCode, message: String },
-    #[error("sudo 需要账户密码，但这次调用未启用密码交互。命令可能已部分执行，请勿整段重试")]
+    #[error("sudo 没有可用的自动凭据，或密码已被服务器拒绝；这次调用不会弹密码框。命令可能已部分执行，请勿整段重试")]
     SudoAuthRequired,
     #[error("{0}")]
     Other(String),

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::emit_event;
 use crate::error::{AppError, KeyAuthCode};
@@ -298,6 +299,11 @@ impl SshManager {
         Self::authenticate(&mut handle, &username, &config.auth_method)
             .await
             .map_err(|e| map_target_err(e, &host, via_jump))?;
+        // 只保留目标主机的密码认证结果；跳板机密码、私钥口令都不能当作 sudo 密码。
+        let login_password = match &config.auth_method {
+            AuthMethod::Password { password } => Some(Zeroizing::new(password.clone())),
+            AuthMethod::PrivateKey { .. } => None,
+        };
 
         // 交互式终端通道。无头模式（MCP 等外部入口）**不需要**：外部调用只用
         // exec 通道与 SFTP 子系统，不分配 PTY 也就不必维持一个 shell 会话。
@@ -334,6 +340,7 @@ impl SshManager {
         };
 
         let connection = Arc::new(SshConnection {
+            login_password,
             sudo_passwords: Default::default(),
             id: session_id.clone(),
             host: host.clone(),
@@ -1196,6 +1203,40 @@ mod rsa_hash_tests {
 
 #[cfg(test)]
 impl SshManager {
+    /// 登记带 exec 能力的回环会话，供 sudo 与 MCP 端到端测试共用。
+    pub(crate) async fn register_exec_loopback_session(
+        &self,
+        session_id: &str,
+        login_password: Option<&str>,
+    ) -> (
+        Arc<SshConnection>,
+        mpsc::UnboundedReceiver<russh::Channel<russh::server::Msg>>,
+        mpsc::UnboundedReceiver<(russh::ChannelId, Vec<u8>)>,
+    ) {
+        let (client, channels, commands) = crate::ssh::test_support::test_connection().await;
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let connection = Arc::new(SshConnection {
+            id: session_id.into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            username: "tester".into(),
+            connection_id: Some("test-connection".into()),
+            headless: true,
+            generation: 1,
+            login_password: login_password.map(|password| Zeroizing::new(password.into())),
+            sudo_passwords: Default::default(),
+            cmd_tx,
+            handle: Arc::new(TokioMutex::new(client)),
+            jump_handle: None,
+            sftp_meta: SharedSlot::new(),
+        });
+        self.connections
+            .write()
+            .await
+            .insert(session_id.into(), connection.clone());
+        (connection, channels, commands)
+    }
+
     /// 测试专用：把 `session_id` 登记成"已连接"。背后是一条内存回环到最小 sshd
     /// 的真实 russh 连接，让需要"会话在册"的上层流程（比如主任务的"出生即孤儿"
     /// 检查）不依赖网络也能跑通。连接上不开任何通道，也不会真的执行命令。
@@ -1248,6 +1289,7 @@ impl SshManager {
         self.connections.write().await.insert(
             session_id.to_string(),
             Arc::new(SshConnection {
+                login_password: None,
                 sudo_passwords: Default::default(),
                 id: session_id.to_string(),
                 host: "127.0.0.1".into(),
@@ -1368,6 +1410,7 @@ impl SshManager {
         self.connections.write().await.insert(
             session_id.to_string(),
             Arc::new(SshConnection {
+                login_password: None,
                 sudo_passwords: Default::default(),
                 id: session_id.to_string(),
                 host: "127.0.0.1".into(),
@@ -1556,6 +1599,7 @@ mod shared_sftp_tests {
         manager.connections.write().await.insert(
             "s1".into(),
             Arc::new(SshConnection {
+                login_password: None,
                 sudo_passwords: Default::default(),
                 id: "s1".into(),
                 host: "127.0.0.1".into(),

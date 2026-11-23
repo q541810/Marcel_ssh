@@ -88,7 +88,8 @@ pub struct CommandTicket {
     /// command 被重写时必须通过 [`CommandTicket::display_as`] 显式指定。
     pub display_command: String,
     pub source: CommandSource,
-    /// 允许应用弹 sudo 密码框。插件直接调用、系统轮询等须显式启用。
+    /// 允许应用弹 sudo 密码框。插件直接调用、系统轮询等须显式启用；
+    /// 外部 MCP 保持 false，只在无界面时自动使用当前连接已有的凭据。
     pub interactive_sudo: bool,
     pub(crate) auth_wait: super::auth_wait::AuthWait,
     pub timeout: Duration,

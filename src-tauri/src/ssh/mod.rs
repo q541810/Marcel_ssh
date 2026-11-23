@@ -10,6 +10,8 @@ mod session;
 // `session_unusable` 被跨设备同步的 SFTP 存储适配器复用（判断「会话本身坏了」只有这一份依据）。
 pub(crate) mod sftp_shared;
 #[cfg(test)]
+pub(crate) mod sudo_test_support;
+#[cfg(test)]
 pub(crate) mod test_support;
 
 pub mod connection {
