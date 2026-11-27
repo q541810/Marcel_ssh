@@ -139,8 +139,12 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 
 ## 工具清单
 
-共 9 个基础工具，外加 1 个**可选**的 `remote_subagent`（需要 Marcel SSH 里配好 LLM 模型
-才会出现在清单里）。
+桌面端共 13 个基础工具（Android 没有本机文件上传/下载，因此是 11 个），外加 1 个
+**可选**的 `remote_subagent`（需要 Marcel SSH 里配好 LLM 模型才会出现在清单里）。
+
+长操作不再依赖客户端的单次等待预算：上传、下载默认立即返回任务 ID；`ssh_execute`
+10 秒内完成就直接返回，否则自动转成后台任务。所有任务统一用
+`task_status` / `task_list` / `task_output` / `task_cancel` 管理。
 
 ### `list_connections`
 
@@ -165,15 +169,24 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 |------|------|------|------|
 | `connection_id` | string | ✅ | 连接 ID |
 | `command` | string | ✅ | shell 命令 |
-| `timeout_ms` | integer | | 超时毫秒，默认 30000，范围 1000–300000 |
+| `timeout_ms` | integer | | 命令总时限（毫秒）。不填时，10 秒内完成直接返回，否则自动转后台；填了则到点结束，转后台后也按剩余时间生效 |
+| `background` | boolean | | `true`：立即返回任务 ID；`false`：一直同步等待；不填：最多等 10 秒再自动转后台 |
 
 ```jsonc
-// 返回
-{ "stdout": "...", "stderr": "", "exit_code": 0 }
+// 10 秒内完成
+{ "stdout": "...", "stderr": "", "exit_code": 0, "exit_code_known": true }
+
+// 超过 10 秒自动转后台（命令仍在继续跑）
+{ "task_id": "job_12", "kind": "command", "status": "running",
+  "note": "用 task_status 查状态，用 task_output 读增量输出" }
 ```
 
 > `exit_code` 非 0 是**命令的结果**，不是工具调用失败。`grep -q`、`test -f`
 > 这类命令成功时也没有任何输出，别靠输出判断成败。
+>
+> `exit_code_known=false` 表示服务器根本没有返回 exit-status；此时 `exit_code`
+> 只是兼容占位值，**不能据此判断命令失败**。`test_connection` 也会明确报告这种
+> 「有输出但没有退出状态」的情况。
 >
 > exec 通道上 stdout 与 stderr 合流，统一从 `stdout` 返回；`stderr` 恒为空串
 > （保留字段以稳定结构）。
@@ -238,20 +251,29 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 | `connection_id` | 连接 ID |
 | `local_path` | 本地文件路径 |
 | `remote_path` | 远端目标路径 |
+| `background` | 默认 `true`：立即返回任务 ID；`false`：同步等待传完 |
 
 ```jsonc
-// 返回
+// 默认（后台）
+{ "task_id": "mcp-upload-<uuid>", "kind": "upload",
+  "status": "running", "phase": "connecting" }
+
+// background=false 且传完
 { "success": true, "bytes_transferred": 2048576, "duration_ms": 1230 }
 ```
 
-写盘是**原子的**：先写 `{remote_path}.marcel-tmp` 再 rename 提交，中途失败不会把
-目标文件留成半截。
+写盘是**原子的**：数据先写到同目录的隐藏侧文件
+`.{文件名}.marcel-upload-<uuid>`，完整校验通过后才 rename 成目标文件。所以目标
+路径暂时不存在不代表传输失败；以 `task_status` 的终态为准。
+
+同步上传/下载工具在 `tools/list` 根级声明了 `_meta.timeoutMs = 1800000`（30 分钟），
+这是给支持该扩展的客户端的单次调用预算，不是服务端杀任务计时器。默认后台模式
+本身通常几百毫秒就返回，不依赖这个值。
 
 ### `sftp_download`（Android 不提供）
 
-下载远端文件到本地。本地父目录不存在会自动创建。
-
-参数：`connection_id`、`remote_path`、`local_path`。返回同上。
+下载远端文件到本地。本地父目录不存在会自动创建。参数和后台/同步语义与
+`sftp_upload` 相同；目标文件通过 `.part` 临时文件 + 原子替换提交。
 
 ### `sftp_list`
 
@@ -285,6 +307,60 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 
 ⚠️ 不可恢复。
 
+### 统一任务工具
+
+`ssh_execute` 自动转后台、`sftp_upload` / `sftp_download` 后台模式、
+`remote_subagent` 都会产生任务 ID。所有任务共用以下四个工具。
+
+#### `task_status`
+
+参数：`task_id`。
+
+```jsonc
+{
+  "task_id": "mcp-upload-<uuid>",
+  "kind": "upload",                 // command | upload | download | agent
+  "status": "running",              // running | cancelling | completed | failed | cancelled | interrupted
+  "phase": "transferring",          // connecting | transferring | verifying | committing | ...
+  "connection_id": "conn-1",
+  "local_path": "...",              // 文件任务才有
+  "remote_path": "...",
+  "bytes_transferred": 3145728,     // 文件任务
+  "total_bytes": 8388608,
+  "command": "...",                 // 命令任务
+  "output_bytes": 1200,
+  "exit_code": 0,
+  "exit_code_known": true,
+  "remote_may_continue": false,     // 取消/中断的命令：远端进程可能仍在跑
+  "target_committed": true,         // 文件任务：目标文件是否已原子提交
+  "started_at_ms": 0,
+  "finished_at_ms": null,
+  "error": null,
+  "result": null                    // remote_subagent 的最终汇报
+}
+```
+
+#### `task_list`
+
+参数：`active_only`，默认 `false`。返回运行中 + 最近结束的任务，按开始时间倒序。
+命令任务来自持久作业台账，MCP 自管的文件/agent 任务只存在当前 MCP 服务进程内。
+
+#### `task_output`
+
+参数：`task_id`、`offset`（默认 0）、`budget_bytes`（默认 32000，最大 32000）。
+
+只对命令任务有效。返回增量 `delta` 与下次使用的 `offset`；如果输出太大导致中间
+内容被环形缓冲淘汰，`lossy=true` 且 `skipped_bytes` 会如实说明，不能假装读全。
+
+#### `task_cancel`
+
+参数：`task_id`。
+
+- 上传/下载：停止传输并清理 sidecar / `.part`；已有目标文件不被破坏。
+- 命令：停止等待并关闭执行通道。**远端进程不保证被杀死**，`remote_may_continue`
+  会为 `true`；需要确认时再用 `pgrep` / `ps` 查。
+- 已完成/失败/取消的任务不会被改写终态。
+
 ### `remote_subagent`（可选）
 
 把一个**自然语言的复杂任务**交给远程服务器上的子 agent 去跑：它会自己规划步骤、
@@ -304,9 +380,10 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 | `task` | string | ✅ | 任务描述（自然语言） |
 | `timeout_seconds` | integer | | 总超时，默认 300 |
 | `max_steps` | integer | | 工具调用步数上限，默认 25 |
+| `background` | boolean | | 默认 `true`：立即返回任务 ID，最终汇报从 `task_status.result` 读取；`false` 同步等待 |
 
 ```jsonc
-// 返回
+// background=false 的同步返回
 {
   "status": "completed",
   "result": "……结论与说明……",
@@ -332,6 +409,10 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 
 > 这个工具会调用 LLM，**消耗你自己的 API 额度**，且每次调用都是完整的一轮
 > agent 循环。别拿它做基础工具能做的事。
+>
+> 默认后台模式下调用会立即返回 `{ "task_id": "...", "kind": "agent",
+> "status": "running" }`；`task_cancel` 会停止后续模型与工具调用，但已经开始执行的
+> 单条远端命令仍按命令取消的语义处理（不保证远端进程结束）。
 
 ---
 
@@ -404,7 +485,10 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 | `list_connections` 返回空数组 | 配置目录不对。GUI 与无头模式必须指向同一目录；用 `--config-dir` 显式指定，或检查 `MARCEL_CONFIG_DIR` |
 | `Connection not found` | `connection_id` 写错，或该连接已被删除。先调 `list_connections` |
 | 连不上 / 认证失败 | 用 `test_connection` 看具体原因（网络、认证、主机密钥） |
+| 命令跑了很久 | `ssh_execute` 超过 10 秒会自动返回任务 ID，命令仍在跑；用 `task_status` / `task_output` 继续，不要重复发同一条命令 |
 | 命令超时 | 加 `timeout_ms`；注意超时返回的是**已收到的部分输出**，不是空 |
+| 上传/下载没有立刻成功 | 默认返回任务 ID 是正常的；用 `task_status` 等到 `completed` 且 `target_committed=true`，不能把“已发起”当成“已传完” |
+| `task_status` 查不到 ID | 上传/下载/agent 任务只在当前 MCP 服务进程内有效；服务重启后旧 ID 会失效。命令任务在作业台账保留期内仍可查 |
 | `SudoAuthRequired` | 没有匹配当前连接的 sudo / SSH 登录密码，或密码已被服务器拒绝。MCP 不会弹密码框；先在 Marcel SSH 内置 Agent 中完成一次 sudo 认证并保存密码，或改用服务器允许的免密 sudo。不要盲目整段重试 |
 | 客户端连不上 server | 确认 `command` 路径正确、`--mcp-server` 拼写正确。日志在 stderr，用 `RUST_LOG=debug` 提高详细度 |
 | Windows 下没有任何输出 | 客户端必须用**管道**接 stdin/stdout（正常 MCP 客户端都这么做）。若你在终端里手敲 `marcel-ssh --mcp-server`，它会在读 stdin 时阻塞等待——这是正常的 |
@@ -437,9 +521,10 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 |--------|------|
 | 入口 / 参数 / 配置目录 | `src-tauri/src/mcp_server/cli.rs` |
 | JSON-RPC 协议类型 | `src-tauri/src/mcp_server/protocol.rs` |
-| stdio 传输 | `src-tauri/src/mcp_server/stdio_transport.rs` |
+| stdio 并发分发 / 请求取消 | `src-tauri/src/mcp_server/stdio_transport.rs`、`request.rs` |
 | HTTP 传输（认证 / 限流） | `src-tauri/src/mcp_server/http_transport.rs` |
 | 工具 schema 与分发 | `src-tauri/src/mcp_server/tools.rs` |
+| 统一任务台账 / 进度 / 终态 | `src-tauri/src/mcp_server/tasks.rs` |
 | 会话解析 / 命令执行 | `src-tauri/src/mcp_server/external_executor.rs` |
 | SFTP 动作 | `src-tauri/src/mcp_server/sftp_ops.rs` |
 | 无头 agent 任务 | `src-tauri/src/mcp_server/agent_task.rs` |
@@ -449,7 +534,15 @@ stdio 的安全前提是「客户端必须能启动这个进程」，而那已�
 
 请求分发（方法路由、参数校验、错误码）只有一份实现，挂在
 `McpServer::handle_request` 上，stdio 与 HTTP 共用——两条接入路径的工具语义与
-错误码因此逐字一致。
+错误码因此逐字一致。stdio 的读循环、请求 worker 与 stdout writer 已分离：
+长请求不会堵住后续请求，`notifications/cancelled` 在主循环即时处理。
+
+任务 ID 的作用域要说清：
+
+- 命令任务复用 `command_exec` 的作业台账，在台账保留期内可跨 MCP 服务重启查询；
+- 上传/下载/`remote_subagent` 的任务只存在当前 MCP 服务进程内，重启后旧 ID
+  返回未知（不会保留一条假 running）；
+- 进程退出时先取消在途任务并等待清理，再关闭 SSH 会话。
 
 无头连接能力在 `src-tauri/src/ssh/manager.rs` 的 `connect_headless` /
 `disconnect_headless`。

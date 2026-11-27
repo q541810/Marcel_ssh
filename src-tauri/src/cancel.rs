@@ -125,6 +125,21 @@ impl CancellationRegistry {
         }
     }
 
+    /// 取消当前在册的全部目标。用于 stdio EOF / 服务停止这类「整个入口已经
+    /// 没了」的收尾：调用方随后仍要排干 worker，让它们各自完成清理。
+    /// 返回实际取消的数量。
+    pub fn cancel_all(&self) -> usize {
+        let targets: Vec<watch::Sender<bool>> = {
+            let mut inner = self.inner.write();
+            inner.senders.drain().map(|(_, (_, tx))| tx).collect()
+        };
+        let count = targets.len();
+        for tx in targets {
+            let _ = tx.send(true);
+        }
+        count
+    }
+
     /// 仅当表里那条记录仍是 `seq` 这一次注册时才注销（guard 的 Drop 专用）。
     ///
     /// 刻意**不发**取消信号：guard 结束只说明「这个使用者不再关心了」（正常收尾），

@@ -47,6 +47,7 @@ pub use local_transport::LocalExecTransport;
 pub use manager::{
     CommandExecutionManager, DetachableOutcome, JobCaller, JobFilter, SubmitOutcome,
 };
+pub(crate) use manager::BACKGROUND_JOB_TIMEOUT;
 pub use ticket::{
     truncate_display, CancelReason, CommandSource, CommandTicket, ExecutionSnapshot,
     ExecutionStatus, StreamTarget,

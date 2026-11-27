@@ -6,10 +6,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
+use tokio::sync::watch;
 
 use super::agent_task::AgentTaskRunner;
 use super::external_executor::{ExternalExecutor, CONNECTION_NOT_FOUND_PREFIX};
 use super::protocol::{McpError, ToolCallResult};
+use super::tasks::{TaskKind, TaskSnapshot};
 use crate::error::AppError;
 
 /// 无头子 agent 工具名。Agent 任务循环给模型的工具清单里会**剔除**它
@@ -94,35 +96,146 @@ impl ToolRegistry {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolCallResult, McpError> {
+        self.call_tool_with_cancel(name, arguments, None).await
+    }
+
+    /// 调用工具，并把当前 MCP 请求的取消信号带到真实执行体。
+    pub(crate) async fn call_tool_with_cancel(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
+    ) -> Result<ToolCallResult, McpError> {
         if name == AGENT_TASK_TOOL {
             let Some(runner) = self.agent_task.as_ref() else {
                 return Err(McpError::method_not_found(name));
             };
-            return runner.run(arguments).await;
+            let background = arguments
+                .get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if !background {
+                return runner.run_with_cancel(arguments, cancel).await;
+            }
+            let connection_id = arguments
+                .get("connection_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing>")
+                .to_string();
+            let task_id = super::tasks::TaskManager::allocate_id(TaskKind::Agent);
+            let mut snapshot = TaskSnapshot::new_managed(
+                task_id.clone(),
+                TaskKind::Agent,
+                connection_id,
+                "running",
+                super::tasks::now_millis(),
+            );
+            snapshot.description = arguments
+                .get("task")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().take(200).collect());
+            let manager = self.executor.tasks();
+            let (handle, registration) = manager.start_managed(snapshot).ok_or_else(|| {
+                McpError::internal_error("任务 ID 冲突，未能登记 remote_subagent 任务")
+            })?;
+            let cancel_rx = registration.receiver();
+            let runner = runner.clone();
+            manager
+                .track_worker(async move {
+                    let _registration = registration;
+                    let result = runner.run_with_cancel(arguments, Some(cancel_rx)).await;
+                    match result {
+                        Ok(tool_result) => {
+                            let text = tool_result
+                                .content
+                                .iter()
+                                .find_map(|item| match item {
+                                    super::protocol::ContentItem::Text { text } => {
+                                        Some(text.clone())
+                                    }
+                                })
+                                .unwrap_or_default();
+                            match serde_json::from_str::<super::agent_task::AgentTaskResult>(&text)
+                            {
+                                Ok(task_result) if task_result.status == "cancelled" => {
+                                    handle.cancelled(task_result.error)
+                                }
+                                Ok(task_result) if task_result.status == "failed" => handle.fail(
+                                    task_result
+                                        .error
+                                        .unwrap_or_else(|| "remote_subagent 失败".into()),
+                                ),
+                                _ => handle.complete(false, Some(text)),
+                            }
+                        }
+                        Err(error) => handle.fail(error.message),
+                    }
+                })
+                .await;
+            return Ok(ToolCallResult::text(
+                serde_json::json!({
+                    "task_id": task_id,
+                    "kind": "agent",
+                    "status": "running",
+                    "phase": "running",
+                    "note": "用 task_status 查最终汇报，用 task_cancel 停止后续模型与工具调用。"
+                })
+                .to_string(),
+            ));
         }
-        self.dispatch_base(name, arguments).await
+        self.dispatch_base_with_cancel(name, arguments, cancel)
+            .await
     }
 
-    /// 分发 9 个 SSH/SFTP 基础工具。
+    /// 分发 SSH/SFTP 基础工具与统一任务工具。
     ///
     /// `pub(crate)`：无头 agent 任务循环也走这里（`agent_task.rs`）——
     /// 参数校验与错误码只有这一处实现，两条路径不会跑偏。
-    pub(crate) async fn dispatch_base(
+    pub(crate) async fn dispatch_base_with_cancel(
         &self,
         name: &str,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         match name {
             "list_connections" => self.call_list_connections(arguments).await,
-            "ssh_execute" => self.call_ssh_execute(arguments).await,
-            "get_working_directory" => self.call_get_working_directory(arguments).await,
+            "ssh_execute" => self.call_ssh_execute(arguments, cancel).await,
+            "get_working_directory" => self.call_get_working_directory(arguments, cancel).await,
             "create_connection" => self.call_create_connection(arguments).await,
-            "test_connection" => self.call_test_connection(arguments).await,
-            "sftp_upload" if LOCAL_FILE_TOOLS => self.call_sftp_upload(arguments).await,
-            "sftp_download" if LOCAL_FILE_TOOLS => self.call_sftp_download(arguments).await,
+            "test_connection" => self.call_test_connection(arguments, cancel).await,
+            "sftp_upload" if LOCAL_FILE_TOOLS => self.call_sftp_upload(arguments, cancel).await,
+            "sftp_download" if LOCAL_FILE_TOOLS => self.call_sftp_download(arguments, cancel).await,
             "sftp_list" => self.call_sftp_list(arguments).await,
             "sftp_delete" => self.call_sftp_delete(arguments).await,
+            "task_status" => self.call_task_status(arguments).await,
+            "task_list" => self.call_task_list(arguments).await,
+            "task_output" => self.call_task_output(arguments).await,
+            "task_cancel" => self.call_task_cancel(arguments).await,
+            #[cfg(test)]
+            "__test_sleep" => self.call_test_sleep(arguments, cancel).await,
             _ => Err(McpError::method_not_found(name)),
+        }
+    }
+
+    /// 仅测试：可被取消的慢工具，用来确定性地验证 stdio 并发与取消。
+    #[cfg(test)]
+    async fn call_test_sleep(
+        &self,
+        arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
+    ) -> Result<ToolCallResult, McpError> {
+        let ms = arguments.get("ms").and_then(|v| v.as_u64()).unwrap_or(50);
+        let mut cancel = cancel;
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {
+                Ok(ToolCallResult::text("slept"))
+            }
+            _ = async {
+                match cancel.as_mut() {
+                    Some(rx) => { let _ = rx.changed().await; }
+                    None => std::future::pending().await,
+                }
+            } => Err(McpError::cancelled()),
         }
     }
 
@@ -141,6 +254,10 @@ impl ToolRegistry {
         }
         tools.push(Self::sftp_list_schema());
         tools.push(Self::sftp_delete_schema());
+        tools.push(Self::task_status_schema());
+        tools.push(Self::task_list_schema());
+        tools.push(Self::task_output_schema());
+        tools.push(Self::task_cancel_schema());
         tools
     }
 
@@ -175,10 +292,13 @@ impl ToolRegistry {
                     },
                     "timeout_ms": {
                         "type": "integer",
-                        "description": "超时时间（毫秒），默认 30000（30秒）",
-                        "default": 30000,
+                        "description": "命令总时限（毫秒）。不填时：10 秒内完成直接返回，超过 10 秒自动转后台任务并继续执行，不再有默认 30 秒杀进程。填了则到点结束（转后台后也按剩余时间生效）。",
                         "minimum": 1000,
-                        "maximum": 300000
+                        "maximum": 86400000
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "三态：true=立即返回任务 ID；false=一直等命令结束；不填=最多等 10 秒，没结束就自动转后台任务。不要声明默认值，否则客户端会填 false 变成同步等待。"
                     }
                 },
                 "required": ["connection_id", "command"],
@@ -190,7 +310,8 @@ impl ToolRegistry {
     fn sftp_upload_schema() -> serde_json::Value {
         json!({
             "name": "sftp_upload",
-            "description": "通过 SFTP 上传本地文件到远程服务器。支持单个文件传输，自动创建远程目录（如果不存在）。",
+            "description": "通过 SFTP 上传本地文件到远程服务器，自动创建远程目录。默认立即返回任务 ID，用 task_status 查进度、task_cancel 取消；只有明确传 background=false 才等待传完。",
+            "_meta": { "timeoutMs": 1800000 },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -205,6 +326,11 @@ impl ToolRegistry {
                     "remote_path": {
                         "type": "string",
                         "description": "远程文件路径（绝对路径）"
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "默认 true：立即返回任务 ID。false：同步等待传完（大文件可能触发客户端超时）。",
+                        "default": true
                     }
                 },
                 "required": ["connection_id", "local_path", "remote_path"],
@@ -216,7 +342,8 @@ impl ToolRegistry {
     fn sftp_download_schema() -> serde_json::Value {
         json!({
             "name": "sftp_download",
-            "description": "通过 SFTP 从远程服务器下载文件到本地。自动创建本地目录（如果不存在）。",
+            "description": "通过 SFTP 从远程服务器下载文件到本地，自动创建本地目录。默认立即返回任务 ID，用 task_status 查进度、task_cancel 取消；只有明确传 background=false 才等待完成。",
+            "_meta": { "timeoutMs": 1800000 },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -231,6 +358,11 @@ impl ToolRegistry {
                     "local_path": {
                         "type": "string",
                         "description": "本地保存路径（绝对路径或相对路径）"
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "默认 true：立即返回任务 ID。false：同步等待传完（大文件可能触发客户端超时）。",
+                        "default": true
                     }
                 },
                 "required": ["connection_id", "remote_path", "local_path"],
@@ -284,6 +416,67 @@ impl ToolRegistry {
                     }
                 },
                 "required": ["connection_id", "remote_path"],
+                "additionalProperties": false
+            }
+        })
+    }
+
+    fn task_status_schema() -> serde_json::Value {
+        json!({
+            "name": "task_status",
+            "description": "查询命令、上传、下载或 remote_subagent 任务的状态、进度和最终结果。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string", "description": "task_* 工具使用的任务 ID" }
+                },
+                "required": ["task_id"],
+                "additionalProperties": false
+            }
+        })
+    }
+
+    fn task_list_schema() -> serde_json::Value {
+        json!({
+            "name": "task_list",
+            "description": "列出当前 MCP 服务进程内的任务。默认包含运行中和最近结束的；active_only=true 只看运行中。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "active_only": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }
+        })
+    }
+
+    fn task_output_schema() -> serde_json::Value {
+        json!({
+            "name": "task_output",
+            "description": "增量读取命令任务的 stdout/stderr。传回上次返回的 offset 即可继续读；非命令任务没有输出可读。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string" },
+                    "offset": { "type": "integer", "minimum": 0, "default": 0 },
+                    "budget_bytes": { "type": "integer", "minimum": 4, "maximum": 32000, "default": 32000 }
+                },
+                "required": ["task_id"],
+                "additionalProperties": false
+            }
+        })
+    }
+
+    fn task_cancel_schema() -> serde_json::Value {
+        json!({
+            "name": "task_cancel",
+            "description": "取消任务。上传/下载会停止并清理临时文件；命令会停止等待并关闭通道，但远端进程不保证已被杀死（结果里会标记 remote_may_continue）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string" }
+                },
+                "required": ["task_id"],
                 "additionalProperties": false
             }
         })
@@ -409,6 +602,11 @@ impl ToolRegistry {
                         "default": 25,
                         "minimum": 1,
                         "maximum": 200
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "默认 true：立即返回任务 ID，用 task_status 查最终汇报。false：同步等待整个子 Agent 跑完。",
+                        "default": true
                     }
                 },
                 "required": ["connection_id", "task"],
@@ -437,6 +635,7 @@ impl ToolRegistry {
     async fn call_ssh_execute(
         &self,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -449,15 +648,53 @@ impl ToolRegistry {
             .ok_or_else(|| McpError::invalid_params("Missing 'command'"))?;
 
         let timeout_ms = arguments.get("timeout_ms").and_then(|v| v.as_u64());
+        let background = arguments.get("background").and_then(|v| v.as_bool());
 
-        let output = self
+        if background == Some(false) {
+            let output = self
+                .executor
+                .execute_command_with_cancel(connection_id, command, timeout_ms, cancel)
+                .await
+                .map_err(map_app_error)?;
+            return serde_json::to_string(&output)
+                .map(ToolCallResult::text)
+                .map_err(|e| {
+                    McpError::internal_error(format!("JSON serialization failed: {}", e))
+                });
+        }
+
+        let outcome = self
             .executor
-            .execute_command(connection_id, command, timeout_ms)
+            .execute_command_task(
+                connection_id,
+                command,
+                timeout_ms,
+                std::time::Duration::from_secs(10),
+                background == Some(true),
+                cancel,
+            )
             .await
-            .map_err(|e| map_app_error(e))?;
+            .map_err(map_app_error)?;
 
-        let json = serde_json::to_string(&output)
-            .map_err(|e| McpError::internal_error(format!("JSON serialization failed: {}", e)))?;
+        let json = match outcome {
+            crate::mcp_server::external_executor::CommandExecutionOutcome::Finished(output) => {
+                serde_json::to_string(&output)
+            }
+            crate::mcp_server::external_executor::CommandExecutionOutcome::Detached {
+                job_id,
+                ..
+            } => {
+                let snapshot = self.executor.tasks().task_status(&job_id).await.ok();
+                serde_json::to_string(&serde_json::json!({
+                    "task_id": job_id,
+                    "kind": "command",
+                    "status": "running",
+                    "snapshot": snapshot,
+                    "note": "命令仍在远端执行；用 task_status 查状态，用 task_output 读增量输出，用 task_cancel 停止等待。远端进程是否随取消结束不保证。"
+                }))
+            }
+        }
+        .map_err(|e| McpError::internal_error(format!("JSON serialization failed: {}", e)))?;
 
         Ok(ToolCallResult::text(json))
     }
@@ -465,6 +702,7 @@ impl ToolRegistry {
     async fn call_sftp_upload(
         &self,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -480,12 +718,71 @@ impl ToolRegistry {
             .get("remote_path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| McpError::invalid_params("Missing 'remote_path'"))?;
+        let background = arguments
+            .get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if background {
+            let connection_id = connection_id.to_string();
+            let local_path = local_path.to_string();
+            let remote_path = remote_path.to_string();
+            let task_id = super::tasks::TaskManager::allocate_id(TaskKind::Upload);
+            let mut snapshot = TaskSnapshot::new_managed(
+                task_id.clone(),
+                TaskKind::Upload,
+                connection_id.clone(),
+                "connecting",
+                super::tasks::now_millis(),
+            );
+            snapshot.local_path = Some(local_path.to_string());
+            snapshot.remote_path = Some(remote_path.to_string());
+            let manager = self.executor.tasks();
+            let (handle, registration) = manager
+                .start_managed(snapshot)
+                .ok_or_else(|| McpError::internal_error("任务 ID 冲突，未能登记上传任务"))?;
+            let cancel_rx = registration.receiver();
+            let executor = self.executor.clone();
+            let progress_handle = handle.clone();
+            manager
+                .track_worker(async move {
+                    let _registration = registration;
+                    let on_progress = move |written: u64, total: u64| {
+                        progress_handle.progress(written, total);
+                    };
+                    let result = executor
+                        .sftp_upload_with_cancel(
+                            &connection_id,
+                            &local_path,
+                            &remote_path,
+                            Some(cancel_rx),
+                            Some(&on_progress),
+                        )
+                        .await;
+                    match result {
+                        Ok(_) => handle.complete(true, None),
+                        Err(AppError::Cancelled(message)) => handle.cancelled(Some(message)),
+                        Err(error) => handle.fail(error.to_string()),
+                    }
+                })
+                .await;
+            return Ok(ToolCallResult::text(
+                serde_json::json!({
+                    "task_id": task_id,
+                    "kind": "upload",
+                    "status": "running",
+                    "phase": "connecting",
+                    "note": "用 task_status 查进度，完成前不要假定目标文件已提交。"
+                })
+                .to_string(),
+            ));
+        }
 
         let result = self
             .executor
-            .sftp_upload(connection_id, local_path, remote_path)
+            .sftp_upload_with_cancel(connection_id, local_path, remote_path, cancel, None)
             .await
-            .map_err(|e| map_app_error(e))?;
+            .map_err(map_app_error)?;
 
         let json = serde_json::to_string(&result)
             .map_err(|e| McpError::internal_error(format!("JSON serialization failed: {}", e)))?;
@@ -496,6 +793,7 @@ impl ToolRegistry {
     async fn call_sftp_download(
         &self,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -511,12 +809,71 @@ impl ToolRegistry {
             .get("local_path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| McpError::invalid_params("Missing 'local_path'"))?;
+        let background = arguments
+            .get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if background {
+            let connection_id = connection_id.to_string();
+            let remote_path = remote_path.to_string();
+            let local_path = local_path.to_string();
+            let task_id = super::tasks::TaskManager::allocate_id(TaskKind::Download);
+            let mut snapshot = TaskSnapshot::new_managed(
+                task_id.clone(),
+                TaskKind::Download,
+                connection_id.clone(),
+                "connecting",
+                super::tasks::now_millis(),
+            );
+            snapshot.local_path = Some(local_path.to_string());
+            snapshot.remote_path = Some(remote_path.to_string());
+            let manager = self.executor.tasks();
+            let (handle, registration) = manager
+                .start_managed(snapshot)
+                .ok_or_else(|| McpError::internal_error("任务 ID 冲突，未能登记下载任务"))?;
+            let cancel_rx = registration.receiver();
+            let executor = self.executor.clone();
+            let progress_handle = handle.clone();
+            manager
+                .track_worker(async move {
+                    let _registration = registration;
+                    let on_progress = move |written: u64, total: u64| {
+                        progress_handle.progress(written, total);
+                    };
+                    let result = executor
+                        .sftp_download_with_cancel(
+                            &connection_id,
+                            &remote_path,
+                            &local_path,
+                            Some(cancel_rx),
+                            Some(&on_progress),
+                        )
+                        .await;
+                    match result {
+                        Ok(_) => handle.complete(true, None),
+                        Err(AppError::Cancelled(message)) => handle.cancelled(Some(message)),
+                        Err(error) => handle.fail(error.to_string()),
+                    }
+                })
+                .await;
+            return Ok(ToolCallResult::text(
+                serde_json::json!({
+                    "task_id": task_id,
+                    "kind": "download",
+                    "status": "running",
+                    "phase": "connecting",
+                    "note": "用 task_status 查进度；completed 前目标本地文件尚未原子替换。"
+                })
+                .to_string(),
+            ));
+        }
 
         let result = self
             .executor
-            .sftp_download(connection_id, remote_path, local_path)
+            .sftp_download_with_cancel(connection_id, remote_path, local_path, cancel, None)
             .await
-            .map_err(|e| map_app_error(e))?;
+            .map_err(map_app_error)?;
 
         let json = serde_json::to_string(&result)
             .map_err(|e| McpError::internal_error(format!("JSON serialization failed: {}", e)))?;
@@ -584,9 +941,97 @@ impl ToolRegistry {
         Ok(ToolCallResult::text(json))
     }
 
+    async fn call_task_status(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolCallResult, McpError> {
+        let task_id = arguments
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::invalid_params("Missing 'task_id'"))?;
+        let snapshot = self
+            .executor
+            .tasks()
+            .task_status(task_id)
+            .await
+            .map_err(map_app_error)?;
+        Ok(ToolCallResult::text(
+            serde_json::to_string(&snapshot).map_err(|e| {
+                McpError::internal_error(format!("JSON serialization failed: {}", e))
+            })?,
+        ))
+    }
+
+    async fn call_task_list(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolCallResult, McpError> {
+        let active_only = arguments
+            .get("active_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let tasks = self.executor.tasks().task_list(active_only).await;
+        Ok(ToolCallResult::text(
+            serde_json::to_string(&tasks).map_err(|e| {
+                McpError::internal_error(format!("JSON serialization failed: {}", e))
+            })?,
+        ))
+    }
+
+    async fn call_task_output(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolCallResult, McpError> {
+        let task_id = arguments
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::invalid_params("Missing 'task_id'"))?;
+        let offset = arguments
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let budget = arguments
+            .get("budget_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(32_000) as usize;
+        let output = self
+            .executor
+            .tasks()
+            .task_output(task_id, offset, budget)
+            .await
+            .map_err(map_app_error)?;
+        Ok(ToolCallResult::text(
+            serde_json::to_string(&output).map_err(|e| {
+                McpError::internal_error(format!("JSON serialization failed: {}", e))
+            })?,
+        ))
+    }
+
+    async fn call_task_cancel(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolCallResult, McpError> {
+        let task_id = arguments
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| McpError::invalid_params("Missing 'task_id'"))?;
+        let snapshot = self
+            .executor
+            .tasks()
+            .task_cancel(task_id)
+            .await
+            .map_err(map_app_error)?;
+        Ok(ToolCallResult::text(
+            serde_json::to_string(&snapshot).map_err(|e| {
+                McpError::internal_error(format!("JSON serialization failed: {}", e))
+            })?,
+        ))
+    }
+
     async fn call_get_working_directory(
         &self,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -595,7 +1040,7 @@ impl ToolRegistry {
 
         let cwd = self
             .executor
-            .get_working_directory(connection_id)
+            .get_working_directory_with_cancel(connection_id, cancel)
             .await
             .map_err(|e| map_app_error(e))?;
 
@@ -706,6 +1151,7 @@ impl ToolRegistry {
     async fn call_test_connection(
         &self,
         arguments: serde_json::Value,
+        cancel: Option<watch::Receiver<bool>>,
     ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
@@ -714,7 +1160,7 @@ impl ToolRegistry {
 
         let test_result = self
             .executor
-            .test_connection(connection_id)
+            .test_connection_with_cancel(connection_id, cancel)
             .await
             .map_err(|e| map_app_error(e))?;
 
@@ -740,6 +1186,7 @@ fn map_app_error(err: AppError) -> McpError {
             message: msg,
             data: None,
         },
+        AppError::Cancelled(_) => McpError::cancelled(),
         AppError::Ssh(msg) => McpError::connection_failed(msg),
         AppError::Sftp { message, .. } => McpError::file_operation_failed(message),
         AppError::Io(e) => McpError::file_operation_failed(e.to_string()),
@@ -833,22 +1280,30 @@ mod tests {
         };
         let with = names(true);
         let without = names(false);
-        assert_eq!(with.len(), 9);
-        assert_eq!(without.len(), 7);
+        assert_eq!(with.len(), 13);
+        assert_eq!(without.len(), 11);
         for n in ["sftp_upload", "sftp_download"] {
             assert!(with.iter().any(|x| x == n));
             assert!(!without.iter().any(|x| x == n), "{} 不该出现", n);
         }
-        // 只去掉这两个，其余原样保留
-        assert!(without.iter().any(|x| x == "sftp_list"));
-        assert!(without.iter().any(|x| x == "sftp_delete"));
+        // 只去掉这两个；任务工具属于命令/SFTP 通用能力，两个平台都保留。
+        for n in [
+            "sftp_list",
+            "sftp_delete",
+            "task_status",
+            "task_list",
+            "task_output",
+            "task_cancel",
+        ] {
+            assert!(without.iter().any(|x| x == n), "缺少 {}", n);
+        }
     }
 
     #[tokio::test]
-    async fn list_tools_returns_nine() {
+    async fn list_tools_returns_thirteen() {
         let (registry, _, _) = test_registry().await;
         let tools = registry.list_tools();
-        assert_eq!(tools.len(), 9, "工具数量变化时同步更新 skill 文档");
+        assert_eq!(tools.len(), 13, "工具数量变化时同步更新 skill 文档");
 
         let names: Vec<&str> = tools
             .iter()
@@ -864,9 +1319,34 @@ mod tests {
             "sftp_download",
             "sftp_list",
             "sftp_delete",
+            "task_status",
+            "task_list",
+            "task_output",
+            "task_cancel",
         ] {
             assert!(names.contains(&expected), "缺少工具 {}", expected);
         }
+    }
+
+    #[test]
+    fn transfer_tools_declare_client_timeout_and_background_defaults() {
+        let upload = ToolRegistry::sftp_upload_schema();
+        let download = ToolRegistry::sftp_download_schema();
+        for tool in [&upload, &download] {
+            assert_eq!(tool["_meta"]["timeoutMs"], 1_800_000);
+            assert_eq!(
+                tool["inputSchema"]["properties"]["background"]["default"],
+                true
+            );
+        }
+        // ssh_execute 的 background 是三态（true/false/不填），不填才会走 10 秒软超时。
+        // 绝不能声明 default，否则按 schema 默认值填 false 的客户端会变成同步等待。
+        assert!(
+            ToolRegistry::ssh_execute_schema()["inputSchema"]["properties"]["background"]
+                .get("default")
+                .is_none(),
+            "ssh_execute 的 background 三态不能声明 default"
+        );
     }
 
     #[tokio::test]
@@ -909,6 +1389,28 @@ mod tests {
         let required = schema["inputSchema"]["required"].as_array().unwrap();
         assert!(required.contains(&json!("connection_id")));
         assert!(required.contains(&json!("command")));
+    }
+
+    #[tokio::test]
+    async fn task_tools_are_routed_to_the_shared_manager() {
+        let (registry, _, _) = test_registry().await;
+        let listed = registry.call_tool("task_list", json!({})).await.unwrap();
+        let text = match &listed.content[0] {
+            crate::mcp_server::protocol::ContentItem::Text { text } => text,
+        };
+        assert_eq!(text, "[]");
+
+        let err = registry
+            .call_tool("task_status", json!({}))
+            .await
+            .expect_err("缺 task_id 必须报参数错误");
+        assert_eq!(err.code, -32602);
+
+        let err = registry
+            .call_tool("task_status", json!({"task_id": "missing"}))
+            .await
+            .expect_err("未知任务必须报错");
+        assert!(err.message.contains("没有任务"));
     }
 
     #[tokio::test]
@@ -1086,12 +1588,12 @@ mod tests {
     async fn agent_task_listed_only_when_runner_exists() {
         // 无 runner：不列 remote_subagent——列了就是给客户端一个必然失败的入口
         let base = test_registry().await.0.list_tools();
-        assert_eq!(base.len(), 9);
+        assert_eq!(base.len(), 13);
         assert!(!tool_names(&base).contains(&AGENT_TASK_TOOL.to_string()));
 
         // 有 runner：清单里必须出现，且 schema 合法
         let with_agent = test_registry_with_agent_tasks().await.list_tools();
-        assert_eq!(with_agent.len(), 10, "接上 LLM 后应变成 10 个工具");
+        assert_eq!(with_agent.len(), 14, "接上 LLM 后应变成 14 个工具");
         assert!(tool_names(&with_agent).contains(&AGENT_TASK_TOOL.to_string()));
 
         let schema = with_agent

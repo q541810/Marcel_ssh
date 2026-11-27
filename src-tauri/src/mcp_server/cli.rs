@@ -151,9 +151,9 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!(
-        "[Marcel SSH] Tools: 10 (list_connections, ssh_execute, get_working_directory, \
+        "[Marcel SSH] Tools: 14 (list_connections, ssh_execute, get_working_directory, \
          create_connection, test_connection, sftp_upload, sftp_download, sftp_list, \
-         sftp_delete, remote_subagent)"
+         sftp_delete, task_status, task_list, task_output, task_cancel, remote_subagent)"
     );
     eprintln!("[Marcel SSH] Listening on stdio...");
 
@@ -203,9 +203,9 @@ async fn run_http(server: &McpServer) -> Result<(), Box<dyn std::error::Error>> 
 
     eprintln!("[Marcel SSH] HTTP 端点: http://{}/mcp", cfg.socket_addr());
     eprintln!(
-        "[Marcel SSH] Tools: 10 (list_connections, ssh_execute, get_working_directory, \
+        "[Marcel SSH] Tools: 14 (list_connections, ssh_execute, get_working_directory, \
          create_connection, test_connection, sftp_upload, sftp_download, sftp_list, \
-         sftp_delete, remote_subagent)"
+         sftp_delete, task_status, task_list, task_output, task_cancel, remote_subagent)"
     );
 
     let result = server.run_http(cfg).await;

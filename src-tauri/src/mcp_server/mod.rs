@@ -13,13 +13,17 @@ pub mod cli;
 pub mod external_executor;
 pub mod http_transport;
 pub mod protocol;
+pub(crate) mod request;
 pub mod runtime;
 pub mod sftp_ops;
 pub mod stdio_transport;
+pub(crate) mod tasks;
 pub mod tools;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use tokio::sync::watch;
 
 use crate::command_exec::CommandExecutionManager;
 use crate::config::connections::ConnectionStore;
@@ -131,7 +135,7 @@ impl McpServer {
     /// 缺了它就没法执行任何命令，所以这里如实报错而不是静默给个空注册表。
     ///
     /// 有 `config_dir` 时一并接上无头 agent 任务（`agent_task` 工具）；
-    /// 没有则只有 9 个基础工具——工具清单与实际能力保持一致，
+    /// 没有则只有基础工具（含统一任务工具）——工具清单与实际能力保持一致，
     /// 不会给客户端一个必然失败的入口。
     pub fn build_registry(&self) -> Result<Arc<tools::ToolRegistry>, AppError> {
         let command_exec = self.command_exec.clone().ok_or_else(|| {
@@ -177,6 +181,16 @@ impl McpServer {
         registry: &Arc<tools::ToolRegistry>,
         req: protocol::McpRequest,
     ) -> protocol::McpResponse {
+        self.handle_request_with_cancel(registry, req, None).await
+    }
+
+    /// 处理一条请求，并把请求级取消传进工具执行体。
+    pub async fn handle_request_with_cancel(
+        &self,
+        registry: &Arc<tools::ToolRegistry>,
+        req: protocol::McpRequest,
+        cancel: Option<watch::Receiver<bool>>,
+    ) -> protocol::McpResponse {
         use protocol::{McpError, McpResponse};
 
         match req.method.as_str() {
@@ -213,7 +227,10 @@ impl McpServer {
                     .cloned()
                     .unwrap_or(serde_json::json!({}));
 
-                match registry.call_tool(name, arguments).await {
+                match registry
+                    .call_tool_with_cancel(name, arguments, cancel)
+                    .await
+                {
                     Ok(result) => {
                         McpResponse::success(req.id, serde_json::to_value(&result).unwrap())
                     }
@@ -227,8 +244,36 @@ impl McpServer {
 
     /// 处理一条通知（notification：无 id，不需要响应）。
     pub fn handle_notification(&self, notif: &protocol::McpNotification) {
+        self.handle_notification_with_tracker(notif, None);
+    }
+
+    /// 同 [`Self::handle_notification`]，带当前 transport 的请求表。
+    pub(crate) fn handle_notification_with_tracker(
+        &self,
+        notif: &protocol::McpNotification,
+        tracker: Option<&request::RequestTracker>,
+    ) {
         match notif.method.as_str() {
             "notifications/initialized" => log::info!("[MCP] 客户端已确认初始化"),
+            "notifications/cancelled" => {
+                let Some(tracker) = tracker else {
+                    return;
+                };
+                let Some(params) = notif.params.as_ref() else {
+                    return;
+                };
+                match serde_json::from_value::<protocol::CancelledParams>(params.clone()) {
+                    Ok(params) => {
+                        if tracker.cancel(&params.request_id) {
+                            log::info!(
+                                "[MCP] 请求已取消，reason={}",
+                                params.reason.as_deref().unwrap_or("<none>")
+                            );
+                        }
+                    }
+                    Err(e) => log::debug!("[MCP] 忽略无法解析的取消通知: {}", e),
+                }
+            }
             other => log::debug!("[MCP] 未知通知: {}", other),
         }
     }

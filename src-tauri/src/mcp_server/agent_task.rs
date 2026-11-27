@@ -50,6 +50,7 @@ pub(crate) trait TaskLlm: Send + Sync {
         &self,
         messages: &[LlmMessage],
         tools: &[ToolDefinition],
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<LlmMessage, AppError>;
 }
 
@@ -59,9 +60,10 @@ impl TaskLlm for LlmManager {
         &self,
         messages: &[LlmMessage],
         tools: &[ToolDefinition],
+        mut cancel: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<LlmMessage, AppError> {
         // 非流式：无头任务不需要逐 token 回调，只要最终组装结果。
-        self.send_message(messages, tools, None).await
+        self.send_message(messages, tools, cancel.as_mut()).await
     }
 }
 
@@ -154,6 +156,14 @@ impl AgentTaskRunner {
 
     /// 执行一次委派任务（MCP 工具 `remote_subagent` 的入口）。
     pub async fn run(&self, arguments: Value) -> Result<ToolCallResult, McpError> {
+        self.run_with_cancel(arguments, None).await
+    }
+
+    pub async fn run_with_cancel(
+        &self,
+        arguments: Value,
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Result<ToolCallResult, McpError> {
         let connection_id = arguments
             .get("connection_id")
             .and_then(|v| v.as_str())
@@ -223,12 +233,25 @@ impl AgentTaskRunner {
 
         let outcome = tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            self.run_loop(llm.as_ref(), &connection_id, &task, max_steps),
+            self.run_loop(
+                llm.as_ref(),
+                &connection_id,
+                &task,
+                max_steps,
+                cancel.clone(),
+            ),
         )
         .await;
 
         let result = match outcome {
             Ok(Ok(result)) => result,
+            Ok(Err(AppError::Cancelled(message))) => AgentTaskResult {
+                status: "cancelled".into(),
+                result: String::new(),
+                steps: Vec::new(),
+                tool_calls: 0,
+                error: Some(message),
+            },
             Ok(Err(e)) => AgentTaskResult {
                 status: "failed".into(),
                 result: String::new(),
@@ -261,7 +284,15 @@ impl AgentTaskRunner {
         connection_id: &str,
         task: &str,
         max_steps: usize,
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<AgentTaskResult, AppError> {
+        let ensure_not_cancelled = |cancel: &Option<tokio::sync::watch::Receiver<bool>>| {
+            if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+                Err(AppError::Cancelled("remote_subagent 已取消".into()))
+            } else {
+                Ok(())
+            }
+        };
         let registry = self
             .registry
             .upgrade()
@@ -280,7 +311,8 @@ impl AgentTaskRunner {
         let mut last_content = String::new();
 
         for step_index in 0..max_steps {
-            let reply = llm.complete(&messages, &tools).await?;
+            ensure_not_cancelled(&cancel)?;
+            let reply = llm.complete(&messages, &tools, cancel.clone()).await?;
 
             if !reply.content.trim().is_empty() {
                 last_content = reply.content.clone();
@@ -303,9 +335,11 @@ impl AgentTaskRunner {
             messages.push(reply);
 
             for call in calls {
+                ensure_not_cancelled(&cancel)?;
                 let outcome = registry
-                    .dispatch_base(&call.name, call.arguments.clone())
+                    .dispatch_base_with_cancel(&call.name, call.arguments.clone(), cancel.clone())
                     .await;
+                ensure_not_cancelled(&cancel)?;
 
                 let (ok, text) = match outcome {
                     Ok(result) => (true, content_text(&result)),
@@ -391,7 +425,7 @@ pub async fn build_headless_llm(config_dir: &Path) -> Result<LlmManager, AppErro
     LlmManager::new(resolved.config)
 }
 
-/// 基础工具（9 个）转成给 LLM 的工具声明，**剔除 `remote_subagent`**。
+/// 基础工具转成给 LLM 的工具声明，**剔除 `remote_subagent`**。
 fn base_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
     registry
         .list_tools()
@@ -610,6 +644,7 @@ mod tests {
             &self,
             _messages: &[LlmMessage],
             tools: &[ToolDefinition],
+            _cancel: Option<tokio::sync::watch::Receiver<bool>>,
         ) -> Result<LlmMessage, AppError> {
             self.seen_tools
                 .lock()
@@ -677,7 +712,7 @@ mod tests {
         ]);
 
         let result = runner
-            .run_loop(&llm, "conn-x", "看看有哪些连接", 10)
+            .run_loop(&llm, "conn-x", "看看有哪些连接", 10, None)
             .await
             .expect("循环不该报错");
 
@@ -702,7 +737,7 @@ mod tests {
         ]);
 
         let result = runner
-            .run_loop(&llm, "conn-x", "无休止", 3)
+            .run_loop(&llm, "conn-x", "无休止", 3, None)
             .await
             .expect("撞上限不是错误，是一个结果");
 
@@ -726,7 +761,7 @@ mod tests {
         ]);
 
         let result = runner
-            .run_loop(&llm, "conn-x", "跑个命令", 10)
+            .run_loop(&llm, "conn-x", "跑个命令", 10, None)
             .await
             .expect("工具失败不该炸掉整个循环");
 
@@ -747,7 +782,10 @@ mod tests {
         let (_registry, runner, _, _) = test_runner().await;
         let llm = ScriptedLlm::new(vec![LlmMessage::assistant("不用工具")]);
 
-        runner.run_loop(&llm, "conn-x", "随便", 5).await.unwrap();
+        runner
+            .run_loop(&llm, "conn-x", "随便", 5, None)
+            .await
+            .unwrap();
 
         let seen = llm.tools_seen();
         assert!(!seen.is_empty(), "应至少下发过一次工具清单");
@@ -804,7 +842,7 @@ mod tests {
         ]);
 
         let result = runner
-            .run_loop(&llm, &connection_id, "执行只读 sudo 命令", 5)
+            .run_loop(&llm, &connection_id, "执行只读 sudo 命令", 5, None)
             .await
             .unwrap();
         server.await.unwrap();
@@ -823,7 +861,7 @@ mod tests {
         let llm = ScriptedLlm::new(vec![]);
 
         let err = runner
-            .run_loop(&llm, "conn-x", "任务", 5)
+            .run_loop(&llm, "conn-x", "任务", 5, None)
             .await
             .expect_err("模型报错必须冒泡出来");
         assert!(err.to_string().contains("脚本已用尽"));

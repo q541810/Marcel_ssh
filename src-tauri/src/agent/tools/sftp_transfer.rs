@@ -1115,7 +1115,7 @@ async fn upload_execute(
 
     // 共享流式核心：sidecar 临时文件 + 进度事件 + 取消 + 完整性校验 + 原子提交。
     let result = crate::commands::sftp::stream_upload_single_file(
-        &ctx.app_handle,
+        Some(&ctx.app_handle),
         &sftp,
         &mut local_file,
         size,
@@ -1123,6 +1123,7 @@ async fn upload_execute(
         &final_remote,
         &transfer_id,
         &mut cancel_rx,
+        None,
     )
     .await;
 
@@ -1526,7 +1527,7 @@ async fn download_execute(
 
     // 共享流式核心：.part 临时文件 + 进度事件 + 取消 + 完整性校验 + 原子替换。
     let result = crate::commands::sftp::stream_download_single_file(
-        &ctx.app_handle,
+        Some(&ctx.app_handle),
         raw,
         &remote_handle,
         read_chunk,
@@ -1535,6 +1536,7 @@ async fn download_execute(
         &transfer_id,
         &mut cancel_rx,
         overwrite,
+        None,
     )
     .await;
 

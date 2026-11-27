@@ -746,8 +746,10 @@ struct PrefetchedChunk {
 /// 响应，并发安全）。短读（服务器单次返回不足请求量）自动补读剩余段；
 /// EOF 早于预期时正常收束，由调用方的「写入 < 起始大小」校验兜底报错
 /// （与串行版一致）。
+/// `app` 为 `None` 时跳过进度事件——无头调用方（MCP server）没有前端可通知，
+/// 但仍要复用同一份分块/预取/取消/完整性校验逻辑。
 pub(crate) async fn stream_remote_to_local_file(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     raw: std::sync::Arc<russh_sftp::client::RawSftpSession>,
     remote_handle: &str,
     read_chunk: u32,
@@ -755,6 +757,7 @@ pub(crate) async fn stream_remote_to_local_file(
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     download_id: &str,
     total: u64,
+    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<u64, AppError> {
     const EOF_STATUS: russh_sftp::protocol::StatusCode = russh_sftp::protocol::StatusCode::Eof;
     let mut written: u64 = 0;
@@ -767,7 +770,7 @@ pub(crate) async fn stream_remote_to_local_file(
     let mut eof_seen = false;
 
     // 发出一个 READ（offset, len）；预取与短读补读共用。
-    let mut issue = |inflight: &mut tokio::task::JoinSet<Result<PrefetchedChunk, AppError>>,
+    let issue = |inflight: &mut tokio::task::JoinSet<Result<PrefetchedChunk, AppError>>,
                      offset: u64,
                      len: u32| {
         let raw = raw.clone();
@@ -813,7 +816,7 @@ pub(crate) async fn stream_remote_to_local_file(
 
         let joined = tokio::select! {
             res = inflight.join_next() => res.expect("inflight 非空"),
-            _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+            _ = cancel_rx.changed() => return Err(AppError::Cancelled("下载已取消".into())),
         };
         let chunk = joined.map_err(|e| AppError::Ssh(format!("下载任务失败: {}", e)))??;
 
@@ -838,7 +841,7 @@ pub(crate) async fn stream_remote_to_local_file(
                 result = local.write_all(&data) => {
                     result.map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
                 }
-                _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+                _ = cancel_rx.changed() => return Err(AppError::Cancelled("下载已取消".into())),
             }
             let n = data.len() as u64;
             written += n;
@@ -856,11 +859,16 @@ pub(crate) async fn stream_remote_to_local_file(
             }
 
             if throttle.should_emit(written) {
-                emit_event(
-                    app,
-                    "sftp-download-progress",
-                    json!({ "downloadId": download_id, "written": written, "total": total }),
-                );
+                if let Some(callback) = on_progress {
+                    callback(written, total);
+                }
+                if let Some(app) = app {
+                    emit_event(
+                        app,
+                        "sftp-download-progress",
+                        json!({ "downloadId": download_id, "written": written, "total": total }),
+                    );
+                }
             }
         }
     }
@@ -869,7 +877,7 @@ pub(crate) async fn stream_remote_to_local_file(
         result = local.flush() => {
             result.map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
         }
-        _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+        _ = cancel_rx.changed() => return Err(AppError::Cancelled("下载已取消".into())),
     }
 
     // 落盘：.part 接着要被 rename 成目标文件，先把数据 sync 到磁盘，
@@ -879,7 +887,7 @@ pub(crate) async fn stream_remote_to_local_file(
         result = local.sync_all() => {
             result.map_err(|e| AppError::Ssh(format!("同步本地文件失败: {}", e)))?;
         }
-        _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+        _ = cancel_rx.changed() => return Err(AppError::Cancelled("下载已取消".into())),
     }
 
     // 释放远端句柄（尽力而为；会话随 Arc 释放而结束）。
@@ -951,7 +959,7 @@ pub async fn sftp_download_stream(
                 .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
 
         let written = match stream_remote_to_local_file(
-            &app,
+            Some(&app),
             raw,
             &remote_handle,
             read_chunk,
@@ -959,6 +967,7 @@ pub async fn sftp_download_stream(
             &mut cancel_rx,
             &download_id,
             total,
+            None,
         )
         .await
         {
@@ -999,7 +1008,7 @@ pub async fn sftp_download_stream(
     // 普通路径：流式下载逻辑与 Agent 传输工具共用同一实现
     // （stream_download_single_file，含 .part/.backup + 取消 + 完整性 + done 事件）。
     stream_download_single_file(
-        &app,
+        Some(&app),
         raw,
         &remote_handle,
         read_chunk,
@@ -1008,6 +1017,7 @@ pub async fn sftp_download_stream(
         &download_id,
         &mut cancel_rx,
         true,
+        None,
     )
     .await
 }
@@ -1051,8 +1061,9 @@ async fn cleanup_stale_download_temp_files(local_path: &str, current_id: &str) {
 /// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
 /// 取消：`cancel_rx` 被置位即中止并清理 .part；调用方负责把 sender 注册进
 /// `AppState::download_cancel`（前端 `sftp_cancel_download` 按 id 触发）。
+/// `app` 为 `None` 时跳过进度/完成事件——无头调用方（MCP server）没有前端可通知。
 pub(crate) async fn stream_download_single_file(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     raw: std::sync::Arc<russh_sftp::client::RawSftpSession>,
     remote_handle: &str,
     read_chunk: u32,
@@ -1061,6 +1072,7 @@ pub(crate) async fn stream_download_single_file(
     download_id: &str,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     allow_replace: bool,
+    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), AppError> {
     let temp_local_path = format!("{}.marcel-download-{}.part", local_path, download_id);
     let backup_local_path = format!("{}.marcel-download-{}.backup", local_path, download_id);
@@ -1080,6 +1092,7 @@ pub(crate) async fn stream_download_single_file(
         cancel_rx,
         download_id,
         total,
+        on_progress,
     )
     .await;
 
@@ -1158,11 +1171,13 @@ pub(crate) async fn stream_download_single_file(
         let _ = tokio::fs::remove_file(&backup_local_path).await;
     }
 
-    emit_event(
-        app,
-        "sftp-download-done",
-        json!({ "downloadId": download_id }),
-    );
+    if let Some(app) = app {
+        emit_event(
+            app,
+            "sftp-download-done",
+            json!({ "downloadId": download_id }),
+        );
+    }
 
     Ok(())
 }
@@ -1263,7 +1278,7 @@ pub(crate) fn check_cancelled(
     message: &str,
 ) -> Result<(), AppError> {
     if *cancel_rx.borrow() {
-        Err(AppError::Ssh(message.into()))
+        Err(AppError::Cancelled(message.into()))
     } else {
         Ok(())
     }
@@ -1477,7 +1492,7 @@ pub async fn sftp_upload_stream(
     // 普通路径：流式上传逻辑与 Agent 传输工具共用同一实现
     // （stream_upload_single_file，含 sidecar + 取消 + 完整性校验 + done 事件）。
     stream_upload_single_file(
-        &app,
+        Some(&app),
         &sftp,
         &mut local_file,
         total,
@@ -1485,6 +1500,7 @@ pub async fn sftp_upload_stream(
         &remote_path,
         &upload_id,
         &mut cancel_rx,
+        None,
     )
     .await
 }
@@ -1497,8 +1513,9 @@ pub async fn sftp_upload_stream(
 /// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
 /// 取消：`cancel_rx` 被置位即中止并清理 sidecar（调用方负责把 sender 注册进
 /// `AppState::upload_cancel`，前端 `sftp_cancel_upload` 按 id 触发）。
+/// `app` 为 `None` 时跳过进度/完成事件——无头调用方（MCP server）没有前端可通知。
 pub(crate) async fn stream_upload_single_file(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     sftp: &russh_sftp::client::SftpSession,
     local_file: &mut tokio::fs::File,
     total: u64,
@@ -1506,6 +1523,7 @@ pub(crate) async fn stream_upload_single_file(
     remote_path: &str,
     upload_id: &str,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), AppError> {
     let temp_remote_path = remote_sidecar_path(remote_path, "upload")?;
 
@@ -1533,7 +1551,7 @@ pub(crate) async fn stream_upload_single_file(
                 result = local_file.read(&mut buf) => {
                     result.map_err(|e| AppError::Ssh(format!("读取本地文件失败: {}", e)))?
                 }
-                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+                _ = cancel_rx.changed() => return Err(AppError::Cancelled("上传已取消".into())),
             };
 
             if n == 0 {
@@ -1544,7 +1562,7 @@ pub(crate) async fn stream_upload_single_file(
                 result = tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n]) => {
                     result.map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
                 }
-                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+                _ = cancel_rx.changed() => return Err(AppError::Cancelled("上传已取消".into())),
             }
 
             written += n as u64;
@@ -1562,11 +1580,16 @@ pub(crate) async fn stream_upload_single_file(
             }
 
             if throttle.should_emit(written) {
-                emit_event(
-                    app,
-                    "sftp-upload-progress",
-                    json!({ "uploadId": upload_id, "written": written, "total": total }),
-                );
+                if let Some(callback) = on_progress {
+                    callback(written, total);
+                }
+                if let Some(app) = app {
+                    emit_event(
+                        app,
+                        "sftp-upload-progress",
+                        json!({ "uploadId": upload_id, "written": written, "total": total }),
+                    );
+                }
             }
         }
 
@@ -1574,7 +1597,7 @@ pub(crate) async fn stream_upload_single_file(
             result = remote_file.flush() => {
                 result.map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
             }
-            _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+            _ = cancel_rx.changed() => return Err(AppError::Cancelled("上传已取消".into())),
         }
 
         Ok(())
@@ -1600,7 +1623,9 @@ pub(crate) async fn stream_upload_single_file(
     }
     commit_remote_temp_file(sftp, &temp_remote_path, remote_path, false).await?;
 
-    emit_event(app, "sftp-upload-done", json!({ "uploadId": upload_id }));
+    if let Some(app) = app {
+        emit_event(app, "sftp-upload-done", json!({ "uploadId": upload_id }));
+    }
 
     Ok(())
 }

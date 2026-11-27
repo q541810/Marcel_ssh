@@ -9,8 +9,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::watch;
 
 use crate::error::AppError;
 use crate::SshManager;
@@ -68,16 +69,38 @@ impl SftpExecutor {
         Ok(())
     }
 
-    /// 上传本地文件到远端
+    /// 上传本地文件到远端。
     ///
-    /// 先在远端建 `path.tmp` 再 rename 覆盖，避免写一半中断时把目标文件
-    /// 留成半截内容（与 SFTP 面板的原子落盘语义一致）。
+    /// 字节传送复用应用内的共享流式内核
+    /// [`crate::commands::sftp::stream_upload_single_file`]——与 SFTP 面板、
+    /// Agent 传输工具走同一条道：分块读写、sidecar 临时文件 + 原子提交、
+    /// 完整性校验、可取消。`app` 传 `None`：无头调用方没有前端可通知，
+    /// 内核会跳过进度/完成事件。
+    ///
+    /// 历史：本函数曾自带一套「整文件读进内存 + 单次 write_all」的实现，
+    /// 大文件会在 SFTP 窗口写满后长时间阻塞，且整条链路没有超时与取消点，
+    /// 会把 MCP 的串行请求分发一起拖死。
     pub async fn upload(
         &self,
         session_id: &str,
         local_path: &str,
         remote_path: &str,
     ) -> Result<TransferResult, AppError> {
+        self.upload_with_cancel(session_id, local_path, remote_path, None, None)
+            .await
+    }
+
+    pub async fn upload_with_cancel(
+        &self,
+        session_id: &str,
+        local_path: &str,
+        remote_path: &str,
+        cancel: Option<watch::Receiver<bool>>,
+        on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    ) -> Result<TransferResult, AppError> {
+        if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+            return Err(AppError::Cancelled("请求已取消".into()));
+        }
         log::info!(
             "[MCP SFTP] upload: session={}, local={}, remote={}",
             session_id,
@@ -85,13 +108,20 @@ impl SftpExecutor {
             remote_path
         );
 
-        if !Path::new(local_path).exists() {
-            return Err(AppError::Config(format!("本地文件不存在: {}", local_path)));
+        let local_meta = tokio::fs::metadata(local_path)
+            .await
+            .map_err(|_| AppError::Config(format!("本地文件不存在: {}", local_path)))?;
+        if local_meta.is_dir() {
+            return Err(AppError::Config(format!(
+                "本地路径是目录，请使用文件夹上传: {}",
+                local_path
+            )));
         }
+        let total = local_meta.len();
 
-        let start = Instant::now();
-        let content = tokio::fs::read(local_path).await?;
-        let size = content.len() as u64;
+        let mut local_file = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|e| AppError::Config(format!("打开本地文件失败: {}: {}", local_path, e)))?;
 
         let sftp = self.ssh_manager.open_sftp(session_id).await?;
 
@@ -102,39 +132,64 @@ impl SftpExecutor {
             }
         }
 
-        let tmp_path = format!("{}.marcel-tmp", remote_path);
-        let mut file = sftp
-            .create(tmp_path.as_str())
-            .await
-            .map_err(|e| AppError::Ssh(format!("创建远端临时文件失败: {}", e)))?;
-        file.write_all(&content)
-            .await
-            .map_err(|e| AppError::Ssh(format!("写入远端文件失败: {}", e)))?;
-        file.sync_all()
-            .await
-            .map_err(|e| AppError::Ssh(format!("同步远端文件失败: {}", e)))?;
-        drop(file);
+        // 取消通道由调用方提供（同步请求用 MCP 请求取消，后台任务用任务表）；
+        // 没人取消时保留一个永不置位的本地通道。
+        let (_never_cancel_tx, never_cancel_rx) = watch::channel(false);
+        let mut cancel_rx = cancel.unwrap_or(never_cancel_rx);
 
-        if let Err(e) = sftp.rename(tmp_path.as_str(), remote_path).await {
-            // 提交失败别留下半截临时文件
-            let _ = sftp.remove_file(tmp_path.as_str()).await;
-            return Err(AppError::Ssh(format!("提交远端文件失败: {}", e)));
-        }
+        let start = Instant::now();
+        let upload_id = format!("mcp-upload-{}", uuid::Uuid::new_v4());
+        crate::commands::sftp::stream_upload_single_file(
+            None,
+            &sftp,
+            &mut local_file,
+            total,
+            true,
+            remote_path,
+            &upload_id,
+            &mut cancel_rx,
+            on_progress,
+        )
+        .await?;
 
         Ok(TransferResult {
             success: true,
-            bytes_transferred: size,
+            bytes_transferred: total,
             duration_ms: start.elapsed().as_millis() as u64,
         })
     }
 
-    /// 从远端下载文件到本地
+    /// 从远端下载文件到本地。
+    ///
+    /// 字节传送复用应用内的共享流式内核
+    /// [`crate::commands::sftp::stream_download_single_file`]——与 SFTP 面板、
+    /// Agent 传输工具走同一条道：独占裸会话并发预取 READ、`.part` 临时文件 +
+    /// 原子替换（含已有文件备份与失败回滚）、完整性校验、可取消。
+    /// `app` 传 `None`：无头调用方没有前端可通知，内核会跳过事件。
+    ///
+    /// 历史：本函数曾用 `read_to_end` 把整个远端文件读进内存再 `fs::write`，
+    /// 大文件既吃内存又只有一个 RTT 一个块的串行读，且没有取消点。
     pub async fn download(
         &self,
         session_id: &str,
         remote_path: &str,
         local_path: &str,
     ) -> Result<TransferResult, AppError> {
+        self.download_with_cancel(session_id, remote_path, local_path, None, None)
+            .await
+    }
+
+    pub async fn download_with_cancel(
+        &self,
+        session_id: &str,
+        remote_path: &str,
+        local_path: &str,
+        cancel: Option<watch::Receiver<bool>>,
+        on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    ) -> Result<TransferResult, AppError> {
+        if cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+            return Err(AppError::Cancelled("请求已取消".into()));
+        }
         log::info!(
             "[MCP SFTP] download: session={}, remote={}, local={}",
             session_id,
@@ -144,18 +199,32 @@ impl SftpExecutor {
 
         let start = Instant::now();
 
+        // 高层会话只做 stat（判断是不是普通文件、拿总长度）
         let sftp = self.ssh_manager.open_sftp(session_id).await?;
-        let mut file = sftp
-            .open(remote_path)
+        let metadata = sftp
+            .metadata(remote_path)
             .await
-            .map_err(|e| AppError::Ssh(format!("打开远端文件失败: {}", e)))?;
+            .map_err(|e| AppError::Ssh(format!("获取远端文件信息失败: {}: {}", remote_path, e)))?;
+        if metadata.is_dir() {
+            return Err(AppError::Ssh(format!(
+                "远端路径是目录，请使用文件夹下载: {}",
+                remote_path
+            )));
+        }
+        let total = metadata.len();
 
-        let mut content = Vec::new();
-        file.read_to_end(&mut content)
+        // 数据面走独占裸会话（并发预取 READ），与面板/Agent 下载同一条道
+        let (raw, read_chunk) = self.ssh_manager.open_sftp_raw(session_id).await?;
+        let raw = Arc::new(raw);
+        let remote_handle = raw
+            .open(
+                remote_path,
+                OpenFlags::READ,
+                russh_sftp::protocol::FileAttributes::default(),
+            )
             .await
-            .map_err(|e| AppError::Ssh(format!("读取远端文件失败: {}", e)))?;
-
-        let size = content.len() as u64;
+            .map_err(|e| AppError::Ssh(format!("打开远端文件失败: {}: {}", remote_path, e)))?
+            .handle;
 
         // 本地父目录不存在就建出来（外部调用方给的路径未必已存在）
         if let Some(parent) = Path::new(local_path).parent() {
@@ -163,11 +232,28 @@ impl SftpExecutor {
                 tokio::fs::create_dir_all(parent).await?;
             }
         }
-        tokio::fs::write(local_path, content).await?;
+
+        let (_never_cancel_tx, never_cancel_rx) = watch::channel(false);
+        let mut cancel_rx = cancel.unwrap_or(never_cancel_rx);
+        let download_id = format!("mcp-download-{}", uuid::Uuid::new_v4());
+
+        crate::commands::sftp::stream_download_single_file(
+            None,
+            raw,
+            &remote_handle,
+            read_chunk,
+            total,
+            local_path,
+            &download_id,
+            &mut cancel_rx,
+            true, // MCP 语义：覆盖已存在的本地文件
+            on_progress,
+        )
+        .await?;
 
         Ok(TransferResult {
             success: true,
-            bytes_transferred: size,
+            bytes_transferred: total,
             duration_ms: start.elapsed().as_millis() as u64,
         })
     }

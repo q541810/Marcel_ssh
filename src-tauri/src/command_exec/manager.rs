@@ -129,6 +129,23 @@ pub enum JobFilter<'a> {
     OwnerConversation(&'a str),
 }
 
+/// 等请求级取消：已置位立即返回；否则等发送端置位或关闭。
+/// 关闭也按取消处理——调用方已经不关心这次请求了，不能让它继续占通道。
+async fn wait_for_request_cancel(rx: &mut watch::Receiver<bool>) {
+    if *rx.borrow() {
+        return;
+    }
+    let _ = rx.changed().await;
+}
+
+/// 向运行表中的内部取消通道发信号；不等待执行体返回。
+async fn signal_running_cancel(inner: &ManagerInner, exec_id: u64, reason: CancelReason) {
+    let running = inner.running.lock().await;
+    if let Some(entry) = running.get(&exec_id) {
+        let _ = entry.cancel_tx.send(reason);
+    }
+}
+
 /// 每个作业归属者同时可运行的后台作业上限。
 ///
 /// 这是资源护栏，不是产品限制：后台作业是长周期进程，一个跑飞的模型
@@ -148,7 +165,7 @@ const MAX_SETTLED_JOBS_IN_MEMORY: usize = 200;
 /// 后台作业的执行超时兜底。作业的意义就是长周期运行（编译、下载、
 /// 常驻服务），超时只作为最终保险丝；真正的停止手段是 `job_kill`
 /// 或会话断连级联取消。
-const BACKGROUND_JOB_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+pub(crate) const BACKGROUND_JOB_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 一次提交的最终结果。调用方据此映射业务事件与错误文案，
 /// manager 本身不感知任何前端事件协议。
@@ -632,8 +649,27 @@ impl CommandExecutionManager {
         app: Option<&AppHandle>,
         ticket: CommandTicket,
     ) -> SubmitOutcome {
+        self.submit_opt_with_cancel(app, ticket, None).await
+    }
+
+    /// 同 [`Self::submit_opt`]，但额外接受调用方的请求级取消信号。
+    ///
+    /// 外部取消不直接 drop 执行 future：它先向内部 `cancel_tx` 发信号，再继续
+    /// await 原来的执行任务，让 executor 走完整的宽限关闭与落账。
+    pub(crate) async fn submit_opt_with_cancel(
+        &self,
+        app: Option<&AppHandle>,
+        ticket: CommandTicket,
+        mut external_cancel: Option<watch::Receiver<bool>>,
+    ) -> SubmitOutcome {
+        if external_cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+            return SubmitOutcome::Cancelled {
+                reason: CancelReason::User,
+            };
+        }
+
         let exec_id = self.inner.next_exec_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let (cancel_tx, mut cancel_rx) = watch::channel(CancelReason::User);
+        let (cancel_tx, cancel_rx) = watch::channel(CancelReason::User);
 
         let record = ExecutionRecord {
             exec_id,
@@ -669,12 +705,21 @@ impl CommandExecutionManager {
         // 是 biased 且取消优先的，取消后会宽限关闭通道再返回——
         // 「取消 = 停止等待并关闭通道」这一语义在本层闭环；远端进程是否
         // 随之结束不由我们决定（见 executor 模块注释）。
-        let outcome = match self
-            .inner
-            .transport
-            .exec(&ticket, app, Some(&cancel_rx))
-            .await
-        {
+        let exec = self.inner.transport.exec(&ticket, app, Some(&cancel_rx));
+        tokio::pin!(exec);
+        let raw = match external_cancel.as_mut() {
+            Some(rx) => {
+                tokio::select! {
+                    result = &mut exec => result,
+                    _ = wait_for_request_cancel(rx) => {
+                        signal_running_cancel(&self.inner, exec_id, CancelReason::User).await;
+                        (&mut exec).await
+                    }
+                }
+            }
+            None => exec.await,
+        };
+        let outcome = match raw {
             Ok(ExecOutcome::Completed { output, exit }) => {
                 SubmitOutcome::Completed { output, exit }
             }
@@ -722,6 +767,27 @@ impl CommandExecutionManager {
         ticket: CommandTicket,
         description: Option<String>,
     ) -> DetachableOutcome {
+        self.submit_detachable_with_cancel(app, ticket, description, None)
+            .await
+    }
+
+    /// 同 [`Self::submit_detachable`]，额外接受请求级取消。
+    ///
+    /// 请求取消优先于「转后台」：调用方已经不要这次调用了，就不该再给它
+    /// 造一条它没拿到的作业 ID。
+    pub async fn submit_detachable_with_cancel(
+        &self,
+        app: Option<&AppHandle>,
+        ticket: CommandTicket,
+        description: Option<String>,
+        mut external_cancel: Option<watch::Receiver<bool>>,
+    ) -> DetachableOutcome {
+        if external_cancel.as_ref().is_some_and(|rx| *rx.borrow()) {
+            return DetachableOutcome::Finished(SubmitOutcome::Cancelled {
+                reason: CancelReason::User,
+            });
+        }
+
         let soft_timeout = ticket.timeout;
         let exec_id = self.inner.next_exec_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (cancel_tx, cancel_rx) = watch::channel(CancelReason::User);
@@ -786,15 +852,27 @@ impl CommandExecutionManager {
                 .await
         });
 
+        let mut external_fired = false;
         let early = tokio::select! {
             joined = &mut handle => Some(joined),
             _ = ticket.auth_wait.sleep_active(soft_timeout) => None,
+            _ = async {
+                match external_cancel.as_mut() {
+                    Some(rx) => wait_for_request_cancel(rx).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                external_fired = true;
+                signal_running_cancel(&self.inner, exec_id, CancelReason::User).await;
+                None
+            }
         };
         // 计时器恰好与结束同刻到：已经结束就按正常结束处理，别为一个刚跑完的命令
         // 造一个作业再立刻结算（模型会先被告知「已转后台」、随后又收到「已完成」）。
+        // 请求级取消则必须等执行体宽限关闭通道，不能转后台。
         let early = match early {
             Some(joined) => Some(joined),
-            None if handle.is_finished() => Some((&mut handle).await),
+            None if external_fired || handle.is_finished() => Some((&mut handle).await),
             None => None,
         };
 
@@ -1837,7 +1915,7 @@ async fn run_background_worker(
     _job_id: String,
     ticket: CommandTicket,
     instance: Arc<PlMutex<JobInstance>>,
-    mut cancel_rx: watch::Receiver<CancelReason>,
+    cancel_rx: watch::Receiver<CancelReason>,
 ) {
     let temp_dir = inner.temp_dir.clone();
 

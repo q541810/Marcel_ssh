@@ -7,9 +7,14 @@
 // - stderr 只用于日志，不参与协议
 // - notification（无 id）不需要响应
 
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 use super::protocol::{McpError, McpResponse, McpServerMessage};
+use super::request::{RequestPermit, RequestTracker};
 use super::McpServer;
 use crate::error::AppError;
 
@@ -59,6 +64,14 @@ where
     Ok(LineRead::Line)
 }
 
+/// 交给唯一 writer 的一条响应。`permit`/`cancel_rx` 一直活到写出，
+/// 防止响应排队期间同一请求 ID 被提前复用。
+struct OutgoingResponse {
+    response: McpResponse,
+    cancel_rx: Option<watch::Receiver<bool>>,
+    _permit: Option<RequestPermit>,
+}
+
 /// 运行 Stdio MCP Server
 ///
 /// 从 stdin 读取 JSON-RPC 请求（每行一个），处理后将响应写入 stdout。
@@ -70,14 +83,39 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
         server.config.version
     );
 
-    // 工具注册表（与 HTTP transport 共用同一条构造路径）
-    let registry = server.build_registry()?;
-
     // Tokio 异步 stdin/stdout
     let stdin = tokio::io::stdin();
-    let mut reader = BufReader::new(stdin);
-    let mut stdout = tokio::io::stdout();
+    let reader = BufReader::new(stdin);
+    let stdout = tokio::io::stdout();
+    run_stdio_io(server, reader, stdout).await
+}
 
+/// stdio 的核心编排：读循环、请求 worker、单 writer 三者分离。
+async fn run_stdio_io<R, W>(
+    server: &McpServer,
+    mut reader: R,
+    mut stdout: W,
+) -> Result<(), AppError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    // 工具注册表（与 HTTP transport 共用同一条构造路径）
+    let registry = server.build_registry()?;
+    let tracker = RequestTracker::default();
+
+    let (out_tx, mut out_rx) = mpsc::channel::<OutgoingResponse>(64);
+    let writer = tokio::spawn(async move {
+        while let Some(outgoing) = out_rx.recv().await {
+            if outgoing.cancel_rx.as_ref().is_some_and(|rx| *rx.borrow()) {
+                continue;
+            }
+            write_response(&mut stdout, &outgoing.response).await?;
+        }
+        Ok::<(), AppError>(())
+    });
+
+    let mut workers: JoinSet<()> = JoinSet::new();
     let mut line = String::new();
     loop {
         match read_line_limited(&mut reader, MAX_STDIO_LINE_BYTES, &mut line).await? {
@@ -97,7 +135,13 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
                     serde_json::Value::Null,
                     McpError::parse_error(format!("请求行超过 {} 字节上限", MAX_STDIO_LINE_BYTES)),
                 );
-                write_response(&mut stdout, &error_resp).await?;
+                let _ = out_tx
+                    .send(OutgoingResponse {
+                        response: error_resp,
+                        cancel_rx: None,
+                        _permit: None,
+                    })
+                    .await;
                 break;
             }
             LineRead::Line => {}
@@ -124,7 +168,13 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
                     serde_json::Value::Null,
                     McpError::parse_error(format!("Invalid JSON: {}", e)),
                 );
-                write_response(&mut stdout, &error_resp).await?;
+                let _ = out_tx
+                    .send(OutgoingResponse {
+                        response: error_resp,
+                        cancel_rx: None,
+                        _permit: None,
+                    })
+                    .await;
                 continue;
             }
         };
@@ -137,33 +187,72 @@ pub async fn run_stdio_server(server: &McpServer) -> Result<(), AppError> {
             log::debug!("[MCP Stdio] 收到方法 {}（参数不入日志）", method);
         }
 
-        // 处理消息
         match message {
             McpServerMessage::Request(req) => {
-                let response = server.handle_request(&registry, req).await;
-                write_response(&mut stdout, &response).await?;
+                // 必须在 spawn 之前登记：取消通知可能立刻到达，晚一步就会被
+                // 当成未知 ID 丢掉。
+                let Some(permit) = tracker.try_register(&req.id) else {
+                    let error_resp = McpResponse::error(
+                        req.id.clone(),
+                        McpError::invalid_request("同一请求 ID 已有请求在途"),
+                    );
+                    let _ = out_tx
+                        .send(OutgoingResponse {
+                            response: error_resp,
+                            cancel_rx: None,
+                            _permit: None,
+                        })
+                        .await;
+                    continue;
+                };
+                let cancel_rx = permit.receiver();
+                let server = server.clone();
+                let registry = registry.clone();
+                let tx = out_tx.clone();
+                workers.spawn(async move {
+                    let response = server
+                        .handle_request_with_cancel(&registry, req, Some(cancel_rx.clone()))
+                        .await;
+                    if !*cancel_rx.borrow() {
+                        let _ = tx
+                            .send(OutgoingResponse {
+                                response,
+                                cancel_rx: Some(cancel_rx),
+                                _permit: Some(permit),
+                            })
+                            .await;
+                    }
+                });
             }
             McpServerMessage::Notification(notif) => {
-                server.handle_notification(&notif);
-                // Notification 不需要响应
+                // notification 在主循环里同步处理：长请求阻塞不了取消。
+                server.handle_notification_with_tracker(&notif, Some(&tracker));
             }
         }
+
+        // 收割已完成 worker，避免在持续请求下长期堆积。
+        while workers.try_join_next().is_some() {}
     }
 
     log::info!("[MCP Stdio] Server stopped");
 
-    // 收尾：关掉本次服务期间建立的无头会话。进程随后就退出，但显式关闭
-    // 让「会话随服务生灭」这件事成立，也为将来进程内复用留好边界。
+    // 收尾顺序：停止接新请求 → 取消在途请求 → 等 worker 清理 → 关 writer
+    // → 最后关无头会话。任何一步都不能用 `?` 跳过后面的清理。
+    tracker.cancel_all();
+    drop(out_tx);
+    while workers.join_next().await.is_some() {}
+    let writer_result = writer
+        .await
+        .map_err(|e| AppError::Other(format!("MCP stdout writer 异常结束: {}", e)))?;
     registry.executor().shutdown().await;
-
-    Ok(())
+    writer_result
 }
 
 /// 写响应到 stdout
-async fn write_response(
-    stdout: &mut tokio::io::Stdout,
-    response: &McpResponse,
-) -> Result<(), AppError> {
+async fn write_response<W>(stdout: &mut W, response: &McpResponse) -> Result<(), AppError>
+where
+    W: AsyncWrite + Unpin,
+{
     let json = serde_json::to_string(response)
         .map_err(|e| AppError::Config(format!("Failed to serialize response: {}", e)))?;
 
@@ -238,7 +327,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_nine_tools() {
+    async fn tools_list_returns_thirteen_tools() {
         let server = test_server().await;
         let registry = server.build_registry().unwrap();
 
@@ -252,7 +341,7 @@ mod tests {
         let resp = server.handle_request(&registry, req).await;
         let result = resp.result.expect("tools/list 必须返回 result");
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 13);
         // 顺序稳定：list_connections 恒在首位
         assert_eq!(tools[0]["name"], "list_connections");
     }
@@ -371,6 +460,120 @@ mod tests {
 
         let outcome = read_line_limited(&mut reader, 16, &mut line).await.unwrap();
         assert_eq!(outcome, LineRead::Line);
+    }
+
+    async fn write_json(writer: &mut tokio::io::DuplexStream, value: serde_json::Value) {
+        writer
+            .write_all(format!("{}\n", value).as_bytes())
+            .await
+            .unwrap();
+        writer.flush().await.unwrap();
+    }
+
+    async fn read_json<R: AsyncBufRead + Unpin>(reader: &mut R) -> serde_json::Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        serde_json::from_str(line.trim()).unwrap()
+    }
+
+    /// 长请求阻塞不了后续请求：响应允许乱序，以 ID 判断谁先返回。
+    #[tokio::test]
+    async fn stdio_fast_request_returns_while_slow_request_is_running() {
+        let server = test_server().await;
+        let (mut client_in, server_in) = tokio::io::duplex(64 * 1024);
+        let (server_out, client_out) = tokio::io::duplex(64 * 1024);
+        let task = tokio::spawn(async move {
+            run_stdio_io(&server, BufReader::new(server_in), server_out).await
+        });
+
+        write_json(
+            &mut client_in,
+            serde_json::json!({
+                "jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":"__test_sleep","arguments":{"ms":300}}
+            }),
+        )
+        .await;
+        write_json(
+            &mut client_in,
+            serde_json::json!({
+                "jsonrpc":"2.0","id":2,"method":"tools/call",
+                "params":{"name":"list_connections","arguments":{}}
+            }),
+        )
+        .await;
+
+        let mut reader = BufReader::new(client_out);
+        let first = tokio::time::timeout(std::time::Duration::from_secs(2), read_json(&mut reader))
+            .await
+            .expect("快请求必须及时返回");
+        assert_eq!(first["id"], 2, "快请求不能被慢请求堵住");
+
+        let second =
+            tokio::time::timeout(std::time::Duration::from_secs(2), read_json(&mut reader))
+                .await
+                .expect("慢请求最终应返回");
+        assert_eq!(second["id"], 1);
+
+        drop(client_in);
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("EOF 后服务应收尾")
+            .unwrap()
+            .unwrap();
+    }
+
+    /// 取消通知在主循环即时处理：慢请求不再返回，服务也能在 EOF 后迅速收尾。
+    #[tokio::test]
+    async fn stdio_cancel_stops_slow_request_without_its_response() {
+        let server = test_server().await;
+        let (mut client_in, server_in) = tokio::io::duplex(64 * 1024);
+        let (server_out, client_out) = tokio::io::duplex(64 * 1024);
+        let task = tokio::spawn(async move {
+            run_stdio_io(&server, BufReader::new(server_in), server_out).await
+        });
+
+        write_json(
+            &mut client_in,
+            serde_json::json!({
+                "jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":"__test_sleep","arguments":{"ms":10000}}
+            }),
+        )
+        .await;
+        write_json(
+            &mut client_in,
+            serde_json::json!({
+                "jsonrpc":"2.0","method":"notifications/cancelled",
+                "params":{"requestId":1,"reason":"client timeout"}
+            }),
+        )
+        .await;
+        write_json(
+            &mut client_in,
+            serde_json::json!({
+                "jsonrpc":"2.0","id":2,"method":"tools/call",
+                "params":{"name":"list_connections","arguments":{}}
+            }),
+        )
+        .await;
+
+        let mut reader = BufReader::new(client_out);
+        let first = tokio::time::timeout(std::time::Duration::from_secs(2), read_json(&mut reader))
+            .await
+            .expect("取消之后的快请求应及时返回");
+        assert_eq!(first["id"], 2);
+
+        drop(client_in);
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("取消必须让 worker 在 EOF 收尾时限内结束，而不是等满 10 秒")
+            .unwrap()
+            .unwrap();
+
+        let mut rest = String::new();
+        reader.read_line(&mut rest).await.unwrap();
+        assert!(rest.is_empty(), "被取消的请求不能返回正常响应: {rest}");
     }
 
     #[tokio::test]

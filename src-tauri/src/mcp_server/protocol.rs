@@ -29,6 +29,21 @@ pub struct McpNotification {
     pub params: Option<serde_json::Value>,
 }
 
+/// `notifications/cancelled` 的参数（MCP 规范）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelledParams {
+    pub request_id: serde_json::Value,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// 请求 ID 的取消表键。必须保留 JSON 类型：数字 `1` 与字符串 `"1"`
+/// 在 JSON-RPC 里是两个不同请求，不能压成同一个字符串互相取消。
+pub fn request_id_key(id: &serde_json::Value) -> String {
+    serde_json::to_string(id).unwrap_or_else(|_| "null".to_string())
+}
+
 /// MCP Server 发送的响应（给 client）
 #[derive(Debug, Serialize)]
 pub struct McpResponse {
