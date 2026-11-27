@@ -1,4 +1,5 @@
 import { MobileAgentToolsSection } from './MobileAgentToolsSection';
+import { MobileExternalMcpSection } from './MobileExternalMcpSection';
 import { MobileMcpServerSection } from './MobileMcpServerSection';
 import { MobileSkillSection } from './MobileSkillSection';
 
@@ -19,7 +20,11 @@ export function MobileToolsPage() {
         <MobileSkillSection />
       </section>
       <section>
-        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">MCP 服务</h2>
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">外部 MCP</h2>
+        <MobileExternalMcpSection />
+      </section>
+      <section>
+        <h2 className="mb-2 px-1 text-meta font-medium text-fg-tertiary">MCP 服务（对外）</h2>
         <MobileMcpServerSection />
       </section>
     </div>

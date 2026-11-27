@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMcpJson, headersToText, textToHeaders } from '@/components/mcp/McpServerModal';
+import { parseMcpJson, headersToText, textToHeaders } from '@/lib/mcpClientForm';
 
 describe('parseMcpJson', () => {
   it('parses standard mcpServers config', () => {
