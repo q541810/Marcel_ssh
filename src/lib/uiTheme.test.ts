@@ -458,6 +458,45 @@ describe("applyUiTheme", () => {
       started.forEach((fn) => fn());
       expect(document.documentElement.dataset.marcelTheme).toBe("dark");
     });
+
+    it("有选区时揭开照常发起，但先清掉选区", () => {
+      applyUiTheme(dark, false);
+      const text = document.createElement("p");
+      text.textContent = "选中我";
+      document.body.appendChild(text);
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const selection = document.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(selection.isCollapsed).toBe(false);
+
+      applyUiTheme(light, true);
+      expect(started).toHaveLength(1);
+      expect(document.getSelection()!.isCollapsed).toBe(true);
+      started[0]();
+      expect(document.documentElement.dataset.marcelTheme).toBe("light");
+
+      selection.removeAllRanges();
+      text.remove();
+    });
+
+    it("输入框里的选区在揭开前收到尾部", () => {
+      applyUiTheme(dark, false);
+      const input = document.createElement("input");
+      input.value = "abcdef";
+      document.body.appendChild(input);
+      input.focus();
+      input.setSelectionRange(1, 4);
+
+      applyUiTheme(light, true);
+      expect(started).toHaveLength(1);
+      expect(input.selectionStart).toBe(4);
+      expect(input.selectionEnd).toBe(4);
+
+      input.blur();
+      input.remove();
+    });
   });
 });
 

@@ -852,6 +852,7 @@ export function onUiThemeChrome(
    羽化边缘靠 mask 渐变实现，WAAPI 直接驱动半径。
    不能改回「给所有元素挂 transition: color」——文字色是继承来的，父元素每渐变一帧
    子元素就重新起一次过渡，文字会比其它颜色慢半拍，还会在摘过渡类时被掐断、闪一下。
+   落到预设时先清掉选区再揭开（否则 WebView2 会崩 renderer，见 clearSelectionsBeforeReveal）；
    不支持（旧 WebView / 测试环境）或「减少动态效果」时直接换色。 */
 type ViewTransitionDocument = {
   startViewTransition?: (update: () => void) => ViewTransition;
@@ -873,6 +874,44 @@ if (typeof window !== "undefined") {
     },
     { capture: true, passive: true },
   );
+}
+
+/**
+ * 揭开动画前清掉选区。Chromium 在合成阶段提交选区时会强制更新样式与布局
+ * （`FrameSelection::SelectionHasFocus`），正好撞上过渡快照那套生命周期检查，
+ * renderer 直接崩掉（WebView2 158 实测：选中一段说明文字再切主题两次都崩，
+ * 同一操作不走过渡则正常）。动画是核心体验，所以这里清选区、不砍动效。
+ * 同源 iframe 一并清；沙箱化（opaque origin）的可视化 iframe 读不到也清不了，
+ * 那里面的选区覆盖不到。只清非折叠的，空选区不动，免得白发 selectionchange。
+ */
+function clearSelectionsBeforeReveal(): void {
+  const selection = document.getSelection();
+  if (selection && !selection.isCollapsed) selection.removeAllRanges();
+  const active = document.activeElement;
+  if (
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement
+  ) {
+    const { selectionStart, selectionEnd } = active;
+    if (
+      selectionStart !== null &&
+      selectionEnd !== null &&
+      selectionStart !== selectionEnd
+    ) {
+      // 光标收到尾部：与浏览器「点一下」的收法一致
+      active.setSelectionRange(selectionEnd, selectionEnd);
+    }
+  }
+  for (const frame of document.querySelectorAll("iframe")) {
+    try {
+      const frameSelection = frame.contentDocument?.getSelection();
+      if (frameSelection && !frameSelection.isCollapsed) {
+        frameSelection.removeAllRanges();
+      }
+    } catch {
+      // 跨域（opaque origin）的 iframe 读不到，清不了
+    }
+  }
 }
 
 /** 扩散起点：刚点的位置；没有近期点击（键盘触发等）就从视口中心。 */
@@ -952,7 +991,8 @@ function writeThemeToDom(theme: UiThemeSettings): void {
 /** DOM 应用：写变量、切 color-scheme、同步 data-marcel-theme（终端配色联动读它）。
  *  `animate` 控制是否允许整页淡入：启动首帧与早期缓存应用传 false（不欢迎开机动画）。
  *  即使 animate=true，也只在预设或明暗变了时才淡入——自定义里拖颜色要的是即时反馈，
- *  不是每改一下都淡一次（淡入期间的后续写入会实时出现在「新页面」层里）。 */
+ *  不是每改一下都淡一次（淡入期间的后续写入会实时出现在「新页面」层里）；
+ *  真正揭开前会清掉选区（见 clearSelectionsBeforeReveal）。 */
 export function applyUiTheme(theme: UiThemeSettings, animate = true): void {
   if (typeof document === "undefined") return;
   latestTheme = theme;
@@ -977,6 +1017,7 @@ export function applyUiTheme(theme: UiThemeSettings, animate = true): void {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (animate && changed && !reduceMotion && doc.startViewTransition) {
+    clearSelectionsBeforeReveal();
     startRevealTransition(doc, () => {
       if (latestTheme) writeThemeToDom(latestTheme);
     });
