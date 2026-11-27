@@ -196,6 +196,16 @@ const BASE_DESCRIPTION: &str =
          local processes, disk or network state, or (in execution mode) making changes \
          here.\n\
          \n\
+         YOU DO NOT HAVE A LOCAL `bash` — that is by design, not a gap: `local_bash` \
+         exists only inside this subagent's toolset. Never conclude from its absence \
+         that you cannot do anything on the user's computer. If the goal needs work \
+         done on this machine, do it through this tool: unpacking / creating archives, \
+         converting files, running scripts, installing or updating software, inspecting \
+         or managing processes, services and ports, cleanup — the subagent can carry \
+         out all of it for you (write-side work needs execution mode; a read-only \
+         \"plan\" subagent only inspects). Telling the user you are unable to work on \
+         their own machine is wrong here — dispatch it instead.\n\
+         \n\
          WHY delegate instead of doing it inline: the subagent runs in its OWN \
          conversation with its own context window, does the work end-to-end there, and \
          returns only its final report — bulky local exploration never floods your \
@@ -233,9 +243,11 @@ const BASE_DESCRIPTION: &str =
          conversation with its full context — it does not re-read what it already \
          read. Use it for follow-up questions, and to pick up a subagent that failed \
          or was cancelled (e.g. a transient LLM error) instead of starting over. Its \
-         mode stays as originally dispatched; the approval gate above still applies.
-\n         
-\n         A subagent may PAUSE to ask you a question (the result says so and shows the \n         question): it is not finished. Answer through the same `continue_id`, with the \n         answer as `prompt`.";
+         mode stays as originally dispatched; the approval gate above still applies.\n\
+         \n\
+         A subagent may PAUSE to ask you a question (the result says so and shows the \
+         question): it is not finished. Answer through the same `continue_id`, with the \
+         answer as `prompt`.";
 
 #[async_trait]
 impl AgentTool for LocalSubagentTool {
@@ -1045,6 +1057,28 @@ mod tests {
         // 作用侧的权威在描述里（`tools/mod.rs` 的 `acting_tools_state_their_side`）。
         let desc = tool.description().to_lowercase();
         assert!(desc.contains("this computer"));
+    }
+
+    /// 描述必须打消「我没有本机 bash 所以本机什么都干不了」这个误判。
+    ///
+    /// `local_bash` 只在本机子 agent 的工具集里（`ToolRoles::LocalSubOnly`），主
+    /// agent 拿不到它 —— 模型很容易把这个空缺读成「本机无能力」并直接告诉用户做不到。
+    /// 这段文字是唯一权威：说清缺 local_bash 是设计、本机的事（含解压这类日常操作）
+    /// 一律经本工具代办。
+    #[test]
+    fn description_says_missing_local_bash_is_not_a_dead_end() {
+        let desc = LocalSubagentTool::new().description().to_lowercase();
+        for needle in [
+            "local `bash`",
+            "by design",
+            "unpacking",
+            "dispatch it instead",
+        ] {
+            assert!(
+                desc.contains(needle),
+                "描述缺少「没有本机 bash 也能干活」的说明（缺 {needle}）：\n{desc}"
+            );
+        }
     }
 
     /// 候选注入后：描述追加 MODEL SELECTION 段、schema 暴露 model 参数；
