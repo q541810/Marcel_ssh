@@ -364,6 +364,17 @@ impl AgentTool for JobOutputTool {
          set `wait: true` to block until new output arrives or the job settles (only when \
          your next step genuinely depends on it; the wait is capped at 10 minutes, and a \
          timed-out wait returns `[status: running]`). \
+         IF ALL YOU WANT IS TO WAIT for this job to finish: stop — do not call any tool, \
+         do not poll. Just write a short line saying you are waiting for it to finish and \
+         end your turn (an EMPTY reply is treated as a failure, so do not leave the reply \
+         blank). The outcome comes back to you automatically when the job settles: if you \
+         are still working, the settlement notice is injected into your current turn; if \
+         you have already ended the turn, the system opens a NEW turn for you. Polling with \
+         `wait` in the meantime only burns a call and at best hits the 10-minute cap. \
+         Two limits on the automatic turn: it is only opened for jobs that finish on their \
+         own — a job the user kills while you are idle is not re-announced (its outcome is \
+         still readable here); and consecutive automatic turns are capped per user message, \
+         past which the outcome waits until the user writes again — also readable here. \
          Every response ends with `[status: ...]` (plus the exit fact, e.g. \
          `[status: completed, exit code: 3]`). If output was dropped or clipped, the \
          response says so explicitly — read it."
@@ -762,9 +773,43 @@ mod tests {
     use super::{
         continuation_notice, is_local_job_id, job_status_suffix, lossy_notice, merge_job_lists,
         remote_job_on_local_side_message, resolve_job_side, termination_message,
-        unwaited_poll_notice, JobListFilters, JobScopeFilter, JobSide, UNWAITED_POLL_REMINDER_AT,
+        unwaited_poll_notice, JobListFilters, JobScopeFilter, JobOutputTool, JobSide,
+        UNWAITED_POLL_REMINDER_AT,
     };
+    use crate::agent::tools::AgentTool;
     use crate::command_exec::{CancelReason, JobInfo, JobStatus};
+
+    /// 描述里「只想等它跑完就别调工具」这句必须**照着真实机制**写。
+    ///
+    /// 三件事一起钉住：
+    /// 1. 确实存在自动回来这回事（否则这句就是骗模型，它会放着作业不管）；
+    /// 2. 不许写成「什么都不要做」——空回复会被 `classify_text_reply` 判成哑火，
+    ///    补问一次后仍空就按失败收场（`phases.rs` 的 `TextReply::Empty`），
+    ///    所以必须要求补一句「我在等」；
+    /// 3. 两条边界（被用户掐掉的作业不重开轮、自动开轮有额度）要写出来，
+    ///    免得模型以为任何结局都会自己找上来。
+    #[test]
+    fn description_says_idling_beats_polling_for_a_settling_job() {
+        let tool = JobOutputTool::new();
+        let desc = tool.description();
+        assert!(desc.contains("IF ALL YOU WANT IS TO WAIT"), "缺少「只想等就别调工具」段");
+        assert!(
+            desc.contains("do not call any tool"),
+            "要让模型明确不调工具，而不是继续用 wait 轮询"
+        );
+        assert!(
+            desc.contains("EMPTY reply is treated as a failure"),
+            "必须要求补一句「我在等」：空回复会被当成哑火判失败"
+        );
+        assert!(
+            desc.contains("opens a NEW turn"),
+            "自动回来这件事要写明（前端 jobWake 会为已收尾的回合开新一轮）"
+        );
+        assert!(
+            desc.contains("finish on their own") && desc.contains("capped per user message"),
+            "两条边界（用户掐掉的作业不重开轮、自动开轮有额度）都要写出来"
+        );
+    }
 
     /// 造一条作业记录（只给列表合并测试用，字段值不影响排序语义）。
     fn job(job_id: &str, started_at_millis: u128) -> JobInfo {
