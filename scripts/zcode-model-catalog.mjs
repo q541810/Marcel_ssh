@@ -236,10 +236,23 @@ export function buildCatalog(upstream, source = {}) {
   const catalog = {
     schemaVersion: 1,
     source: { revision: upstream.revision, ...source },
-    recommendations: [...general, ...exact.values()],
+    // modelRules 与 modelApiRules 常有同一模式、同值的重复；保留先出现的即可。
+    recommendations: dedupe([...general, ...exact.values()]),
   };
   validateCatalog(catalog);
   return catalog;
+}
+
+/** 同一 modelMatch 只留第一条；值不同则保留两条（顺序语义交给运行时叠加）。 */
+function dedupe(items) {
+  const seen = new Map();
+  for (const item of items) {
+    const key = JSON.stringify(item);
+    const same = seen.get(item.modelMatch);
+    if (!same) seen.set(item.modelMatch, [item]);
+    else if (!same.some((x) => JSON.stringify(x) === key)) same.push(item);
+  }
+  return [...seen.values()].flat();
 }
 
 export function validateCatalog(catalog) {
