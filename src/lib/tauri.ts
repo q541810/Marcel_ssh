@@ -280,6 +280,23 @@ export async function portForwardList(
   return invoke<PortForwardInfo[]>("port_forward_list", { sessionId });
 }
 
+/** 记住一条转发的备注 / 置顶（跟着保存的连接走）；空备注且不置顶 = 删除这条记录。 */
+export async function portForwardNoteSet(
+  connectionId: string,
+  remoteHost: string,
+  remotePort: number,
+  note: string,
+  pinned: boolean,
+): Promise<void> {
+  return invoke("port_forward_note_set", {
+    connectionId,
+    remoteHost,
+    remotePort,
+    note,
+    pinned,
+  });
+}
+
 /**
  * Terminate a process inside a user-triggered panel action.
  *

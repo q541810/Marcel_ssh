@@ -75,7 +75,7 @@ export function validateConnectionForm(
 
 /** 组装 SavedConnection 时从现有连接继承的字段（编辑模式才有）。 */
 export interface ConnectionFormDraft {
-  existing?: Pick<SavedConnection, 'id' | 'lastConnected' | 'host' | 'remotePlatform'>;
+  existing?: Pick<SavedConnection, 'id' | 'lastConnected' | 'host' | 'remotePlatform' | 'portForwards'>;
   name: string;
   host: string;
   port: number;
@@ -122,6 +122,8 @@ export function buildSavedConnection(draft: ConnectionFormDraft): SavedConnectio
     group: draft.group.trim() || undefined,
     lastConnected: draft.existing?.lastConnected,
     remotePlatform: keepsSameTarget ? draft.existing?.remotePlatform : undefined,
+    // 表单不改备注 / 置顶：原样带回去，否则编辑一次连接就把它们抹了。
+    portForwards: draft.existing?.portForwards,
     useJump: draft.useJump,
     jumpHost: draft.useJump ? draft.jumpHost.trim() : undefined,
     jumpPort: draft.useJump ? draft.jumpPort : undefined,

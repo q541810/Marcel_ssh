@@ -591,6 +591,7 @@ fn conn(id: &str, name: &str, host: &str, user: &str) -> SavedConnection {
         jump_key_path: None,
         jump_key_id: None,
         remote_platform: None,
+        port_forwards: Vec::new(),
     }
 }
 

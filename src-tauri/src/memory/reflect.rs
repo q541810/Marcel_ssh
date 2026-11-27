@@ -1097,6 +1097,7 @@ mod tests {
             jump_key_path: None,
             jump_key_id: None,
             remote_platform: None,
+            port_forwards: Vec::new(),
         };
         let conns = vec![mk("a", "web"), mk("b", "db"), mk("c", "db")];
         let cur = from_connections(&conns, Some("a"));

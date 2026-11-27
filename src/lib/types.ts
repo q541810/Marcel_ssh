@@ -256,6 +256,21 @@ export interface SavedConnection {
   jumpKeyId?: string;
   /** 首次成功连接后自动探测到的远端平台；旧数据没有这个字段。 */
   remotePlatform?: RemotePlatform;
+  /** 端口转发里被备注 / 置顶过的目标（跟连接一起同步）；没有记录 = 不记住。 */
+  portForwards?: PortForwardNote[];
+}
+
+/**
+ * 端口转发的一条「记住」记录：按目标地址挂在这台已保存的服务器上。
+ * 备注 / 置顶跨会话、跨设备都在；转发本身仍然只活在会话内。
+ */
+export interface PortForwardNote {
+  /** `<host>|<port>`，同步按 id 归并时使用，界面不必依赖它的格式。 */
+  id: string;
+  host: string;
+  port: number;
+  note: string;
+  pinned: boolean;
 }
 
 /**

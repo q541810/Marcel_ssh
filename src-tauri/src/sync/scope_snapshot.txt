@@ -20,6 +20,12 @@ connections	connections / * / keyPath	local
 connections	connections / * / lastConnected	local
 connections	connections / * / name	shared
 connections	connections / * / port	shared
+connections	connections / * / portForwards / (顺序)	shared
+connections	connections / * / portForwards / * / host	shared
+connections	connections / * / portForwards / * / id	shared
+connections	connections / * / portForwards / * / note	shared
+connections	connections / * / portForwards / * / pinned	shared
+connections	connections / * / portForwards / * / port	shared
 connections	connections / * / remotePlatform	shared
 connections	connections / * / useJump	shared
 connections	connections / * / username	shared

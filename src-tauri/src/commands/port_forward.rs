@@ -46,3 +46,39 @@ pub async fn port_forward_list(
 ) -> Result<Vec<ForwardInfo>, AppError> {
     Ok(forwards.list(&state.ssh_manager, &session_id).await)
 }
+
+/// 记住一条转发的备注 / 置顶。跟着**保存的连接**走（落 `connections.json` 并参与同步），
+/// 跨会话、跨设备都在；「没备注也没置顶」等于删掉这条记录。
+#[tauri::command]
+pub async fn port_forward_note_set(
+    state: State<'_, AppState>,
+    connection_id: String,
+    remote_host: String,
+    remote_port: u16,
+    note: String,
+    pinned: bool,
+) -> Result<(), AppError> {
+    let host = remote_host.trim();
+    if host.is_empty() {
+        return Err(AppError::Ssh("目标地址不能为空".into()));
+    }
+    if remote_port == 0 {
+        return Err(AppError::Ssh("目标端口不能为 0".into()));
+    }
+    let found = state
+        .connection_store
+        .mutate(|store| {
+            Ok(store.set_port_forward_note(
+                &connection_id,
+                host,
+                remote_port,
+                &note,
+                pinned,
+            ))
+        })
+        .await?;
+    if !found {
+        return Err(AppError::Config(format!("未找到连接: {connection_id}")));
+    }
+    Ok(())
+}

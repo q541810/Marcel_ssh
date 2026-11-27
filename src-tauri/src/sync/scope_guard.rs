@@ -22,7 +22,7 @@ use serde_json::Value;
 use super::core::flatten::flatten_with;
 use super::core::{IdMapRegistry, Platform, Scope, ScopeRules, Seg};
 use super::scopes;
-use crate::config::connections::{ConnectionStore, SavedConnection};
+use crate::config::connections::{ConnectionStore, PortForwardNote, SavedConnection};
 use crate::config::quick_commands::{QuickCommandInput, QuickCommandScope, QuickCommandStore};
 use crate::config::settings::AppSettings;
 use crate::data::DataSourceId;
@@ -155,6 +155,13 @@ fn connections_sample() -> Value {
         jump_key_path: Some("/home/u/.ssh/jump".into()),
         jump_key_id: Some("key-2".into()),
         remote_platform: None,
+        port_forwards: vec![PortForwardNote {
+            id: "localhost|3000".into(),
+            host: "localhost".into(),
+            port: 3000,
+            note: "前端".into(),
+            pinned: true,
+        }],
     });
     serde_json::to_value(&store).expect("连接可序列化")
 }

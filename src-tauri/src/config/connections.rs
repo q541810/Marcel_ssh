@@ -50,6 +50,28 @@ pub struct SavedConnection {
     /// 首次成功连接后自动探测到的远端平台；旧数据没有这个字段。
     #[serde(default)]
     pub remote_platform: Option<RemotePlatform>,
+    /// 端口转发里被用户备注 / 置顶过的目标。跟着连接落盘与同步；
+    /// 没被备注也没置顶的目标不记录，转发本身仍然只活在会话内。
+    #[serde(default)]
+    pub port_forwards: Vec<PortForwardNote>,
+}
+
+/// 端口转发的一条「记住」记录：按目标地址挂在这台已保存的服务器上。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortForwardNote {
+    /// 数组元素 id（同步按 id 映射，同一连接内唯一）：`host|port`。
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+fn port_forward_note_id(host: &str, port: u16) -> String {
+    format!("{host}|{port}")
 }
 
 /// Store for managing saved SSH connections.
@@ -146,6 +168,44 @@ impl ConnectionStore {
             c.last_connected = Some(Utc::now());
         }
     }
+
+    /// 写一条端口转发备注。`note` 去掉首尾空白；「没备注也没置顶」= 删掉这条记录。
+    ///
+    /// 返回连接是否存在；不存在的 id 什么都不改。
+    pub fn set_port_forward_note(
+        &mut self,
+        connection_id: &str,
+        host: &str,
+        port: u16,
+        note: &str,
+        pinned: bool,
+    ) -> bool {
+        let Some(connection) = self.connections.iter_mut().find(|c| c.id == connection_id) else {
+            return false;
+        };
+        let id = port_forward_note_id(host, port);
+        let note = note.trim();
+        if note.is_empty() && !pinned {
+            connection.port_forwards.retain(|n| n.id != id);
+            return true;
+        }
+        match connection.port_forwards.iter_mut().find(|n| n.id == id) {
+            Some(existing) => {
+                existing.host = host.to_string();
+                existing.port = port;
+                existing.note = note.to_string();
+                existing.pinned = pinned;
+            }
+            None => connection.port_forwards.push(PortForwardNote {
+                id,
+                host: host.to_string(),
+                port,
+                note: note.to_string(),
+                pinned,
+            }),
+        }
+        true
+    }
 }
 
 impl JsonPersistable for ConnectionStore {
@@ -182,6 +242,7 @@ mod tests {
             jump_key_path: None,
             jump_key_id: None,
             remote_platform: None,
+            port_forwards: Vec::new(),
         }
     }
 
@@ -213,6 +274,49 @@ mod tests {
         assert_eq!(appended, 0);
         assert_eq!(ignored, 0);
         assert_eq!(store.get_by_id("c").unwrap().group.as_deref(), Some("test"));
+    }
+
+    /// 备注 / 置顶：同一条记录上更新；只保留标题也想记住的条目；都清空就删掉。
+    #[test]
+    fn port_forward_note_upserts_and_clears() {
+        let mut store = store_of(vec![conn("a", None)]);
+        assert!(store.set_port_forward_note("a", "localhost", 3000, "  前端  ", false));
+        let note = &store.get_by_id("a").unwrap().port_forwards[0];
+        assert_eq!(note.id, "localhost|3000");
+        assert_eq!(note.note, "前端");
+
+        assert!(store.set_port_forward_note("a", "localhost", 3000, "前端", true));
+        assert_eq!(store.get_by_id("a").unwrap().port_forwards.len(), 1);
+        assert!(store.get_by_id("a").unwrap().port_forwards[0].pinned);
+
+        // 只把备注清空、仍然置顶：记录留着
+        assert!(store.set_port_forward_note("a", "localhost", 3000, "", true));
+        assert_eq!(store.get_by_id("a").unwrap().port_forwards.len(), 1);
+
+        // 备注和置顶都没了：删除
+        assert!(store.set_port_forward_note("a", "localhost", 3000, "", false));
+        assert!(store.get_by_id("a").unwrap().port_forwards.is_empty());
+
+        // 未知连接：不动，返回 false
+        assert!(!store.set_port_forward_note("zzz", "localhost", 3000, "x", true));
+    }
+
+    /// 字段名是 `portForwards`（camelCase），老数据没有这个字段也能读。
+    #[test]
+    fn port_forwards_field_is_camel_case_and_optional() {
+        let mut store = store_of(vec![conn("a", None)]);
+        store.set_port_forward_note("a", "localhost", 3000, "前端", true);
+        let mut value = serde_json::to_value(&store).unwrap();
+        assert_eq!(value["connections"][0]["portForwards"][0]["host"], "localhost");
+
+        value
+            .pointer_mut("/connections/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("portForwards");
+        let legacy: ConnectionStore = serde_json::from_value(value).unwrap();
+        assert!(legacy.get_by_id("a").unwrap().port_forwards.is_empty());
     }
 
     #[test]

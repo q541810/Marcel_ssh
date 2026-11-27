@@ -1206,6 +1206,7 @@ pub fn run() {
             commands::port_forward::port_forward_start,
             commands::port_forward::port_forward_stop,
             commands::port_forward::port_forward_list,
+            commands::port_forward::port_forward_note_set,
             commands::ssh::ssh_connect_with_saved_password,
             commands::ssh::ssh_connect_with_saved_passphrase,
             commands::ssh::ssh_reconnect,

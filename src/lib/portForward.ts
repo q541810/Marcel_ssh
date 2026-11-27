@@ -3,6 +3,7 @@
  * 把服务器监听表整理成“可转发的服务”，解析手动输入，拼浏览器地址。
  */
 import type { RemoteSocketInfo } from './remoteSystem';
+import type { PortForwardNote } from './types';
 import type { PortForwardInfo } from './tauri';
 
 export interface ListeningService {
@@ -54,15 +55,6 @@ export function parseForwardTarget(input: string): ParsedTarget | null {
   return host ? { host, port } : null;
 }
 
-/** 这条目标是否已转发。 */
-export function findForward(
-  forwards: PortForwardInfo[],
-  host: string,
-  port: number,
-): PortForwardInfo | undefined {
-  return forwards.find((f) => f.remoteHost === host && f.remotePort === port);
-}
-
 const HTTPS_PORTS = new Set([443, 8443]);
 
 /** 浏览器打开地址：常见 HTTPS 端口走 https，其余 http。 */
@@ -76,4 +68,96 @@ export type ForwardHealth = 'ok' | 'offline' | 'error';
 export function forwardHealth(forward: PortForwardInfo): ForwardHealth {
   if (!forward.sessionOnline) return 'offline';
   return forward.lastError ? 'error' : 'ok';
+}
+
+/** 一行转发/目标的展示数据：活转发、记住的备注/置顶、扫描到的服务按目标地址合并成同一份列表。 */
+export interface ForwardRow {
+  /** 行身份 = 目标地址 `host|port`，与后端备注记录的键一致。 */
+  key: string;
+  remoteHost: string;
+  remotePort: number;
+  /** 当前正在转发；没有 = 未转发的目标（服务在跑，或只是被记住）。 */
+  forward?: PortForwardInfo;
+  note: string;
+  pinned: boolean;
+  /**
+   * 服务器扫描结果里是否有这个目标。**只对 `localhost` 目标有意义**：
+   * 指向其它机器的目标不在本机扫描范围内，不能据此外推它不存在。
+   */
+  listeningOnServer: boolean;
+  /** 同目标在服务器上扫描到的进程名；没扫到为空。 */
+  process: string;
+}
+
+function rowKey(host: string, port: number) {
+  return `${host}|${port}`;
+}
+
+/** 指向服务器本机的目标（`127.0.0.1` 与 `localhost` 对 sshd 是一回事）。 */
+export function isLoopbackTarget(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
+/**
+ * 合并三份数据成**一张列表**：活着的转发、跟着连接记住的备注/置顶、服务器扫描到的服务。
+ * - 同一个目标只出一行（`localhost` 与 `127.0.0.1` 视为同一目标）；
+ * - 备注**不改变行的位置或归属**：只做行内说明，记住但没转发的目标按端口排序；
+ * - 排序只由「置顶 → 正在转发 → 端口号」决定，所以只有点图钉才会把行提到最前。
+ */
+export function mergeForwardRows(
+  forwards: readonly PortForwardInfo[],
+  notes: readonly PortForwardNote[],
+  services: readonly ListeningService[],
+): ForwardRow[] {
+  const sameHost = (a: string, b: string) =>
+    a === b || (isLoopbackTarget(a) && isLoopbackTarget(b));
+  const serviceFor = (host: string, port: number) =>
+    services.find((s) => s.port === port && sameHost(host, s.targetHost));
+
+  const rows = new Map<string, ForwardRow>();
+  const blankRow = (host: string, port: number): ForwardRow => ({
+    key: rowKey(host, port),
+    remoteHost: host,
+    remotePort: port,
+    note: '',
+    pinned: false,
+    listeningOnServer: serviceFor(host, port) !== undefined,
+    process: serviceFor(host, port)?.process ?? '',
+  });
+
+  for (const forward of forwards) {
+    const row = blankRow(forward.remoteHost, forward.remotePort);
+    rows.set(row.key, { ...row, forward });
+  }
+
+  for (const note of notes) {
+    if (!note.note.trim() && !note.pinned) continue;
+    const key = rowKey(note.host, note.port);
+    const existing = rows.get(key);
+    if (existing) {
+      existing.note = note.note;
+      existing.pinned = note.pinned;
+    } else {
+      rows.set(key, { ...blankRow(note.host, note.port), note: note.note, pinned: note.pinned });
+    }
+  }
+
+  for (const service of services) {
+    const covered = [...rows.values()].some(
+      (row) => row.remotePort === service.port && sameHost(row.remoteHost, service.targetHost),
+    );
+    if (covered) continue;
+    const row = blankRow(service.targetHost, service.port);
+    row.process = service.process;
+    rows.set(row.key, row);
+  }
+
+  return [...rows.values()].sort(
+    (a, b) =>
+      Number(b.pinned) - Number(a.pinned) ||
+      Number(Boolean(b.forward)) - Number(Boolean(a.forward)) ||
+      a.remotePort - b.remotePort ||
+      a.remoteHost.localeCompare(b.remoteHost),
+  );
 }
