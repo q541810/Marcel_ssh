@@ -10,7 +10,7 @@ vi.mock('./AgentMessageList', () => ({
 }));
 let root: Root;
 let host: HTMLDivElement;
-let resize: ResizeObserverCallback;
+let observers: { callback: ResizeObserverCallback; targets: Element[] }[];
 let frames: Map<number, FrameRequestCallback>;
 const justSent = createRef<boolean>() as { current: boolean };
 const props = {
@@ -31,9 +31,14 @@ beforeEach(() => {
   let id = 0;
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++id, callback); return id; });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+  observers = [];
   vi.stubGlobal('ResizeObserver', class {
-    constructor(callback: ResizeObserverCallback) { resize = callback; }
-    observe() {}
+    private entry: { callback: ResizeObserverCallback; targets: Element[] };
+    constructor(callback: ResizeObserverCallback) {
+      this.entry = { callback, targets: [] };
+      observers.push(this.entry);
+    }
+    observe(target: Element) { this.entry.targets.push(target); }
     disconnect() {}
   });
   useConversationStore.setState(useConversationStore.getInitialState(), true);
@@ -63,7 +68,11 @@ async function userScroll(node: HTMLElement, top: number) {
 }
 async function resizeContent() {
   await act(async () => {
-    resize([], {} as ResizeObserver);
+    // 只驱动观察滚动容器的那个 ResizeObserver：玛瑟尔活动区等子组件也各建一个，
+    // 拿「最后一个创建的」会被它们抢走，消息区跟随就测不到了。
+    const node = host.querySelector('.overflow-y-auto');
+    const owner = observers.find((item) => node && item.targets.includes(node));
+    owner?.callback([], {} as ResizeObserver);
     const callbacks = [...frames.values()];
     frames.clear();
     callbacks.forEach((cb) => cb(0));
