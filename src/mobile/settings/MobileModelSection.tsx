@@ -4,7 +4,7 @@ import { RECOMMENDED_FIELD_LABELS, type RecommendedField } from '@/lib/modelCata
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelInfo, NetPolicy, SubagentModelChoice } from '@/lib/types';
-import { llmListModels, getLlmChannelHeaders, saveLlmChannelHeaders } from '@/lib/tauri';
+import { llmListModels, getLlmChannelHeaders, saveLlmChannelHeaders, deleteLlmChannelApiKey } from '@/lib/tauri';
 import HeaderPairEditor from '@/components/settings/HeaderPairEditor';
 import { type HeaderPair, headersToPairs, pairsToHeaders } from '@/lib/channelHeaders';
 import { getErrorMessage } from '@/lib/errors';
@@ -451,6 +451,8 @@ function MobileChannelEditorSheet({
   const [baseUrl, setBaseUrl] = useState(channel?.baseUrl ?? '');
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
   const [apiKeyInput, setApiKeyInput] = useState('');
+  // 用户点了「清除」：保存渠道时才真正删掉已存密钥，取消不生效。
+  const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 自定义请求头草稿（存密钥链，不在 registry 里，挂载时异步读一次）
@@ -483,7 +485,7 @@ function MobileChannelEditorSheet({
 
   const models = localModels;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setError('渠道名称不能为空');
@@ -509,7 +511,25 @@ function MobileChannelEditorSheet({
       baseUrl: trimmedUrl,
       enabled,
     };
-    if (apiKeyInput.trim()) next.apiKey = apiKeyInput.trim();
+    const newKey = apiKeyInput.trim();
+    if (newKey) {
+      next.apiKey = newKey;
+      useSettingsStore.setState((s) => ({
+        channelKeyStatus: { ...s.channelKeyStatus, [next.id]: true },
+      }));
+    } else if (clearKey && hasKey) {
+      // 显式清除：先删密钥链（后端同时清内存），失败就中止保存，避免「以为删了」。
+      try {
+        await deleteLlmChannelApiKey(next.id);
+      } catch (err) {
+        setError(`删除已保存的密钥失败：${getErrorMessage(err)}`);
+        return;
+      }
+      next.apiKey = '';
+      useSettingsStore.setState((s) => ({
+        channelKeyStatus: { ...s.channelKeyStatus, [next.id]: false },
+      }));
+    }
     // 自定义请求头存密钥链（不进 registry）；失败只记日志，不阻断渠道保存。
     saveLlmChannelHeaders(next.id, pairsToHeaders(headerPairs)).catch((err) => {
       console.error('保存自定义请求头失败:', getErrorMessage(err));
@@ -582,16 +602,39 @@ function MobileChannelEditorSheet({
           <label className="mb-1 block text-meta text-fg-secondary">API Key</label>
           <input
             type="password"
-            value={apiKeyInput || (hasKey && !apiKeyInput ? 'sk-******' : '')}
-            onChange={(e) =>
-              setApiKeyInput(e.target.value === 'sk-******' ? '' : e.target.value)
-            }
-            placeholder="输入 API Key（加密保存在本设备）"
+            value={apiKeyInput}
+            onChange={(e) => {
+              setApiKeyInput(e.target.value);
+              setClearKey(false);
+            }}
+            placeholder={hasKey ? '已保存密钥，输入新 Key 可覆盖' : '输入 API Key（加密保存在本设备）'}
             autoComplete="off"
             className={inputClass}
           />
           {hasKey && !apiKeyInput && (
-            <p className="mt-1 text-caption text-fg-tertiary">已保存密钥（掩码显示），留空不修改</p>
+            clearKey ? (
+              <p className="mt-1 flex items-center gap-2 text-caption text-amber-400">
+                保存后将删除已保存的密钥。
+                <button
+                  type="button"
+                  onClick={() => setClearKey(false)}
+                  className="rounded px-1.5 py-0.5 text-caption text-fg-secondary active:bg-state-soft hit-area"
+                >
+                  撤销
+                </button>
+              </p>
+            ) : (
+              <p className="mt-1 flex items-center gap-2 text-caption text-fg-tertiary">
+                已保存密钥（加密保存在本设备），留空不改动。
+                <button
+                  type="button"
+                  onClick={() => setClearKey(true)}
+                  className="rounded px-1.5 py-0.5 text-caption text-red-400 active:bg-state-soft hit-area"
+                >
+                  清除
+                </button>
+              </p>
+            )
           )}
         </div>
 

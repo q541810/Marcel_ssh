@@ -116,9 +116,29 @@ pub async fn config_save_llm_channel_api_key(
 // （每渠道 has_key 布尔）判断是否有 API Key，避免将原始 API Key 返回给 WebView。
 
 /// Remove a per-channel LLM API key from the system keychain.
+///
+/// 同时清掉内存里的旧 key：只删密钥链的话，本次运行期间渠道仍会拿内存里的
+/// key 继续请求，用户会以为「删了但没用」。
 #[tauri::command]
-pub async fn config_delete_llm_channel_api_key(channel_id: String) -> Result<(), AppError> {
-    keychain::delete(&SecretSlot::LlmChannel(channel_id))?;
+pub async fn config_delete_llm_channel_api_key(
+    state: tauri::State<'_, crate::AppState>,
+    channel_id: String,
+) -> Result<(), AppError> {
+    keychain::delete(&SecretSlot::LlmChannel(channel_id.clone()))?;
+    state
+        .settings
+        .mutate(move |settings| {
+            if let Some(channel) = settings
+                .llm_registry
+                .channels
+                .iter_mut()
+                .find(|c| c.id == channel_id)
+            {
+                channel.api_key.clear();
+            }
+            Ok(())
+        })
+        .await?;
     Ok(())
 }
 

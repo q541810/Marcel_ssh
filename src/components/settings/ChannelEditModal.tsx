@@ -6,7 +6,8 @@ import ModelListModal from './ModelListModal';
 import ModelEditModal, { type ModelDraft } from './ModelEditModal';
 import HeaderPairEditor from './HeaderPairEditor';
 import { type HeaderPair, headersToPairs, pairsToHeaders } from '@/lib/channelHeaders';
-import { getLlmChannelHeaders, saveLlmChannelHeaders } from '@/lib/tauri';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { getLlmChannelHeaders, saveLlmChannelHeaders, deleteLlmChannelApiKey } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import type { ChannelConfig, LlmRegistry, ModelEntry } from '@/lib/types';
 import {
@@ -60,6 +61,8 @@ export default function ChannelEditModal({
   const [localModels, setLocalModels] = useState<ModelEntry[]>([]);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [showKey, setShowKey] = useState(false);
+  // 用户点了「清除」：保存渠道时才真正删掉已存密钥，取消不生效。
+  const [clearKey, setClearKey] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // 自定义请求头草稿（存密钥链，不在 registry 里，所以要单独读一次）
@@ -91,6 +94,8 @@ export default function ChannelEditModal({
       setLocalModels(channel ? modelsOfChannel(registry, channel.id) : []);
       setDraftChannelId(channel?.id ?? crypto.randomUUID());
       setApiKeyInput('');
+      setShowKey(false);
+      setClearKey(false);
       setLocalError(null);
       setConfirmDelete(false);
       setModelEditor({ open: false });
@@ -117,7 +122,7 @@ export default function ChannelEditModal({
 
   const models = localModels;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!draft) return;
     const name = draft.name.trim();
     if (!name) {
@@ -144,8 +149,24 @@ export default function ChannelEditModal({
       baseUrl,
       enabled: draft.enabled,
     };
-    if (apiKeyInput.trim()) {
-      next.apiKey = apiKeyInput.trim();
+    const newKey = apiKeyInput.trim();
+    if (newKey) {
+      next.apiKey = newKey;
+      useSettingsStore.setState((s) => ({
+        channelKeyStatus: { ...s.channelKeyStatus, [next.id]: true },
+      }));
+    } else if (clearKey && channelHasKey) {
+      // 显式清除：先删密钥链（后端同时清内存），失败就中止保存，避免「以为删了」。
+      try {
+        await deleteLlmChannelApiKey(next.id);
+      } catch (err) {
+        setLocalError(`删除已保存的密钥失败：${getErrorMessage(err)}`);
+        return;
+      }
+      next.apiKey = '';
+      useSettingsStore.setState((s) => ({
+        channelKeyStatus: { ...s.channelKeyStatus, [next.id]: false },
+      }));
     }
     // 自定义请求头存密钥链（不进 registry / settings.json）。
     // 失败也只记录不阻断渠道保存——头是可选的，不能因此让用户改不了渠道。
@@ -246,11 +267,16 @@ export default function ChannelEditModal({
             <div className="flex gap-2">
               <input
                 type={showKey ? 'text' : 'password'}
-                value={apiKeyInput || (channelHasKey && !apiKeyInput ? 'sk-******' : '')}
-                onChange={(e) =>
-                  setApiKeyInput(e.target.value === 'sk-******' ? '' : e.target.value)
+                value={apiKeyInput}
+                onChange={(e) => {
+                  setApiKeyInput(e.target.value);
+                  setClearKey(false);
+                }}
+                placeholder={
+                  channelHasKey
+                    ? '已保存密钥，输入新 Key 可覆盖'
+                    : '输入 API Key（加密保存在本设备）'
                 }
-                placeholder="输入 API Key（加密保存在本设备）"
                 autoComplete="off"
                 className={`${inputClass} flex-1`}
               />
@@ -263,9 +289,29 @@ export default function ChannelEditModal({
               </button>
             </div>
             {channelHasKey && !apiKeyInput && (
-              <p className="text-caption text-fg-tertiary mt-1">
-                已保存密钥（掩码显示）。留空不修改，清空需输入新值覆盖。
-              </p>
+              clearKey ? (
+                <p className="mt-1 flex items-center gap-2 text-caption text-amber-400">
+                  保存后将删除已保存的密钥。
+                  <button
+                    type="button"
+                    onClick={() => setClearKey(false)}
+                    className="rounded px-1.5 py-0.5 text-caption text-fg-secondary hover:bg-state-soft hover:text-fg transition-colors"
+                  >
+                    撤销
+                  </button>
+                </p>
+              ) : (
+                <p className="mt-1 flex items-center gap-2 text-caption text-fg-tertiary">
+                  已保存密钥（加密保存在本设备），留空不改动。
+                  <button
+                    type="button"
+                    onClick={() => setClearKey(true)}
+                    className="rounded px-1.5 py-0.5 text-caption text-red-400 hover:bg-state-soft transition-colors"
+                  >
+                    清除
+                  </button>
+                </p>
+              )
             )}
           </div>
           <div className="flex items-center justify-between">
