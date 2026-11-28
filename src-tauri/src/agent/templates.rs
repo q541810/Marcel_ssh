@@ -53,7 +53,7 @@
 //!
 //! # 改 X 要动哪里
 //!
-//! - 运行模式 / 需求澄清 / ask_user（干活途中弹窗，卡片须自足）与 suggest_next（做完后的不阻塞小建议卡片，Plan 与 Agent/Auto 都有；选项可带 mode，Plan 规划完靠它让用户一键切到执行模式）/ 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析，文件交付只靠它）/ 风险分级 / 上下文管理 / 收尾
+//! - 运行模式（「当前处于哪档」由 `render_agent_prompt` 的 `mode` 参数渲染，Plan 留空、由规划模式段声明）/ 需求澄清 / ask_user（干活途中弹窗，卡片须自足）与 suggest_next（做完后的不阻塞小建议卡片，Plan 与 Agent/Auto 都有；选项可带 mode，Plan 规划完靠它让用户一键切到执行模式）/ 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析，文件交付只靠它）/ 风险分级 / 上下文管理 / 收尾
 //!   → `templates/agent/沟通.hbs`（仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
 //! - 人设、规则优先级、语言与风格、主动性、做事方式、命令规范、文档同步、临时文件清理、
 //!   后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`（各段用无编号标题，
@@ -107,6 +107,7 @@
 use handlebars::Handlebars;
 use serde_json::json;
 
+use crate::agent::task::AgentMode;
 use crate::agent::tools::{PromptSection, ToolAudience};
 use crate::error::AppError;
 
@@ -262,8 +263,13 @@ impl TemplateManager {
     }
 
     /// Render the full agent system prompt by composing applicable template
-    /// fragments in order. Conditions (`has_skills`, `plan_mode`, …) are
-    /// evaluated by the caller — only applicable fragments are included.
+    /// fragments in order. Conditions (`has_skills`, …) are evaluated by the
+    /// caller — only applicable fragments are included.
+    ///
+    /// `mode` 是本次任务的运行模式：Plan 决定是否追加「规划模式」段；Agent/Auto
+    /// 则在「运行模式」段里写明当前处于哪一档（两档工具集相同，提示词里不写
+    /// 模型就分不出来，会把 AUTO 下的普通执行误当成需要先切到 Agent）。
+    /// Plan 不写这一句——「规划模式」段已经声明了。
     ///
     /// `tool_sections` 是「已注册工具声明出来的段需求」（见
     /// `tools::prompt_section_of`）。段落顺序就是提示词结构，仍是本函数显式写出
@@ -276,16 +282,24 @@ impl TemplateManager {
         vars: &AgentPromptVars,
         has_skills: bool,
         tool_sections: &std::collections::BTreeSet<PromptSection>,
-        plan_mode: bool,
+        mode: &AgentMode,
         audience: ToolAudience,
         extra_sections: &[String],
     ) -> Result<String, AppError> {
         let reg = Self::agent_registry();
         let plugin_joined = vars.plugin_sections.join("\n\n");
+        let plan_mode = *mode == AgentMode::Plan;
         let ctx = json!({
             "session_id": &vars.session_id,
             "user_prompt": &vars.user_prompt,
             "plugin_sections": plugin_joined,
+            // 「运行模式」段的当前档声明；Plan 留空（规划模式段自己声明）。
+            "current_mode": match mode {
+                AgentMode::Plan => "",
+                AgentMode::Agent => "Agent",
+                AgentMode::Auto => "AUTO",
+            },
+            "is_auto": *mode == AgentMode::Auto,
             // 仅当 web_search 真的注册、且走的是浏览器/裸抓（非 API）时才提醒质量有限。
             "web_search_noisy": tool_sections.contains(&PromptSection::WebSearch)
                 && tool_sections.contains(&PromptSection::WebSearchNoisy),
@@ -441,7 +455,17 @@ mod tests {
         sections: &[PromptSection],
         plan: bool,
     ) -> String {
-        build_for(vars, skills, sections, plan, ToolAudience::Main)
+        build_mode(
+            vars,
+            skills,
+            sections,
+            if plan {
+                AgentMode::Plan
+            } else {
+                AgentMode::Agent
+            },
+            ToolAudience::Main,
+        )
     }
 
     /// 同 `build`，但指定这份提示词给谁用（主 agent / 子 agent）。
@@ -452,10 +476,30 @@ mod tests {
         plan: bool,
         audience: ToolAudience,
     ) -> String {
+        build_mode(
+            vars,
+            skills,
+            sections,
+            if plan {
+                AgentMode::Plan
+            } else {
+                AgentMode::Agent
+            },
+            audience,
+        )
+    }
+
+    fn build_mode(
+        vars: &AgentPromptVars,
+        skills: bool,
+        sections: &[PromptSection],
+        mode: AgentMode,
+        audience: ToolAudience,
+    ) -> String {
         let tool_sections: std::collections::BTreeSet<PromptSection> =
             sections.iter().copied().collect();
         TemplateManager
-            .render_agent_prompt(vars, skills, &tool_sections, plan, audience, &[])
+            .render_agent_prompt(vars, skills, &tool_sections, &mode, audience, &[])
             .unwrap()
     }
 
@@ -525,6 +569,49 @@ mod tests {
         assert!(!prompt.contains("Plan 模式"));
     }
 
+    /// Agent 与 AUTO 的工具集相同，提示词里不声明当前档，模型就分不出来——
+    /// 实测 AUTO 下它会把普通执行当成「需要先切到 Agent 才有人审批」，在
+    /// suggest_next 里给每个选项都挂 mode=agent。两档各自声明，并明确不许
+    /// 建议切到已经在的模式。Plan 不重复声明（「规划模式」段已有且是唯一来源）。
+    #[test]
+    fn exec_prompts_state_current_mode_and_forbid_switching_to_it() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+            memory_section: String::new(),
+        };
+
+        let auto = build_mode(&vars, false, &[], AgentMode::Auto, ToolAudience::Main);
+        assert!(auto.contains("当前处于 **AUTO 模式**"));
+        assert!(auto.contains("不要建议切到你已经在的模式"));
+        assert!(auto.contains("不要为了「让操作有人审批」建议切到 Agent"));
+
+        let agent = build_mode(&vars, false, &[], AgentMode::Agent, ToolAudience::Main);
+        assert!(agent.contains("当前处于 **Agent 模式**"));
+        assert!(agent.contains("不要建议切到你已经在的模式"));
+        assert!(!agent.contains("不要为了「让操作有人审批」建议切到 Agent"));
+
+        let plan = build_mode(&vars, false, &[], AgentMode::Plan, ToolAudience::Main);
+        assert_eq!(
+            plan.matches("当前处于").count(),
+            1,
+            "Plan 的当前档只由「规划模式」段声明，运行模式段不得重复"
+        );
+
+        // 模板里的条件块不能留下空行或未渲染的标签（列表要一行一条）。
+        let bullets = |p: &str| -> usize {
+            let start = p.find("## 运行模式").unwrap();
+            let rest = &p[start..];
+            let end = rest[3..].find("\n## ").map(|i| i + 3).unwrap_or(rest.len());
+            rest[..end].lines().filter(|l| l.starts_with("- ")).count()
+        };
+        assert_eq!(bullets(&auto), 3, "当前档（含 AUTO 专属句）+ Agent + AUTO");
+        assert_eq!(bullets(&agent), 3);
+        assert_eq!(bullets(&build(&vars, false, &[], true)), 2);
+        assert!(!auto.contains("{{"));
+    }
+
     #[test]
     fn prompt_includes_communication_sections() {
         let vars = AgentPromptVars {
@@ -545,7 +632,14 @@ mod tests {
         // 那些是「角色」的追加约束，插到它们中间会让约束被日常行为规则隔开。
         let extras = vec!["EXTRA_MARKER".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, &secs(&[]), false, ToolAudience::Main, &extras)
+            .render_agent_prompt(
+                &vars,
+                false,
+                &secs(&[]),
+                &AgentMode::Agent,
+                ToolAudience::Main,
+                &extras,
+            )
             .unwrap();
         assert!(prompt.find("EXTRA_MARKER").unwrap() < prompt.find("## 与用户沟通").unwrap());
     }
@@ -672,7 +766,7 @@ mod tests {
                     PromptSection::HttpFetch,
                     PromptSection::Subagent,
                 ]),
-                true,
+                &AgentMode::Plan,
                 ToolAudience::Main,
                 &extras,
             )
@@ -969,7 +1063,14 @@ mod tests {
         };
         let extras = vec!["EXTRA_MARKER_A".to_string(), "EXTRA_MARKER_B".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, &secs(&[]), false, ToolAudience::Main, &extras)
+            .render_agent_prompt(
+                &vars,
+                false,
+                &secs(&[]),
+                &AgentMode::Agent,
+                ToolAudience::Main,
+                &extras,
+            )
             .unwrap();
         assert!(prompt.contains("EXTRA_MARKER_A"));
         assert!(prompt.contains("EXTRA_MARKER_B"));

@@ -155,7 +155,7 @@ impl AgentTool for SuggestNextTool {
                             "mode": {
                                 "type": "string",
                                 "enum": SWITCH_MODES,
-                                "description": "可选。用户点这个选项的同时把运行模式切到它，选项右边会显示「→ Agent」之类的提示。只在这个选项的后续动作需要另一个模式时才写（比如 Plan 里规划完，「按计划执行」写 agent）；不写就保持当前模式"
+                                "description": "可选。用户点这个选项的同时把运行模式切到它，选项右边会显示「→ Agent」之类的提示。只在这个选项的后续动作需要另一个模式时才写（比如 Plan 里规划完，「按计划执行」写 agent）；不写就保持当前模式。不要写用户已经在的模式——点了也不会有任何切换"
                             }
                         },
                         "required": ["text"]
