@@ -52,7 +52,7 @@ describe('Android 新增模型自动填充', () => {
     await act(async () => [...document.body.querySelectorAll('button')].find((el) => el.textContent === 'kimi-k3')!.click());
     await act(async () => { vi.advanceTimersByTime(450); });
     const dialog = [...document.body.querySelectorAll('[role="dialog"]')].find((el) => el.textContent?.includes('API 模型名'))!;
-    const context = dialog.querySelector<HTMLInputElement>('input[type="number"]');
+    const context = dialog.querySelector<HTMLInputElement>('input[inputmode="numeric"]');
     expect(context?.value).toBe('1048576');
     await act(async () => [...dialog.querySelectorAll('button')].find((el) => el.textContent === '保存')!.click());
     // 模型先进入渠道草稿，保存渠道时才进入既有设置更新链路。

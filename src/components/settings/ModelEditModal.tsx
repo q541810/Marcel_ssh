@@ -10,6 +10,8 @@ import {
   validateExtraBodyJson,
   extraBodyToText,
   textToExtraBody,
+  contextWindowToText,
+  textToContextWindow,
   effortsToText,
   textToEfforts,
 } from '@/lib/llmParams';
@@ -58,7 +60,9 @@ export default function ModelEditModal({
   const [modelName, setModelName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [vision, setVision] = useState(false);
-  const [contextWindow, setContextWindow] = useState(0);
+  // 文本态而非数字态：清空时不能立刻变回 0，否则删不掉那个 0。
+  const [contextWindowText, setContextWindowText] = useState('');
+  const contextWindow = textToContextWindow(contextWindowText);
   const [extraBodyText, setExtraBodyText] = useState('');
   const [extraBodyError, setExtraBodyError] = useState<string | null>(null);
   const [effortsText, setEffortsText] = useState('');
@@ -78,7 +82,7 @@ export default function ModelEditModal({
     },
     onApply: ({ draft, filled }) => {
       setVision(draft.vision);
-      setContextWindow(draft.contextWindow);
+      setContextWindowText(contextWindowToText(draft.contextWindow));
       setEffortsText(effortsToText(draft.reasoningEfforts));
       setRecommendationFilled(filled);
       // 思考档位在「更多」里；不展开的话用户只看得到窗口/视觉，以为没填。
@@ -94,7 +98,7 @@ export default function ModelEditModal({
       setModelName(initial?.modelName ?? presetModelName ?? '');
       setDisplayName(initial?.displayName ?? '');
       setVision(initial?.vision ?? false);
-      setContextWindow(initial?.contextWindow ?? 0);
+      setContextWindowText(contextWindowToText(initial?.contextWindow));
       const body = extraBodyToText(initial?.extraBody);
       setExtraBodyText(body);
       const efforts = effortsToText(initial?.reasoningEfforts);
@@ -207,18 +211,19 @@ export default function ModelEditModal({
 
         <div>
           <label className="block text-meta text-fg-secondary mb-1">
-            模型上下文窗口 (tokens) <span className="text-fg-disabled">（0 = 跟随全局设置）</span>
+            模型上下文窗口 (tokens) <span className="text-fg-disabled">（留空 = 跟随全局设置）</span>
           </label>
           <input
-            type="number"
-            min={0}
-            step={1000}
-            value={contextWindow}
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={contextWindowText}
             onChange={(e) => {
               recommendation.markEdited('contextWindow');
-              setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)));
+              setContextWindowText(e.target.value.replace(/\D/g, ''));
             }}
-            placeholder="0 = 仅超限后压缩"
+            onBlur={() => setContextWindowText(contextWindowToText(contextWindow))}
+            placeholder="留空 = 仅超限后压缩"
             className={`${inputClass} w-full`}
           />
         </div>

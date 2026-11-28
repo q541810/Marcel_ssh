@@ -35,7 +35,7 @@ describe('新增模型自动填充', () => {
     await act(async () => root.render(<ModelEditModal open onClose={() => {}} onSave={(d) => saved.push(d)} presetModelName="kimi-k3" />));
     await act(async () => {});
     const name = fields().find((el) => el.value === 'kimi-k3')!;
-    const context = fields().find((el) => el.type === 'number')!;
+    const context = fields().find((el) => el.inputMode === 'numeric')!;
     expect(context.value).toBe('1048576');
     expect(document.body.textContent).toContain('已自动填充：');
     for (const label of ['上下文窗口', '视觉', '思考档位']) {
@@ -52,8 +52,8 @@ describe('新增模型自动填充', () => {
     await act(async () => {});
     const name = fields()[0];
     input(name, 'kimi-k3');
-    const context = fields().find((el) => el.type === 'number')!;
-    expect(context.value).toBe('0');
+    const context = fields().find((el) => el.inputMode === 'numeric')!;
+    expect(context.value).toBe('');
     await act(async () => { vi.advanceTimersByTime(1200); });
     expect(context.value).toBe('1048576');
     input(context, '123456');
@@ -71,7 +71,7 @@ describe('新增模型自动填充', () => {
     input(fields()[0], 'some-totally-unknown-model');
     await act(async () => { vi.advanceTimersByTime(1200); });
     expect(document.body.textContent).not.toContain('已自动填充');
-    expect(fields().find((el) => el.type === 'number')!.value).toBe('0');
+    expect(fields().find((el) => el.inputMode === 'numeric')!.value).toBe('');
   });
 
   it('填了思考档位时自动展开「更多」，让用户看得到', async () => {
@@ -81,6 +81,26 @@ describe('新增模型自动填充', () => {
     await act(async () => { vi.advanceTimersByTime(1200); });
     expect(document.body.textContent).toContain('思考强度档位');
     expect(document.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('low\nhigh\nmax');
+  });
+
+  it('上下文窗口可以清空，保存按 0（跟随全局）', async () => {
+    const saved: ModelDraft[] = [];
+    await act(async () => root.render(
+      <ModelEditModal
+        open
+        onClose={() => {}}
+        onSave={(d) => saved.push(d)}
+        initial={{ id: 'm1', channelId: 'c1', modelName: 'kimi-k3', contextWindow: 1048576 }}
+      />,
+    ));
+    await act(async () => {});
+    const context = fields().find((el) => el.inputMode === 'numeric')!;
+    expect(context.value).toBe('1048576');
+    input(context, '');
+    expect(context.value).toBe('');
+    const save = [...document.body.querySelectorAll('button')].find((el) => el.textContent === '保存')!;
+    await act(async () => save.click());
+    expect(saved[0].contextWindow).toBe(0);
   });
 
   it('失焦后立刻保存不会用上一帧的旧草稿', async () => {

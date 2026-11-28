@@ -11,7 +11,7 @@ import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import { contextWindowHint } from '@/lib/contextWindowHints';
-import { validateRetryHttpStatuses, validateExtraBodyJson, extraBodyToText, textToExtraBody, textToEfforts } from '@/lib/llmParams';
+import { validateRetryHttpStatuses, validateExtraBodyJson, extraBodyToText, textToExtraBody, contextWindowToText, textToContextWindow, textToEfforts } from '@/lib/llmParams';
 import {
   modelsOfChannel,
   modelLabel,
@@ -169,7 +169,11 @@ function MobileModelEditorSheet({
   const [modelName, setModelName] = useState(initial?.modelName ?? presetModelName ?? '');
   const [displayName, setDisplayName] = useState(initial?.displayName ?? '');
   const [vision, setVision] = useState(initial?.vision ?? false);
-  const [contextWindow, setContextWindow] = useState(initial?.contextWindow ?? 0);
+  // 文本态而非数字态：清空时不能立刻变回 0，否则删不掉那个 0。
+  const [contextWindowText, setContextWindowText] = useState(
+    contextWindowToText(initial?.contextWindow),
+  );
+  const contextWindow = textToContextWindow(contextWindowText);
   const [extraBodyText, setExtraBodyText] = useState(extraBodyToText(initial?.extraBody));
   const [effortsText, setEffortsText] = useState(
     (initial?.reasoningEfforts ?? []).join('\n'),
@@ -193,7 +197,7 @@ function MobileModelEditorSheet({
     current: { vision, contextWindow, reasoningEfforts: textToEfforts(effortsText) },
     onApply: ({ draft, filled }) => {
       setVision(draft.vision);
-      setContextWindow(draft.contextWindow);
+      setContextWindowText(contextWindowToText(draft.contextWindow));
       setEffortsText(draft.reasoningEfforts.join('\n'));
       setRecommendationFilled(filled);
       // 思考档位在「更多」里；不展开的话用户只看得到窗口/视觉，以为没填。
@@ -291,19 +295,19 @@ function MobileModelEditorSheet({
         </div>
         <div>
           <label className="mb-1 block text-meta text-fg-secondary">
-            模型上下文窗口 (tokens) <span className="text-fg-disabled">（0 = 跟随全局）</span>
+            模型上下文窗口 (tokens) <span className="text-fg-disabled">（留空 = 跟随全局）</span>
           </label>
           <input
-            type="number"
+            type="text"
             inputMode="numeric"
-            min={0}
-            step={1000}
-            value={contextWindow}
+            autoComplete="off"
+            value={contextWindowText}
             onChange={(e) => {
               recommendation.markEdited('contextWindow');
-              setContextWindow(Math.max(0, Math.trunc(Number(e.target.value) || 0)));
+              setContextWindowText(e.target.value.replace(/\D/g, ''));
             }}
-            placeholder="0 = 仅超限后压缩"
+            onBlur={() => setContextWindowText(contextWindowToText(contextWindow))}
+            placeholder="留空 = 仅超限后压缩"
             className={inputClass}
           />
         </div>

@@ -70,6 +70,16 @@ export function textToExtraBody(text: string): Record<string, unknown> | null {
   return parsed as Record<string, unknown>;
 }
 
+/** 上下文窗口数字 ↔ 输入框文本：0/未设置显示为空，交给 placeholder 说明「跟随全局」。 */
+export function contextWindowToText(value: number | undefined): string {
+  return value && value > 0 ? String(value) : '';
+}
+
+/** 输入框文本 → 上下文窗口数字。空串按 0（跟随全局）处理。 */
+export function textToContextWindow(text: string): number {
+  return Math.max(0, Math.trunc(Number(text) || 0));
+}
+
 /** 思考强度档位列表 ↔ 每行一个的文本表示（'low\nhigh\nmax'）。 */
 export function effortsToText(efforts: string[] | undefined): string {
   return (efforts ?? []).join('\n');
